@@ -7,7 +7,6 @@ import { getBrokerClient, isConfigured } from "@/lib/brokers/factory";
 import { executeForTickers } from "@/lib/brokers/executor";
 import { holdDaysForStage, HOLD_DAYS_BY_STAGE } from "@/lib/anchors";
 import { TickerStage } from "@/generated/prisma/client";
-import { ACTIONABLE_MARKET_CAP_MAX } from "@/lib/harvester/recommendation";
 
 // ML model trained on 1d/3d/7d horizons only — holds past 7d use stale alpha.
 // Hold-day defaults come from anchors.ts (stage-tiered: EARLY 5d, FORMING/CONFIRMED 7d).
@@ -204,10 +203,6 @@ export async function POST(req: NextRequest) {
           scanId: latestScan.id,
           recommendation: { in: ["Buy", "Strong Buy"] },
           stage: { in: ["EARLY", "FORMING"] },
-          OR: [
-            { marketCap: null },
-            { marketCap: { lte: ACTIONABLE_MARKET_CAP_MAX } },
-          ],
         },
         orderBy: { opportunityScore: "desc" },
       });

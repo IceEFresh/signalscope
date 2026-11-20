@@ -143,12 +143,11 @@ describe("executeForTickers", () => {
     expect(results[0].reason).toContain("no price");
   });
 
-  it("skips mega-cap ticker even when recommendation is actionable", async () => {
+  it("does not skip a mega-cap ticker for its market cap (rule v5: no market-cap cap)", async () => {
     const tickers = [makeTicker({ marketCap: 2_000_000_000_000 })];
     const results = await executeForTickers(tickers);
-    expect(results[0].status).toBe("skipped");
-    expect(results[0].reason).toContain("market cap");
-    expect(mockPlaceBracketOrder).not.toHaveBeenCalled();
+    expect(results[0].reason ?? "").not.toContain("market cap");
+    expect(mockPlaceBracketOrder).toHaveBeenCalledTimes(1);
   });
 
   it("skips CONFIRMED ticker because broker execution is emerging-stage only", async () => {

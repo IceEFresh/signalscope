@@ -34,14 +34,14 @@ describe("deriveRecommendation — v3 decision matrix", () => {
     ["Buy B: FORMING social momentum", { stage: "FORMING", hasCatalystSource: false, sourceCount: 2, aiScore: 62 }, "Buy"],
     ["Buy C: CONFIRMED fresh", { stage: "CONFIRMED", aiScore: 62, medianSignalAgeHrs: 2 }, "Buy"],
     [
-      "Watch: mega-cap FORMING catalyst",
+      "Strong Buy: mega-cap ($2T) FORMING catalyst (v5: no market-cap cap)",
       { stage: "FORMING", hasCatalystSource: true, sourceCount: 2, aiScore: 80, marketCap: 2_000_000_000_000 },
-      "Watch",
+      "Strong Buy",
     ],
     [
-      "Watch: mega-cap CONFIRMED fresh",
+      "Buy C: mega-cap ($2T) CONFIRMED fresh (v5: no market-cap cap)",
       { stage: "CONFIRMED", aiScore: 80, medianSignalAgeHrs: 2, marketCap: 2_000_000_000_000 },
-      "Watch",
+      "Buy",
     ],
     [
       "Strong Buy: large-cap ($500B) FORMING catalyst score>=60 — not mega-cap",
@@ -216,8 +216,8 @@ describe("recommendationHasTradeSetup", () => {
 });
 
 describe("RECOMMENDATION_RULE_VERSION", () => {
-  it("is 4 after raising the cap to $1T (restoring large-cap catalyst signals)", () => {
-    expect(RECOMMENDATION_RULE_VERSION).toBe(4);
+  it("is 5 after removing the market-cap cap (Chris, 2026-11-20; experiment #27)", () => {
+    expect(RECOMMENDATION_RULE_VERSION).toBe(5);
   });
 });
 
