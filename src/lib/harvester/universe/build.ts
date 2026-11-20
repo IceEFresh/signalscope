@@ -154,7 +154,7 @@ export function defaultDeps(): UniverseBuildDeps {
   return {
     fetchDirectory: async () => (await fetchSymbolDirectory()).map((d) => d.symbol),
     fetchQuotes: fetchQuotesYahoo,
-    fetchMetrics: (symbols) => fetchBarMetricsMany(symbols),
+    fetchMetrics: (symbols) => fetchBarMetricsMany(symbols, { label: "universe bars" }),
     hasListedOptions: hasListedOptionsYahoo,
   };
 }

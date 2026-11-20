@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-const { fetchVolumeData } = await import(
+const { fetchVolumeData, fetchVolumeSpikeSignals } = await import(
   "@/lib/harvester/sources/volume-spike"
 );
 
@@ -165,5 +165,56 @@ describe("fetchVolumeData — volume average computation", () => {
       expect.stringContaining("interval=1d"),
       expect.any(Object)
     );
+  });
+});
+
+describe("fetchVolumeSpikeSignals — rate limits (PR 1-0 review)", () => {
+  const spike = () => chartResponse("X", [...Array(10).fill(1_000_000), 3_000_000], 3_000_000);
+  const tooMany = { ok: false, status: 429, json: async () => ({}) };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it("retries once on 429 and keeps the signal when the retry succeeds", async () => {
+    mockFetch.mockResolvedValueOnce(tooMany).mockResolvedValueOnce(spike());
+    const signals = await fetchVolumeSpikeSignals(["AAA"], { batchDelayMs: 0, retryDelayMs: 0 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(signals.map((s) => s.symbol)).toEqual(["AAA"]);
+  });
+
+  it("logs ok / failed / 429 counts and does not throw when some fetches stay rate-limited", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes("/RL1?") || url.includes("/RL2?")) return tooMany;
+      if (url.includes("/BAD?")) return { ok: false, status: 500, json: async () => ({}) };
+      if (url.includes("/NET?")) throw new Error("ECONNRESET");
+      return spike();
+    });
+
+    const signals = await fetchVolumeSpikeSignals(["OK1", "RL1", "BAD", "RL2", "NET", "OK2"], {
+      batchSize: 2,
+      batchDelayMs: 0,
+      retryDelayMs: 0,
+    });
+
+    expect(signals.map((s) => s.symbol)).toEqual(["OK1", "OK2"]);
+    const line = warn.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith("Volume Spike:"));
+    expect(line).toContain("ok=2 failed=2 rate-limited(429)=2 of 6");
+    // each 429 symbol was tried twice
+    expect(mockFetch.mock.calls.filter(([u]) => String(u).includes("/RL1?"))).toHaveLength(2);
+    warn.mockRestore();
+  });
+
+  it("waits between batches", async () => {
+    vi.useFakeTimers();
+    mockFetch.mockImplementation(async () => spike());
+    const p = fetchVolumeSpikeSignals(["A", "B", "C"], { batchSize: 2, batchDelayMs: 2_000, retryDelayMs: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await p;
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
   });
 });

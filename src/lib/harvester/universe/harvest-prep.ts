@@ -48,14 +48,19 @@ export function isStale(refreshedAt: string | undefined, now: Date): boolean {
 export async function prepareHarvest(deps: HarvestPrepDeps): Promise<HarvestPrep> {
   const now = deps.now?.() ?? new Date();
   let state: UniverseState = { universe: null, watch: [] };
+  let stateLoaded = false;
   try {
     state = await deps.getState();
+    stateLoaded = true;
   } catch (err) {
     console.warn("[universe] could not load universe state:", err instanceof Error ? err.message : err);
   }
 
   let universe = state.universe;
-  if (isStale(universe?.refreshedAt, now)) {
+  if (!stateLoaded) {
+    // The web app is unreachable, so the build could not be stored either: skip ~2k Yahoo calls.
+    console.warn("[universe] skipping rebuild because the web app is unreachable");
+  } else if (isStale(universe?.refreshedAt, now)) {
     console.log(`[universe] ${universe ? "stale" : "missing"}, rebuilding (weekly job)...`);
     try {
       const build = await deps.build();
@@ -86,7 +91,7 @@ export interface IngestExtras {
 export async function computeIngestExtras(
   signals: readonly RawSignal[],
   watch: readonly ActiveWatchRow[],
-  fetchMetrics: (symbols: string[]) => Promise<Map<string, BarMetrics>> = (s) => fetchBarMetricsMany(s),
+  fetchMetrics: (symbols: string[]) => Promise<Map<string, BarMetrics>> = (s) => fetchBarMetricsMany(s, { label: "bars" }),
   evaluate: typeof evaluateSymbols = evaluateSymbols,
   now: Date = new Date(),
 ): Promise<IngestExtras> {

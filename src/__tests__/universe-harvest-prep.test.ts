@@ -66,9 +66,17 @@ describe("prepareHarvest", () => {
     expect(prep).toMatchObject({ universeId: "u1", scanSymbols: ["AAA", "BBB"] });
   });
 
-  it("falls back to static SCAN_SYMBOLS when the web app and the rebuild both fail", async () => {
+  it("falls back to static SCAN_SYMBOLS and skips the rebuild when the web app is unreachable", async () => {
+    const d = deps({ getState: async () => { throw new Error("503"); } });
+    const prep = await prepareHarvest(d);
+    expect(prep).toEqual({ universeId: null, scanSymbols: SCAN_SYMBOLS, watch: [] });
+    expect(d.build).not.toHaveBeenCalled();
+    expect(d.postBuild).not.toHaveBeenCalled();
+  });
+
+  it("falls back to static SCAN_SYMBOLS when there is no universe and storing the rebuild fails", async () => {
     const prep = await prepareHarvest(
-      deps({ getState: async () => { throw new Error("503"); }, postBuild: async () => { throw new Error("503"); } }),
+      deps({ getState: async () => ({ universe: null, watch: [] }), postBuild: async () => { throw new Error("503"); } }),
     );
     expect(prep).toEqual({ universeId: null, scanSymbols: SCAN_SYMBOLS, watch: [] });
   });
