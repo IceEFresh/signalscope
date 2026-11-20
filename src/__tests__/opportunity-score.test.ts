@@ -45,7 +45,7 @@ describe("computeOpportunityScore", () => {
       priorAppearances: 10,
       avgVelocity: 0.5,
       price: 150,
-      marketCap: 50_000_000_000, // large cap → 0
+      marketCap: 50_000_000_000, // no market-cap term since PR 1-0
       wk52Lo: 100,
       wk52Hi: 200,
       medianSignalAgeHrs: 24,
@@ -82,41 +82,6 @@ describe("computeOpportunityScore", () => {
     const highVel = computeOpportunityScore({ ...baseInput, avgVelocity: 3.0 });
     const lowVel = computeOpportunityScore({ ...baseInput, avgVelocity: 0.5 });
     expect(highVel).toBeGreaterThan(lowVel);
-  });
-
-  it("micro-cap scores more than large-cap (large-cap penalty kept)", () => {
-    const micro = computeOpportunityScore({ ...baseInput, marketCap: 20_000_000 });
-    const large = computeOpportunityScore({ ...baseInput, marketCap: 100_000_000_000 });
-    expect(micro).toBeGreaterThan(large);
-  });
-
-  it("penalizes mega-caps enough that fresh chatter does not look like an emerging breakout", () => {
-    const megaCap = computeOpportunityScore({
-      aiScore: 35,
-      firstSeenDaysAgo: null,
-      priorAppearances: 0,
-      avgVelocity: 3.0,
-      price: 250,
-      marketCap: 150_000_000_000,
-      wk52Lo: 200,
-      wk52Hi: 260,
-      medianSignalAgeHrs: 1,
-      shortFloat: 0.02,
-      sourceCount: 3,
-      stage: "FORMING",
-      totalUpvotes: 500,
-      totalComments: 50,
-    });
-    const smallCap = computeOpportunityScore({
-      ...baseInput,
-      aiScore: 45,
-      firstSeenDaysAgo: 2,
-      avgVelocity: 2.0,
-      marketCap: 250_000_000,
-      medianSignalAgeHrs: 2,
-    });
-
-    expect(megaCap).toBeLessThan(smallCap);
   });
 
   it("clamps to [0, 100]", () => {
@@ -218,10 +183,12 @@ describe("computeOpportunityScore", () => {
   });
 
   describe("PR 1-0: universe-focused score", () => {
-    it("gives no bonus for market caps under $2B", () => {
-      const micro = computeOpportunityScore({ ...baseInput, marketCap: 20_000_000 });
-      const mid = computeOpportunityScore({ ...baseInput, marketCap: 5_000_000_000 });
-      expect(micro).toBe(mid);
+    it("has no market-cap term: micro, mid, large, mega and unknown caps score the same", () => {
+      const at = (marketCap: number | null) => computeOpportunityScore({ ...baseInput, marketCap });
+      const base = at(null);
+      for (const cap of [20_000_000, 5_000_000_000, 10_000_000_000, 50_000_000_000, 150_000_000_000]) {
+        expect(at(cap)).toBe(base);
+      }
     });
 
     it("gives no NasdaqCM/AMEX penny bonus", () => {

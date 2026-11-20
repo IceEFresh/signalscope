@@ -5,10 +5,11 @@
  * opportunityScore is designed to correlate with actual returns: low-consensus,
  * novel, fast-moving tickers near 52-week lows score highest.
  *
- * PR 1-0 (2026-11-20, scope decision, see scripts/backtesting-experiments.md):
- * the microcap tiers (+6 to +15 below $2B) and the NasdaqCM/AMEX penny bonus
- * (+8) are removed, and an ATR% volatility term (0 to +15) takes their place.
- * Scoring now targets the liquid, volatile universe.
+ * PR 1-0 (2026-11-20, scope decisions, see scripts/backtesting-experiments.md #26):
+ * every market-cap term is removed (the microcap tiers +6 to +15 below $2B and,
+ * per Chris, the large-cap penalties -12 at $10B+ and -20 at $50B+), as is the
+ * NasdaqCM/AMEX penny bonus (+8). An ATR% volatility term (0 to +15) takes their
+ * place. Scoring now targets the liquid, volatile universe.
  */
 
 interface OpportunityScoreInput {
@@ -17,6 +18,7 @@ interface OpportunityScoreInput {
   priorAppearances: number;
   avgVelocity: number;
   price: number | null | undefined;
+  /** Not scored since PR 1-0; kept so callers and stored inputs stay unchanged. */
   marketCap: number | null | undefined;
   wk52Lo: number | null | undefined;
   wk52Hi: number | null | undefined;
@@ -55,12 +57,6 @@ export function computeOpportunityScore(input: OpportunityScoreInput): number {
   else if (input.avgVelocity >= 2.0) score += 12;
   else if (input.avgVelocity >= 1.5) score += 8;
   else if (input.avgVelocity >= 1.0) score += 4;
-
-  // --- Market cap (-20 to 0) --- Large-cap penalties kept; microcap bonuses removed in PR 1-0.
-  if (input.marketCap != null) {
-    if (input.marketCap >= 50_000_000_000) score -= 20;
-    else if (input.marketCap >= 10_000_000_000) score -= 12;
-  }
 
   // --- Volatility, ATR% (0-15) --- PR 1-0 replacement for the microcap and penny bonuses.
   // [Guessing] tiers; the universe floor is 3% ATR (or 40% HV).

@@ -42,7 +42,7 @@ Universe rule, refreshed weekly. [Guessing] The thresholds are starting points t
 Changes:
 1. Replace the static `SCAN_SYMBOLS` with the generated universe list. Build it with a weekly job: take the Nasdaq Trader symbol directory (free, covers every NYSE and Nasdaq listing), drop ETFs and anything under $5, then apply the filters above using Yahoo daily bars. Store it in a table with the refresh date, so every scan records which universe it used.
 2. Tickers found by social or insider sources that fall outside the universe are still stored, but at stage FILTERED with reason `illiquid`. They never get Buy or Strong Buy. Keeping them allows a later comparison against liquid names.
-3. Neutralize the microcap and exchange-penny bonuses in `opportunity-score.ts`. Within the universe, replace them with a volatility term (ATR%).
+3. Remove every market-cap term from `opportunity-score.ts`: the microcap bonuses and, per Chris (2026-11-20), the large-cap penalties (−12 at ≥$10B, −20 at ≥$50B), which work against the liquidity goal. Also remove the exchange-penny bonus. Within the universe, replace them with a volatility term (ATR%).
 4. Record each ticker's dollar volume and ATR% on every scan row.
 5. Graduation watch for informed buyers on names outside the universe. One `graduation_watch` table with a `source` column covers every informed-actor type:
 
