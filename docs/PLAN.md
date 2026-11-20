@@ -65,6 +65,8 @@ Changes:
    - Decision (Chris, 2026-11-20): insider buys need a share price of at least $5. Set `pl=5` in `OPENINSIDER_SCREENER_URL`, which replaces `pl=50` (very likely a $50 minimum share price), and also drop parsed rows priced under $5 in code, so the floor holds whatever `pl` turns out to mean. Update the URL test. This changes the source's output, so it ships inside PR 1-0, the exception to the log-only rule.
    - Status after PR 1-0's first cut: insider and politician rows are built from the existing openinsider and Capitol Trades sources, with the $5 insider floor above. Activist (13D), new-insider (Form 3) and Form 144 rows need new EDGAR or Financial Datasets sources and are a follow-up; the table's `source` column already covers them.
 
+6. Decision (Chris, 2026-11-20): remove the $1T market-cap cap on recommendations (`ACTIONABLE_MARKET_CAP_MAX` in `recommendation.ts`, plus the same filter in alerts, report generation, IBKR sync and the broker executor). The liquid universe gates eligibility. Logged as experiment #27; rule version 5.
+
 Consequences:
 - Upstream's Buy and Strong Buy thresholds were calibrated on a mixed universe, so they're provisional until Phase 3 recalibrates them on liquid names only.
 - [Likely] Backtests on illiquid names overstate returns, because the bid-ask spread and slippage are never modelled. Some of upstream's measured edge may come from exactly the names you're excluding. Expect lower but realizable numbers.

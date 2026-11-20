@@ -6,7 +6,6 @@ import { handleApiError } from "@/lib/api-error";
 import { generateTickerReportReACT } from "@/lib/harvester/report";
 import { reconstructAggregatedSymbol } from "@/lib/reconstruct-aggregated";
 import type { SignalType } from "@/lib/harvester/types";
-import { ACTIONABLE_MARKET_CAP_MAX } from "@/lib/harvester/recommendation";
 
 export async function POST(req: NextRequest) {
   try {
@@ -49,10 +48,6 @@ export async function POST(req: NextRequest) {
         aiScore: { gte: 50 },
         pndFlagged: false,
         stage: { in: ["EARLY", "FORMING", "CONFIRMED"] },
-        OR: [
-          { marketCap: null },
-          { marketCap: { lte: ACTIONABLE_MARKET_CAP_MAX } },
-        ],
       },
     });
 
@@ -123,10 +118,6 @@ export async function POST(req: NextRequest) {
       where: {
         scanId: scan.id,
         stage: { in: ["EARLY", "FORMING", "CONFIRMED"] },
-        OR: [
-          { marketCap: null },
-          { marketCap: { lte: ACTIONABLE_MARKET_CAP_MAX } },
-        ],
       },
     });
 

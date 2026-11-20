@@ -5,7 +5,6 @@ import { generateTickerReportReACT } from "@/lib/harvester/report";
 import { reconstructAggregatedSymbol } from "@/lib/reconstruct-aggregated";
 import type { SignalType } from "@/lib/harvester/types";
 import { executeForTickers } from "@/lib/brokers/executor";
-import { ACTIONABLE_MARKET_CAP_MAX } from "@/lib/harvester/recommendation";
 
 // FORMING tickers first (Buy/Strong Buy eligible), then EARLY — prevents high-scoring
 // single-source EARLY tickers (insider/congress with sourceCount=1) from crowding out
@@ -44,18 +43,10 @@ export async function POST(req: NextRequest) {
 
     // EARLY/FORMING batch: FORMING sorted first (F > E desc) so multi-source Building tickers
     // are not displaced by high-scoring single-source Emerging tickers.
-    const actionableCapFilter = {
-      OR: [
-        { marketCap: null },
-        { marketCap: { lte: ACTIONABLE_MARKET_CAP_MAX } },
-      ],
-    };
-
     const earlyFormingTickers = await prisma.validatedTicker.findMany({
       where: {
         scanId: latestScan.id,
         stage: { in: ["EARLY", "FORMING"] },
-        ...actionableCapFilter,
         catalyst: null,
       },
       orderBy: [{ stage: "desc" }, { opportunityScore: "desc" }, { aiScore: "desc" }],
@@ -67,7 +58,6 @@ export async function POST(req: NextRequest) {
       where: {
         scanId: latestScan.id,
         stage: "CONFIRMED",
-        ...actionableCapFilter,
         catalyst: null,
       },
       orderBy: [{ opportunityScore: "desc" }, { aiScore: "desc" }],
@@ -150,10 +140,6 @@ export async function POST(req: NextRequest) {
             scanId: latestScan.id,
             recommendation: { in: ["Buy", "Strong Buy"] },
             stage: { in: ["EARLY", "FORMING"] },
-            OR: [
-              { marketCap: null },
-              { marketCap: { lte: ACTIONABLE_MARKET_CAP_MAX } },
-            ],
           },
           orderBy: { opportunityScore: "desc" },
         });

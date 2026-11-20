@@ -131,10 +131,7 @@ describe("POST /api/alerts/send", () => {
     expect(findManyCall.where.stage).toEqual({ in: ["EARLY", "FORMING", "CONFIRMED"] });
     expect(findManyCall.where.aiScore).toEqual({ gte: 50 });
     expect(findManyCall.where.pndFlagged).toBe(false);
-    expect(findManyCall.where.OR).toEqual([
-      { marketCap: null },
-      { marketCap: { lte: 1_000_000_000_000 } },
-    ]);
+    expect(findManyCall.where.OR).toBeUndefined(); // v5: no market-cap cap
     expect(findManyCall.select).toBeUndefined(); // full row fetch, no select
     expect(findManyCall.orderBy).toBeUndefined();
     expect(findManyCall.take).toBeUndefined();
