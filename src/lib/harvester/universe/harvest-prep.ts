@@ -12,6 +12,7 @@ import type { IngestBarMetrics, RawSignal, WatchCheck } from "../types";
 import { fetchBarMetricsMany, parseChartBars, type BarMetrics } from "./bar-metrics";
 import { computeBarFeatures, type BarFeatures } from "./bar-features";
 import { computeStp, type StpResult } from "./stp";
+import { computeRegime, REGIME_SYMBOLS, type RegimeFeatures } from "./regime";
 import { fetchDailyChart } from "../yahoo-chart";
 import { buildUniverse, defaultDeps, evaluateSymbols, type UniverseBuildResult } from "./build";
 import { applyWatchResults, type ActiveWatchRow } from "./watch";
@@ -224,4 +225,26 @@ export async function computeStpExtras(
   }
   console.log(`[stp] states for ${Object.keys(out).length}/${list.length} symbols, ${triggers} triggers`);
   return out;
+}
+
+/**
+ * Market regime fields for this scan (PLAN.md 1c, log only): SPY (cached for 1a),
+ * ^VIX and TLT daily charts, so at most two new requests per run.
+ */
+export async function computeRegimeExtras(getChart: typeof fetchDailyChart = fetchDailyChart): Promise<RegimeFeatures> {
+  const load = async (sym: string) => {
+    try {
+      const res = await getChart(sym);
+      return res.ok ? parseChartBars(res.json) : null;
+    } catch {
+      return null;
+    }
+  };
+  const [spy, vix, tlt] = await Promise.all([load(REGIME_SYMBOLS.spy), load(REGIME_SYMBOLS.vix), load(REGIME_SYMBOLS.tlt)]);
+  if (!spy || !vix || !tlt) {
+    console.warn(`[regime] missing bars: ${[!spy && "SPY", !vix && "^VIX", !tlt && "TLT"].filter(Boolean).join(", ")}`);
+  }
+  const r = computeRegime(spy, vix, tlt);
+  console.log(`[regime] SPY vs SMA20 ${r.spy_close_vs_sma20?.toFixed(4) ?? "null"}, distribution days ${r.spy_distribution_days_25 ?? "null"}, VIX ${r.vix_close ?? "null"}`);
+  return r;
 }

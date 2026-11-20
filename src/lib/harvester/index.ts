@@ -478,6 +478,8 @@ export interface ProcessContext {
   barFeatures?: Record<string, Record<string, number | boolean | string | null>>;
   /** PLAN.md 1g STP states per scanned symbol, stored in StpSignal. Never read by scoring. */
   stp?: Record<string, IngestStp>;
+  /** PLAN.md 1c market regime fields, stored on Scan.regimeFeatures. Never read by scoring. */
+  regime?: Record<string, number | boolean | string | null>;
   watchChecks?: WatchCheck[];
 }
 
@@ -1004,6 +1006,15 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
     await mirrorToDevDb(devPrisma, "scan complete", async (client) => {
       await client.scan.update({ where: { id: scan.id }, data: scanUpdateData });
     });
+
+    // Market regime fields (PLAN.md 1c, log only). After the scan commits; a failure is logged.
+    if (ctx.regime) {
+      try {
+        await prisma.scan.update({ where: { id: scan.id }, data: { regimeFeatures: ctx.regime } });
+      } catch (err) {
+        console.warn("[regime] store failed:", err instanceof Error ? err.message : err);
+      }
+    }
 
     // STP daily signals (PLAN.md 1g, log only). After the scan commits; a failure is logged, never thrown.
     try {
