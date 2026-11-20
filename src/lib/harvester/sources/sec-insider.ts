@@ -12,6 +12,8 @@ const C_SUITE_TITLES = new Set([
 ]);
 
 const MIN_PURCHASE_VALUE = 50_000;
+/** Insider buys below this share price are dropped (PLAN.md PR 1-0 decision). */
+export const MIN_SHARE_PRICE = 5;
 
 /**
  * OpenInsider screener query: filings from the last 7 days (fd=7), 100 rows.
@@ -20,15 +22,12 @@ const MIN_PURCHASE_VALUE = 50_000;
  * handshake on port 443 (re-checked 2026-11-20), so an https:// URL returns
  * nothing. See src/__tests__/sec-insider.test.ts.
  *
- * `pl=50` is unverified. If it is the screener's minimum share price, insider
- * buys on stocks under $50 never reach this source. Run
- * scripts/check-openinsider-pl.ts on a host that can reach openinsider.com
- * before relying on it (docs/PLAN.md, PR 1-0 graduation watch).
- *
- * Kept byte-identical to upstream so this source's output does not change.
+ * `pl=5`: minimum share price $5 (Chris, 2026-11-20, docs/PLAN.md PR 1-0).
+ * Upstream used `pl=50`, which very likely hid every insider buy under $50.
+ * MIN_SHARE_PRICE enforces the same floor in code whatever `pl` means.
  */
 export const OPENINSIDER_SCREENER_URL =
-  "http://openinsider.com/screener?s=&o=&pl=50&ph=&ll=&lh=&fd=7&fdr=&td=0&tdr=&feession=0&cession=0&sid=1&iession=0&ession=0&otype=&othertype=&ression=0&sortcol=0&cnt=100&page=1";
+  "http://openinsider.com/screener?s=&o=&pl=5&ph=&ll=&lh=&fd=7&fdr=&td=0&tdr=&feession=0&cession=0&sid=1&iession=0&ession=0&otype=&othertype=&ression=0&sortcol=0&cnt=100&page=1";
 
 export interface InsiderRow {
   filingDate: string;
@@ -160,7 +159,7 @@ async function fetchFromOpenInsider(): Promise<RawSignal[]> {
 
     // Filter: C-suite/directors only, $50K+ purchases
     const filtered = allRows.filter(
-      (r) => r.value >= MIN_PURCHASE_VALUE && isCsuiteOrDirector(r.insiderTitle)
+      (r) => r.value >= MIN_PURCHASE_VALUE && r.price >= MIN_SHARE_PRICE && isCsuiteOrDirector(r.insiderTitle)
     );
 
     const signals: RawSignal[] = filtered.map((r) => ({
@@ -176,7 +175,7 @@ async function fetchFromOpenInsider(): Promise<RawSignal[]> {
       filingKey: `insider:${r.ticker}|${r.insiderName}|${r.tradeDate}|${r.qty}|${r.price}`,
     }));
 
-    console.log(`OpenInsider: ${allRows.length} purchases found, ${signals.length} C-suite/director $50K+ signals`);
+    console.log(`OpenInsider: ${allRows.length} purchases found, ${signals.length} C-suite/director $50K+ signals at $${MIN_SHARE_PRICE}+/share`);
     return signals;
   } catch (err) {
     console.warn("OpenInsider error:", err);
