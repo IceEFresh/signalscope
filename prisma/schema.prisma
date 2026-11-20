@@ -43,6 +43,7 @@ model Scan {
   regimeSkipped    Boolean           @default(false)
   universeId       String?           // Universe the scan used (PR 1-0); null = static SCAN_SYMBOLS fallback
   regimeFeatures   Json?             // PR 1c: market regime fields (log only), keys in src/lib/harvester/universe/regime.ts
+  sectorRotation   Json?             // PR 1f: sector/industry ETF rotation (log only), shape in src/lib/harvester/universe/sector-rotation.ts
   error            String?
   signals          Signal[]
   validatedTickers ValidatedTicker[]

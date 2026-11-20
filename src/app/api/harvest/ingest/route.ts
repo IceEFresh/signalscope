@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { processSignals } from "@/lib/harvester";
+import { processSignals, type ProcessContext } from "@/lib/harvester";
 import { handleApiError } from "@/lib/api-error";
 import { checkHarvestKey } from "@/lib/harvest-auth";
 
@@ -89,6 +89,16 @@ const ingestPayloadSchema = z.object({
     .optional(),
   // PLAN.md 1c market regime fields (log only)
   regime: z.record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.null()])).optional(),
+  // PLAN.md 1f sector rotation (log only); shape built by sector-rotation.ts on the harvester
+  sectorRotation: z
+    .object({
+      version: z.number(),
+      bar_date: z.string().nullable(),
+      sectors: z.array(z.record(z.string(), z.unknown())),
+      etfs: z.record(z.string(), z.record(z.string(), nullableNum)),
+    })
+    .nullable()
+    .optional(),
   watchChecks: z
     .array(
       z.object({
@@ -126,6 +136,7 @@ export async function POST(req: NextRequest) {
       barFeatures: parsed.barFeatures ?? {},
       stp: parsed.stp ?? {},
       regime: parsed.regime,
+      sectorRotation: (parsed.sectorRotation ?? undefined) as ProcessContext["sectorRotation"],
       watchChecks: parsed.watchChecks ?? [],
     });
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);

@@ -153,6 +153,9 @@ describe("processSignals with a universe (PR 1-0)", () => {
     expect(without.features).toEqual({
       earnings_date: null, days_to_earnings: null, earnings_within_5d: null,
       earnings_date_is_estimate: null, earnings_window_days: null, options_flow_near_earnings: null,
+      // 1f sector keys: no sector, industry or rotation in this fixture
+      industry: null, sector_etf: null, industry_etf: null, rs_vs_sector_20d: null, rs_vs_industry_20d: null,
+      sector_rank_20d: null, sector_rank_change_4w: null, industry_ticker_count: null,
     });
     // opportunityScore, aiScore, stage, everything else identical
     expect({ ...withF, features: undefined }).toEqual({ ...without, features: undefined });
@@ -202,5 +205,38 @@ describe("processSignals with a universe (PR 1-0)", () => {
     const regime = { regime_version: 1, spy_close_vs_sma20: -0.03, spy_distribution_days_25: 5, vix_close: 35.9 };
     await processSignals(two("LIQD"), { regime });
     expect(mockUpdateScan).toHaveBeenCalledWith({ where: { id: "scan_1" }, data: { regimeFeatures: regime } });
+  });
+
+  it("adds 1f sector/industry keys and industry clustering, and stores the rotation on the scan", async () => {
+    const { fetchFundamentals } = await import("@/lib/harvester/fundamentals");
+    vi.mocked(fetchFundamentals).mockResolvedValueOnce(
+      new Map([
+        ["LIQD", { ...fund, sector: "Technology", industry: "Semiconductors" }],
+        ["CHIP", { ...fund, sector: "Technology", industry: "Semiconductors" }],
+      ]),
+    );
+    const etf = (r20: number) => ({ return_20d: r20, return_60d: null, rs_vs_spy_20d: r20, rs_vs_spy_60d: null, rs_vs_spy_20d_4w_ago: null, wtd: null, mtd: null, day: null });
+    const sectorRotation = {
+      version: 1,
+      bar_date: "2026-11-19",
+      sectors: [{ sector: "Technology", etf: "XLK", stats: etf(0.02), rank_20d: 3, rank_20d_4w_ago: 7, rank_change_4w: 4, rank_wtd: 1 }],
+      etfs: { XLK: etf(0.02), SMH: etf(0.05) },
+    };
+    await processSignals([...two("LIQD"), ...two("CHIP")], {
+      barFeatures: { LIQD: { return_20d: 0.1 } },
+      sectorRotation,
+    });
+    const liqd = rows().find((r) => r.symbol === "LIQD")!;
+    expect(liqd.features).toMatchObject({
+      industry: "Semiconductors",
+      sector_etf: "XLK",
+      industry_etf: "SMH",
+      sector_rank_20d: 3,
+      sector_rank_change_4w: 4,
+      industry_ticker_count: 2,
+    });
+    expect((liqd.features as Record<string, number>).rs_vs_sector_20d).toBeCloseTo(0.08, 12);
+    expect((liqd.features as Record<string, number>).rs_vs_industry_20d).toBeCloseTo(0.05, 12);
+    expect(mockUpdateScan).toHaveBeenCalledWith({ where: { id: "scan_1" }, data: { sectorRotation } });
   });
 });

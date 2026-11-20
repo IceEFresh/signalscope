@@ -5,6 +5,7 @@ import {
   computeIngestExtras,
   computeStpExtras,
   computeRegimeExtras,
+  computeSectorExtras,
   httpPrepDeps,
   prepareHarvest,
   universeUrlFrom,
@@ -72,6 +73,9 @@ async function main() {
 
   // 1d. Market regime fields for this scan (PLAN.md 1c, log only)
   const regime = await computeRegimeExtras();
+
+  // 1e. Sector and industry rotation (PLAN.md 1f, log only)
+  const sectorRotation = await computeSectorExtras();
   const fetchElapsed = ((Date.now() - fetchStart) / 1000).toFixed(1);
   console.log(`[trace] Fetch completed in ${fetchElapsed}s — ${signals.length} signals`);
 
@@ -95,6 +99,7 @@ async function main() {
     barFeatures: extras.barFeatures as unknown as HarvestIngestPayload["barFeatures"],
     stp,
     regime: regime as unknown as HarvestIngestPayload["regime"],
+    sectorRotation,
     watchChecks: extras.watchChecks,
   };
 

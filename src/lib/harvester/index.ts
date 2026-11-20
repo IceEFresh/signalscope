@@ -1,5 +1,5 @@
 import { prisma, createDevPrismaClient } from "@/lib/prisma";
-import type { PrismaClient } from "@/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { AggregatedSymbol, IngestBarMetrics, IngestStp, NoveltyContext, PndAiResult, RawSignal, SignalType, WatchCheck } from "./types";
 import { fetchRedditSignals } from "./sources/reddit";
 import { fetchStockTwitsSignals } from "./sources/stocktwits";
@@ -17,6 +17,7 @@ import { assessScanRegime } from "./regime-filter";
 
 import { computeOpportunityScore } from "./opportunity-score";
 import { computeEarningsFeatures } from "./earnings-features";
+import { tickerSectorFeatures, type SectorRotation } from "./universe/sector-rotation";
 import { applyWatchChecks, loadUniverse, recordWatchEntries, type LoadedUniverse } from "./universe/store";
 import { resetCostTracker, getTotalCost } from "@/lib/ai";
 
@@ -480,6 +481,8 @@ export interface ProcessContext {
   stp?: Record<string, IngestStp>;
   /** PLAN.md 1c market regime fields, stored on Scan.regimeFeatures. Never read by scoring. */
   regime?: Record<string, number | boolean | string | null>;
+  /** PLAN.md 1f sector rotation, stored on Scan.sectorRotation; per-ticker keys go into features. */
+  sectorRotation?: SectorRotation;
   watchChecks?: WatchCheck[];
 }
 
@@ -850,6 +853,13 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
       pndScore: 0,          // Default for single-mention symbols
     }));
 
+    // 1f theme clustering: how many tickers in this scan share each Yahoo industry
+    const industryCounts = new Map<string, number>();
+    for (const r of allValidatedResults) {
+      const ind = fundamentalsMap.get(r.agg.symbol)?.industry;
+      if (ind) industryCounts.set(ind, (industryCounts.get(ind) ?? 0) + 1);
+    }
+
     // Store validated tickers (candidates + UNSCORED non-candidates)
     const tickerDataList = allValidatedResults.map((result) => {
       const fundamentals = fundamentalsMap.get(result.agg.symbol);
@@ -927,6 +937,13 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
             fundamentals,
             scan.startedAt ?? new Date(),
             result.agg.signals.some((s) => s.source === "OPTIONS_FLOW"),
+          ),
+          ...tickerSectorFeatures(
+            fundamentals?.sector,
+            fundamentals?.industry,
+            barFeatures[result.agg.symbol]?.return_20d as number | null | undefined,
+            ctx.sectorRotation,
+            fundamentals?.industry ? industryCounts.get(fundamentals.industry) ?? null : null,
           ),
         },
       };
@@ -1007,10 +1024,16 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
       await client.scan.update({ where: { id: scan.id }, data: scanUpdateData });
     });
 
-    // Market regime fields (PLAN.md 1c, log only). After the scan commits; a failure is logged.
-    if (ctx.regime) {
+    // Market regime (PLAN.md 1c) and sector rotation (1f), log only. After the scan commits; a failure is logged.
+    if (ctx.regime || ctx.sectorRotation) {
       try {
-        await prisma.scan.update({ where: { id: scan.id }, data: { regimeFeatures: ctx.regime } });
+        await prisma.scan.update({
+          where: { id: scan.id },
+          data: {
+            ...(ctx.regime ? { regimeFeatures: ctx.regime } : {}),
+            ...(ctx.sectorRotation ? { sectorRotation: ctx.sectorRotation as unknown as Prisma.InputJsonValue } : {}),
+          },
+        });
       } catch (err) {
         console.warn("[regime] store failed:", err instanceof Error ? err.message : err);
       }
