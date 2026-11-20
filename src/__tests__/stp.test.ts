@@ -124,6 +124,27 @@ describe("STP triggers", () => {
     expect(computeStp(b, b[57].time!).firedRules).not.toContain("egop+"); // released two sessions ago
   });
 
+  it("bullish wins when bullish and bearish rules both fire, and firedRules keeps both", () => {
+    // Uptrend (sma20 ≥ sma50) for Mechanical I bull, while the last bar is an inside candle
+    // with trendDirection −1 (close below the week and month opens) for an inside bear.
+    const closes = [...Array.from({ length: 50 }, (_, i) => 100 + i), ...Array(8).fill(140), 145];
+    const b = series(closes);
+    // Make the last bar inside the prior one and push the week/month opens above the close.
+    expect(b).toHaveLength(59); // last bar t = 58 is Fri 11-20
+    b[57] = { ...b[57], high: 147, low: 138 };
+    b[58] = { ...b[58], open: 141, high: 146, low: 139, close: 145 };
+    const weekStartIdx = 54; // Mon 11-16
+    const monthStartIdx = 44; // Mon 11-02
+    b[weekStartIdx] = { ...b[weekStartIdx], open: 150 };
+    b[monthStartIdx] = { ...b[monthStartIdx], open: 150 };
+    const r = computeStp(b);
+    expect(r.firedRules).toContain("mech1+");
+    expect(r.firedRules).toContain("inside-");
+    expect(r.trigger).toBe(1);
+    expect(r.triggerType).toBe("mech1");
+    expect(r.entry).toBeCloseTo(146 + r.fudge!, 12); // long parameters
+  });
+
   it("no rule → trigger 0 and no trade parameters", () => {
     const r = computeStp(series(up(60)));
     expect(r.trigger).toBe(0);

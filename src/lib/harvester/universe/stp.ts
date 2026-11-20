@@ -23,7 +23,7 @@ export interface StpResult {
   sizeFactor: number | null; // stp_size_factor
   /** Trigger: +1, −1 or 0 */
   trigger: number | null;
-  triggerType: StpTriggerType | "conflict" | null;
+  triggerType: StpTriggerType | null;
   /** Every rule that fired, e.g. ["inside+", "mech1+"], for analysis */
   firedRules: string[];
   /** Trade parameters, null unless trigger is ±1 */
@@ -158,8 +158,8 @@ export function computeStp(bars: readonly DailyBar[], earningsTs: number | null 
     // Mechanical I
     if (s20 >= s50 && s10 <= s20 && crossesAbove(p.close, s20p, b.close, s20)) bull.push("mech1");
     if (s20 <= s50 && s10 >= s20 && crossesBelow(p.close, s20p, b.close, s20)) bear.push("mech1");
-    // Mechanical II: sma10 crossing sma20 can't coexist with sma10 ≤ sma20 on the same bar, so only
-    // the sma20-vs-sma50 trend condition applies here (see QUESTIONS FOR CHRIS in the PR).
+    // Mechanical II (docs/STP-SIGNALS.md): sma10 crossing sma20 can't coexist with sma10 ≤ sma20 on the
+    // same bar, so only the sma20-vs-sma50 trend condition applies. The original Pine block was unreachable.
     if (s20 >= s50 && b.close > s20 && crossesAbove(s10p, s20p, s10, s20)) bull.push("mech2");
     if (s20 <= s50 && b.close < s20 && crossesBelow(s10p, s20p, s10, s20)) bear.push("mech2");
   }
@@ -170,16 +170,15 @@ export function computeStp(bars: readonly DailyBar[], earningsTs: number | null 
   }
 
   const firedRules = [...bull.map((r) => `${r}+`), ...bear.map((r) => `${r}-`)];
+  // Bullish wins when both sides fire, as Pine's isATrade checks bullish first. firedRules keeps both.
   let trigger = 0;
   let triggerType: StpResult["triggerType"] = null;
-  if (bull.length > 0 && bear.length === 0) {
+  if (bull.length > 0) {
     trigger = 1;
     triggerType = bull[0];
-  } else if (bear.length > 0 && bull.length === 0) {
+  } else if (bear.length > 0) {
     trigger = -1;
     triggerType = bear[0];
-  } else if (bull.length > 0 && bear.length > 0) {
-    triggerType = "conflict";
   }
 
   const atrSeries = wilderAtr(bars);

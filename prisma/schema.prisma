@@ -545,7 +545,7 @@ model StpSignal {
   wellBid     Int?     // stp_well_bid
   sizeFactor  Float?   // stp_size_factor: 1.0 or 0.5
   trigger     Int?     // stp_trigger: +1 / -1 / 0
-  triggerType String?  // inside | butn | brutn | mech1 | mech2 | egop | conflict
+  triggerType String?  // inside | butn | brutn | mech1 | mech2 | egop (bullish wins if both sides fire)
   firedRules  String[] // every rule that fired, e.g. inside+, mech1+
   atr14       Float?   // Wilder ATR(14)
   fudge       Float?   // max(0.11 x ATR, 0.02)
