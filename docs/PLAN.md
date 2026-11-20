@@ -62,7 +62,7 @@ Changes:
    - When a watched ticker qualifies, emit a `GRADUATION` signal tagged with its source (insider, activist, politician, new insider) and carrying the original filing's age and value, and record which criterion flipped. A dollar-volume jump is often the breakout itself. The signal then flows through normal staging.
    - Drop tickers from the watch after 90 days. [Guessing] Insider-buy predictive power in Cohen et al. is measured monthly and fades after a few months.
    - Once PR 2a ships, store the routine or opportunistic class on each watch row. Promote only opportunistic buys to a catalyst; log routine ones.
-   - [Guessing] The openinsider screener URL in `sec-insider.ts` sets `pl=50`. If that parameter is a minimum share price, the source already ignores insider buys on stocks under $50, which defeats this watch. Verify before building.
+   - Decision (Chris, 2026-11-20): insider buys need a share price of at least $5. Set `pl=5` in `OPENINSIDER_SCREENER_URL`, which replaces `pl=50` (very likely a $50 minimum share price), and also drop parsed rows priced under $5 in code, so the floor holds whatever `pl` turns out to mean. Update the URL test. This changes the source's output, so it ships inside PR 1-0, the exception to the log-only rule.
 
 Consequences:
 - Upstream's Buy and Strong Buy thresholds were calibrated on a mixed universe, so they're provisional until Phase 3 recalibrates them on liquid names only.
