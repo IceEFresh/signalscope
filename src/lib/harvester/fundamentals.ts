@@ -1,5 +1,6 @@
 import { yahooFinance, withYahooTimeout } from "@/lib/yahoo-finance";
 import type { FundamentalData } from "./types";
+import { toUnixSeconds } from "./yahoo-time";
 
 async function fetchQuoteSummaryData(
   symbols: string[]
@@ -71,9 +72,11 @@ export async function fetchFundamentals(
         ? `${Number(fiftyTwoLow).toFixed(2)} - ${Number(fiftyTwoHigh).toFixed(2)}`
         : undefined;
 
-    // Extract earnings date if available
-    const earningsTs = (q as Record<string, unknown>).earningsTimestamp;
-    const earningsDate = typeof earningsTs === "number"
+    // Extract earnings date if available. yahoo-finance2 returns a Date here; the old
+    // `typeof === "number"` check never matched it, so earningsDate was always empty (fixed in 1b).
+    const rec = q as Record<string, unknown>;
+    const earningsTs = toUnixSeconds(rec.earningsTimestamp);
+    const earningsDate = earningsTs != null
       ? new Date(earningsTs * 1000).toISOString().split("T")[0]
       : undefined;
 
@@ -97,6 +100,10 @@ export async function fetchFundamentals(
       sector: extra?.sector ?? ((q as Record<string, unknown>).sector as string | undefined),
       exchange: q.fullExchangeName ?? q.exchange,
       earningsDate,
+      earningsTs,
+      earningsTsStart: toUnixSeconds(rec.earningsTimestampStart),
+      earningsTsEnd: toUnixSeconds(rec.earningsTimestampEnd),
+      isEarningsDateEstimate: typeof rec.isEarningsDateEstimate === "boolean" ? rec.isEarningsDateEstimate : null,
       floatShares: extra?.floatShares ?? floatShares,
       sharesOutstanding,
     });

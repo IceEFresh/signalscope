@@ -148,8 +148,12 @@ describe("processSignals with a universe (PR 1-0)", () => {
       barFeatures: { LIQD: features },
     });
     const withF = rows()[0];
-    expect(withF.features).toEqual(features);
-    expect(without.features).toBeUndefined(); // column left null when no features
+    expect(withF.features).toMatchObject(features);
+    // without bar features only the 1b earnings keys are present (all null here: no earnings date)
+    expect(without.features).toEqual({
+      earnings_date: null, days_to_earnings: null, earnings_within_5d: null,
+      earnings_date_is_estimate: null, earnings_window_days: null, options_flow_near_earnings: null,
+    });
     // opportunityScore, aiScore, stage, everything else identical
     expect({ ...withF, features: undefined }).toEqual({ ...without, features: undefined });
   });
@@ -173,5 +177,24 @@ describe("processSignals with a universe (PR 1-0)", () => {
   it("does not fail the scan when storing STP rows throws", async () => {
     mockStpCreateMany.mockRejectedValue(new Error("db down"));
     await expect(processSignals(two("LIQD"), { stp: { LIQD: { barDate: null, htfOpens: null, maState: null, wellBid: null, sizeFactor: null, trigger: null, triggerType: null, firedRules: [], atr14: null, fudge: null, entry: null, stop: null, risk: null, target2R: null, target3R: null, addLevel2R: null, addLevel3R: null } } })).resolves.toBe("scan_1");
+  });
+
+  it("adds 1b earnings timing to features from the fundamentals, log only", async () => {
+    const { fetchFundamentals } = await import("@/lib/harvester/fundamentals");
+    const scanStart = new Date("2026-11-20T13:30:00Z"); // Fri 8:30 ET
+    mockCreateScan.mockResolvedValue({ id: "scan_1", startedAt: scanStart });
+    const earningsTs = Date.parse("2026-11-24T21:05:00Z") / 1000; // Tue after close
+    vi.mocked(fetchFundamentals).mockResolvedValueOnce(
+      new Map([["LIQD", { ...fund, earningsTs, earningsTsStart: earningsTs, earningsTsEnd: earningsTs, isEarningsDateEstimate: false }]]),
+    );
+    await processSignals([...two("LIQD"), { symbol: "LIQD", source: "OPTIONS_FLOW", title: "calls" }]);
+    expect(rows()[0].features).toMatchObject({
+      earnings_date: "2026-11-24",
+      days_to_earnings: 4,
+      earnings_within_5d: true,
+      earnings_date_is_estimate: false,
+      earnings_window_days: 0,
+      options_flow_near_earnings: true,
+    });
   });
 });

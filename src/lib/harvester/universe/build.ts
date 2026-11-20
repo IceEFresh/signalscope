@@ -7,6 +7,7 @@
  * survivor. Expect roughly 10 to 15 minutes, once a week.
  */
 import { yahooFinance, withYahooTimeout } from "@/lib/yahoo-finance";
+import { toUnixSeconds } from "../yahoo-time";
 import { fetchSymbolDirectory } from "./symbol-directory";
 import { fetchBarMetricsMany, type BarMetrics } from "./bar-metrics";
 import { evaluateUniverseRule, UNIVERSE_RULE, type UniverseRuleResult } from "./rule";
@@ -21,12 +22,7 @@ export interface QuoteInfo {
   earningsTs?: number | null;
 }
 
-/** yahoo-finance2 may return earningsTimestamp as a Date or as unix seconds. */
-export function toUnixSeconds(v: unknown): number | null {
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : Math.floor(v.getTime() / 1000);
-  if (typeof v === "number" && Number.isFinite(v)) return v > 1e12 ? Math.floor(v / 1000) : v;
-  return null;
-}
+export { toUnixSeconds } from "../yahoo-time";
 
 export interface UniverseMemberData {
   symbol: string;

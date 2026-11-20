@@ -16,6 +16,7 @@ import { fetchFundamentals } from "./fundamentals";
 import { assessScanRegime } from "./regime-filter";
 
 import { computeOpportunityScore } from "./opportunity-score";
+import { computeEarningsFeatures } from "./earnings-features";
 import { applyWatchChecks, loadUniverse, recordWatchEntries, type LoadedUniverse } from "./universe/store";
 import { resetCostTracker, getTotalCost } from "@/lib/ai";
 
@@ -916,8 +917,16 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
         filterReason: result.filterReason ?? null,
         dollarVolume20d: bars?.dollarVolume20d ?? null,
         atrPct: bars?.atrPct ?? null,
-        // Log only (PLAN.md 1a): stored for Phase 3, not used by any score, stage or label.
-        features: barFeatures[result.agg.symbol] ?? undefined,
+        // Log only (PLAN.md 1a bar features + 1b earnings timing): stored for Phase 3,
+        // not used by any score, stage or label.
+        features: {
+          ...(barFeatures[result.agg.symbol] ?? {}),
+          ...computeEarningsFeatures(
+            fundamentals,
+            scan.startedAt ?? new Date(),
+            result.agg.signals.some((s) => s.source === "OPTIONS_FLOW"),
+          ),
+        },
       };
     });
 

@@ -79,6 +79,26 @@ describe("fetchFundamentals — data extraction", () => {
     expect(result.get("PTON")!.earningsDate).toBe("2024-01-01");
   });
 
+  it("extracts earnings fields from the Date objects yahoo-finance2 returns (1b fix)", async () => {
+    mockQuote.mockResolvedValueOnce([
+      {
+        symbol: "AMD",
+        regularMarketPrice: 120,
+        earningsTimestamp: new Date("2026-11-24T21:05:00Z"),
+        earningsTimestampStart: new Date("2026-11-24T00:00:00Z"),
+        earningsTimestampEnd: new Date("2026-11-25T00:00:00Z"),
+        isEarningsDateEstimate: true,
+      },
+    ]);
+
+    const amd = (await fetchFundamentals(["AMD"])).get("AMD")!;
+    expect(amd.earningsDate).toBe("2026-11-24");
+    expect(amd.earningsTs).toBe(Date.parse("2026-11-24T21:05:00Z") / 1000);
+    expect(amd.earningsTsStart).toBe(Date.parse("2026-11-24T00:00:00Z") / 1000);
+    expect(amd.earningsTsEnd).toBe(Date.parse("2026-11-25T00:00:00Z") / 1000);
+    expect(amd.isEarningsDateEstimate).toBe(true);
+  });
+
   it("extracts floatShares and sharesOutstanding", async () => {
     mockQuote.mockResolvedValueOnce([
       {
