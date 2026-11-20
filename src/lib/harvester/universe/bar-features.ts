@@ -115,7 +115,7 @@ function barDate(bar: DailyBar | undefined): string | null {
 }
 
 /** Monday (YYYY-MM-DD) of the ISO week containing an ET date string. */
-function weekStart(date: string): string {
+export function weekStart(date: string): string {
   const d = new Date(`${date}T12:00:00Z`);
   const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
   d.setUTCDate(d.getUTCDate() - dow);

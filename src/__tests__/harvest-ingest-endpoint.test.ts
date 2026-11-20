@@ -46,6 +46,7 @@ describe("POST /api/harvest/ingest", () => {
       universeId: null,
       barMetrics: {},
       barFeatures: {},
+      stp: {},
       watchChecks: [],
     });
   });

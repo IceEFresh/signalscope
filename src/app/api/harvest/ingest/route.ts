@@ -62,6 +62,31 @@ const ingestPayloadSchema = z.object({
   barFeatures: z
     .record(z.string(), z.record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.null()])))
     .optional(),
+  // PLAN.md 1g STP states and triggers (log only)
+  stp: z
+    .record(
+      z.string(),
+      z.object({
+        barDate: z.string().nullable(),
+        htfOpens: nullableNum,
+        maState: nullableNum,
+        wellBid: nullableNum,
+        sizeFactor: nullableNum,
+        trigger: nullableNum,
+        triggerType: z.string().nullable(),
+        firedRules: z.array(z.string()),
+        atr14: nullableNum,
+        fudge: nullableNum,
+        entry: nullableNum,
+        stop: nullableNum,
+        risk: nullableNum,
+        target2R: nullableNum,
+        target3R: nullableNum,
+        addLevel2R: nullableNum,
+        addLevel3R: nullableNum,
+      }),
+    )
+    .optional(),
   watchChecks: z
     .array(
       z.object({
@@ -97,6 +122,7 @@ export async function POST(req: NextRequest) {
       universeId: parsed.universeId ?? null,
       barMetrics: parsed.barMetrics ?? {},
       barFeatures: parsed.barFeatures ?? {},
+      stp: parsed.stp ?? {},
       watchChecks: parsed.watchChecks ?? [],
     });
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);

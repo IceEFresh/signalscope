@@ -45,6 +45,7 @@ model Scan {
   error            String?
   signals          Signal[]
   validatedTickers ValidatedTicker[]
+  stpSignals       StpSignal[]
 
   @@index([startedAt])
   @@index([status])
@@ -528,4 +529,36 @@ model GraduationWatch {
   @@index([symbol, source])
   @@index([expiresAt])
   @@index([graduatedAt])
+}
+
+// PR 1g: STP daily states, trigger and trade parameters per scanned symbol (log only).
+// Spec: docs/STP-SIGNALS.md. Computed on the last completed daily bar before the scan.
+model StpSignal {
+  id          String   @id @default(cuid())
+  scanId      String
+  scan        Scan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  symbol      String
+  inUniverse  Boolean? // in the scan's universe (null = no universe stored)
+  barDate     String?  // ET date of the bar the values describe
+  htfOpens    Float?   // stp_htf_opens: +1 / -1 / +0.5 / -0.5 / 0
+  maState     Int?     // stp_ma_state
+  wellBid     Int?     // stp_well_bid
+  sizeFactor  Float?   // stp_size_factor: 1.0 or 0.5
+  trigger     Int?     // stp_trigger: +1 / -1 / 0
+  triggerType String?  // inside | butn | brutn | mech1 | mech2 | egop | conflict
+  firedRules  String[] // every rule that fired, e.g. inside+, mech1+
+  atr14       Float?   // Wilder ATR(14)
+  fudge       Float?   // max(0.11 x ATR, 0.02)
+  entry       Float?
+  stop        Float?
+  risk        Float?
+  target2R    Float?
+  target3R    Float?
+  addLevel2R  Float?   // entry +/- 1 x ATR
+  addLevel3R  Float?   // entry +/- 2 x ATR
+  createdAt   DateTime @default(now())
+
+  @@unique([scanId, symbol])
+  @@index([symbol])
+  @@index([trigger])
 }

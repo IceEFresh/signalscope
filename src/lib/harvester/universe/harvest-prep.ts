@@ -11,6 +11,7 @@ import { SCAN_SYMBOLS } from "../sources/ticker-utils";
 import type { IngestBarMetrics, RawSignal, WatchCheck } from "../types";
 import { fetchBarMetricsMany, parseChartBars, type BarMetrics } from "./bar-metrics";
 import { computeBarFeatures, type BarFeatures } from "./bar-features";
+import { computeStp, type StpResult } from "./stp";
 import { fetchDailyChart } from "../yahoo-chart";
 import { buildUniverse, defaultDeps, evaluateSymbols, type UniverseBuildResult } from "./build";
 import { applyWatchResults, type ActiveWatchRow } from "./watch";
@@ -187,4 +188,40 @@ export function httpPrepDeps(universeUrl: string, apiKey: string): HarvestPrepDe
       return ((await res.json()) as { id: string }).id;
     },
   };
+}
+
+/**
+ * STP daily states and triggers (PLAN.md 1g, log only) for every scanned symbol:
+ * the universe plus this run's signal symbols. Charts come from the per-run cache
+ * (volume spike and bar metrics already fetched them); earnings timestamps come
+ * from one quote batch per 50 symbols. A failure leaves a symbol out.
+ */
+export async function computeStpExtras(
+  symbols: readonly string[],
+  fetchQuotes: (s: string[]) => Promise<Map<string, { earningsTs?: number | null }>> = defaultDeps().fetchQuotes,
+  getChart: typeof fetchDailyChart = fetchDailyChart,
+): Promise<Record<string, StpResult>> {
+  const list = [...new Set(symbols)];
+  const out: Record<string, StpResult> = {};
+  if (list.length === 0) return out;
+  let quotes = new Map<string, { earningsTs?: number | null }>();
+  try {
+    quotes = await fetchQuotes(list);
+  } catch (err) {
+    console.warn("[stp] earnings quotes failed, EGOP off for this run:", err instanceof Error ? err.message : err);
+  }
+  let triggers = 0;
+  for (const s of list) {
+    try {
+      const res = await getChart(s);
+      if (!res.ok) continue;
+      const r = computeStp(parseChartBars(res.json), quotes.get(s)?.earningsTs ?? null);
+      out[s] = r;
+      if (r.trigger) triggers++;
+    } catch (err) {
+      console.warn(`[stp] ${s} failed:`, err instanceof Error ? err.message : err);
+    }
+  }
+  console.log(`[stp] states for ${Object.keys(out).length}/${list.length} symbols, ${triggers} triggers`);
+  return out;
 }

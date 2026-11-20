@@ -155,7 +155,29 @@ export interface HarvestIngestPayload {
   barMetrics?: Record<string, IngestBarMetrics>;
   /** PLAN.md 1a bar features per symbol (log only), stored in ValidatedTicker.features. */
   barFeatures?: Record<string, Record<string, number | boolean | string | null>>;
+  /** PLAN.md 1g STP states and triggers per scanned symbol (log only), stored in StpSignal. */
+  stp?: Record<string, IngestStp>;
   watchChecks?: WatchCheck[];
+}
+
+export interface IngestStp {
+  barDate: string | null;
+  htfOpens: number | null;
+  maState: number | null;
+  wellBid: number | null;
+  sizeFactor: number | null;
+  trigger: number | null;
+  triggerType: string | null;
+  firedRules: string[];
+  atr14: number | null;
+  fudge: number | null;
+  entry: number | null;
+  stop: number | null;
+  risk: number | null;
+  target2R: number | null;
+  target3R: number | null;
+  addLevel2R: number | null;
+  addLevel3R: number | null;
 }
 
 export interface AggregatedSymbol {

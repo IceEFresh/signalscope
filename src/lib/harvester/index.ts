@@ -1,6 +1,6 @@
 import { prisma, createDevPrismaClient } from "@/lib/prisma";
 import type { PrismaClient } from "@/generated/prisma/client";
-import type { AggregatedSymbol, IngestBarMetrics, NoveltyContext, PndAiResult, RawSignal, SignalType, WatchCheck } from "./types";
+import type { AggregatedSymbol, IngestBarMetrics, IngestStp, NoveltyContext, PndAiResult, RawSignal, SignalType, WatchCheck } from "./types";
 import { fetchRedditSignals } from "./sources/reddit";
 import { fetchStockTwitsSignals } from "./sources/stocktwits";
 import { fetchSecInsiderSignals } from "./sources/sec-insider";
@@ -475,6 +475,8 @@ export interface ProcessContext {
   barMetrics?: Record<string, IngestBarMetrics>;
   /** PLAN.md 1a bar features, stored as-is in ValidatedTicker.features. Never read by scoring. */
   barFeatures?: Record<string, Record<string, number | boolean | string | null>>;
+  /** PLAN.md 1g STP states per scanned symbol, stored in StpSignal. Never read by scoring. */
+  stp?: Record<string, IngestStp>;
   watchChecks?: WatchCheck[];
 }
 
@@ -993,6 +995,22 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
     await mirrorToDevDb(devPrisma, "scan complete", async (client) => {
       await client.scan.update({ where: { id: scan.id }, data: scanUpdateData });
     });
+
+    // STP daily signals (PLAN.md 1g, log only). After the scan commits; a failure is logged, never thrown.
+    try {
+      const stpRows = Object.entries(ctx.stp ?? {}).map(([symbol, r]) => ({
+        scanId: scan.id,
+        symbol,
+        inUniverse: inUniverse(symbol),
+        ...r,
+      }));
+      if (stpRows.length > 0) {
+        await prisma.stpSignal.createMany({ data: stpRows, skipDuplicates: true });
+        console.log(`[stp] stored ${stpRows.length} rows, ${stpRows.filter((r) => r.trigger).length} triggers`);
+      }
+    } catch (err) {
+      console.warn("[stp] store failed:", err instanceof Error ? err.message : err);
+    }
 
     // Graduation watch (PR 1-0). Runs after the scan is committed; a failure is logged, never thrown.
     try {

@@ -3,6 +3,7 @@ import { fetchSignals } from "../src/lib/harvester/index.js";
 import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
 import {
   computeIngestExtras,
+  computeStpExtras,
   httpPrepDeps,
   prepareHarvest,
   universeUrlFrom,
@@ -64,6 +65,9 @@ async function main() {
   // 1b. Bar metrics for every symbol, and the daily watch re-check
   const extras = await computeIngestExtras(signals, prep.watch);
   signals.push(...extras.graduationSignals);
+
+  // 1c. STP daily states and triggers for the universe plus signal symbols (PLAN.md 1g, log only)
+  const stp = await computeStpExtras([...prep.scanSymbols, ...Object.keys(extras.barMetrics)]);
   const fetchElapsed = ((Date.now() - fetchStart) / 1000).toFixed(1);
   console.log(`[trace] Fetch completed in ${fetchElapsed}s — ${signals.length} signals`);
 
@@ -85,6 +89,7 @@ async function main() {
     universeId: prep.universeId,
     barMetrics: extras.barMetrics,
     barFeatures: extras.barFeatures as unknown as HarvestIngestPayload["barFeatures"],
+    stp,
     watchChecks: extras.watchChecks,
   };
 
