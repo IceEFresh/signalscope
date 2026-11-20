@@ -483,6 +483,8 @@ export interface ProcessContext {
   regime?: Record<string, number | boolean | string | null>;
   /** PLAN.md 1f sector rotation, stored on Scan.sectorRotation; per-ticker keys go into features. */
   sectorRotation?: SectorRotation;
+  /** PLAN.md 1h option-chain features per symbol, merged into features. Never read by scoring. */
+  optionsFeatures?: Record<string, Record<string, number | null>>;
   watchChecks?: WatchCheck[];
 }
 
@@ -962,6 +964,8 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
             ctx.sectorRotation,
             fundamentals?.industry ? industryCounts.get(fundamentals.industry) ?? null : null,
           ),
+          // PR 1h option-chain features (log only)
+          ...(ctx.optionsFeatures?.[result.agg.symbol] ?? {}),
           // PR 1d shadow score (log only)
           shadow_ai_score: shadowMap.get(result.agg.symbol)?.score ?? null,
           shadow_ai_raw_score: shadowMap.get(result.agg.symbol)?.rawScore ?? null,

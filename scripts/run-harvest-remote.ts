@@ -6,6 +6,7 @@ import {
   computeStpExtras,
   computeRegimeExtras,
   computeSectorExtras,
+  computeOptionsExtras,
   httpPrepDeps,
   prepareHarvest,
   universeUrlFrom,
@@ -76,6 +77,12 @@ async function main() {
 
   // 1e. Sector and industry rotation (PLAN.md 1f, log only)
   const sectorRotation = await computeSectorExtras();
+
+  // 1f. Option-chain features for signal symbols (PLAN.md 1h, log only)
+  const optionsFeatures = await computeOptionsExtras(
+    Object.keys(extras.barMetrics).filter((s) => signals.some((sig) => sig.symbol === s)),
+    Object.fromEntries(Object.entries(extras.barMetrics).map(([s, m]) => [s, m.hv20])),
+  );
   const fetchElapsed = ((Date.now() - fetchStart) / 1000).toFixed(1);
   console.log(`[trace] Fetch completed in ${fetchElapsed}s — ${signals.length} signals`);
 
@@ -100,6 +107,7 @@ async function main() {
     stp,
     regime: regime as unknown as HarvestIngestPayload["regime"],
     sectorRotation,
+    optionsFeatures: optionsFeatures as unknown as HarvestIngestPayload["optionsFeatures"],
     watchChecks: extras.watchChecks,
   };
 

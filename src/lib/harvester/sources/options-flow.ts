@@ -1,4 +1,4 @@
-import { yahooFinance } from "@/lib/yahoo-finance";
+import { fetchOptionsRaw } from "../options-chain";
 import type { RawSignal } from "../types";
 import { SCAN_SYMBOLS } from "./ticker-utils";
 
@@ -47,7 +47,8 @@ async function fetchOptionsChain(symbol: string): Promise<OptionsChainResult | n
     // No date param — Yahoo returns the nearest expiry by default.
     // Passing a calculated date (e.g. next Friday) often misses the actual
     // expiry timestamp Yahoo expects, returning 0 contracts.
-    return await yahooFinance.options(symbol) as OptionsChainResult;
+    // PLAN.md 1h: per-run cache shared with the option features (same nearest-expiry call as before)
+    return (await fetchOptionsRaw(symbol)) as OptionsChainResult;
   } catch (err) {
     console.warn(
       `[options-flow] Failed to fetch ${symbol}:`,

@@ -270,4 +270,9 @@ describe("processSignals with a universe (PR 1-0)", () => {
     await expect(processSignals(two("LIQD"))).resolves.toBe("scan_1");
     expect((rows()[0].features as Record<string, unknown>).shadow_ai_score).toBeNull();
   });
+
+  it("merges 1h option features into features", async () => {
+    await processSignals(two("LIQD"), { optionsFeatures: { LIQD: { opt_features_version: 1, opt_atm_iv_30d: 0.62, opt_skew_25d: 0.04 } } });
+    expect(rows()[0].features).toMatchObject({ opt_atm_iv_30d: 0.62, opt_skew_25d: 0.04 });
+  });
 });

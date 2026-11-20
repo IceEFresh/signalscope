@@ -99,6 +99,8 @@ const ingestPayloadSchema = z.object({
     })
     .nullable()
     .optional(),
+  // PLAN.md 1h option-chain features (log only)
+  optionsFeatures: z.record(z.string(), z.record(z.string(), nullableNum)).optional(),
   watchChecks: z
     .array(
       z.object({
@@ -137,6 +139,7 @@ export async function POST(req: NextRequest) {
       stp: parsed.stp ?? {},
       regime: parsed.regime,
       sectorRotation: (parsed.sectorRotation ?? undefined) as ProcessContext["sectorRotation"],
+      optionsFeatures: parsed.optionsFeatures ?? {},
       watchChecks: parsed.watchChecks ?? [],
     });
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
