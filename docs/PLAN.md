@@ -76,6 +76,7 @@ The rule for the rest of this phase is that each PR adds data and changes no sco
 | PR | Change | Book ref |
 |---|---|---|
 | 1a | Bar-feature module: one Yahoo 3-month daily fetch per symbol, replacing the 15-day call. It computes and stores: close vs 20/50-day SMA, 20-day SMA slope, close location in the day's range, consecutive up days, range vs 10-day average, NR4/NR7 flags, ATR, % above the 20–60 day high, 50-day volume ratio, 20-day relative strength vs SPY, 14-day RSI min/max, 20-day historical volatility. Plus Chris's STP order-flow state (from his TradingView "STP Indicators and Trade Triggers"): close vs the current week's open and the current month's open, with a combined flag for both above (bullish order flow) or both below | #1–4, 8, 11–13, 17 |
+| 1g | STP daily signals, spec in `docs/STP-SIGNALS.md`: for every universe ticker on every scan, store the STP states (`stp_htf_opens`, `stp_ma_state`, `stp_well_bid`, `stp_size_factor`), the trigger (`stp_trigger`, `stp_trigger_type`) and the trade parameters (entry, stop, 2R and 3R targets, add level). Log only: the trigger doesn't become a signal source or change any label until Phase 3 shows it predicts returns. Depends on 1a's bar module. | Chris's STP method |
 | 1b | `days_to_earnings` from the `earningsDate` that is already fetched; ATM implied volatility from the options chain the harvester already pulls | #5, 6 |
 | 1c | Market regime fields per scan: SPY vs its 20-day SMA, VIX trend, TLT trend, SPY distribution-day count | #7, 14 |
 | 1d | Move AI models to current Claude (Haiku for scoring, Sonnet for reports), add prompt caching, and update the `PRICING` table | — |
@@ -107,7 +108,12 @@ Only then: promote winning features into `RECOMMENDATION_RULE_PATHS` or the oppo
 
 ## Phase 4: Execution (after Phase 3)
 
-Add an A/B test inside paper trading: fills at market on the signal vs a Williams-style buy-stop at the open plus 50% of the prior day's range, exiting at the first profitable open or after N days (#9). Compare after at least 50 trades per arm.
+Add arms to paper trading, each a separate strategy on the same signals:
+- A: market fill at the open after the signal (the current behaviour)
+- B: STP execution from `docs/STP-SIGNALS.md`: a buy-stop at high + fudge, stop at low − fudge, 2R or 3R target chosen by the PR 1c regime, exits on the mechanical and profit-maximizer rules
+- C: a Williams-style buy-stop at the open plus 50% of the prior day's range, exiting at the first profitable open or after N days (#9)
+
+Compare after at least 50 trades per arm.
 
 ## Workflows to confirm before handoff
 
