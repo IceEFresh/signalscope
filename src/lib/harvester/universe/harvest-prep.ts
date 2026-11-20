@@ -9,7 +9,10 @@
  */
 import { SCAN_SYMBOLS } from "../sources/ticker-utils";
 import type { IngestBarMetrics, RawSignal, WatchCheck } from "../types";
-import { fetchBarMetricsMany, type BarMetrics } from "./bar-metrics";
+import { fetchBarMetricsMany, parseChartBars, type BarMetrics } from "./bar-metrics";
+import { computeBarFeatures, type BarFeatures } from "./bar-features";
+import { computeStp, type StpResult } from "./stp";
+import { fetchDailyChart } from "../yahoo-chart";
 import { buildUniverse, defaultDeps, evaluateSymbols, type UniverseBuildResult } from "./build";
 import { applyWatchResults, type ActiveWatchRow } from "./watch";
 
@@ -80,6 +83,8 @@ export async function prepareHarvest(deps: HarvestPrepDeps): Promise<HarvestPrep
 
 export interface IngestExtras {
   barMetrics: Record<string, IngestBarMetrics>;
+  /** PLAN.md 1a, log only. */
+  barFeatures: Record<string, BarFeatures>;
   watchChecks: WatchCheck[];
   graduationSignals: RawSignal[];
 }
@@ -94,6 +99,7 @@ export async function computeIngestExtras(
   fetchMetrics: (symbols: string[]) => Promise<Map<string, BarMetrics>> = (s) => fetchBarMetricsMany(s, { label: "bars" }),
   evaluate: typeof evaluateSymbols = evaluateSymbols,
   now: Date = new Date(),
+  fetchFeatures: (symbols: string[]) => Promise<Record<string, BarFeatures>> = featuresFromCachedCharts,
 ): Promise<IngestExtras> {
   const watchSymbols = [...new Set(watch.map((w) => w.symbol))];
   const symbols = [...new Set([...signals.map((s) => s.symbol), ...watchSymbols])];
@@ -107,6 +113,15 @@ export async function computeIngestExtras(
   const barMetrics: Record<string, IngestBarMetrics> = {};
   for (const [sym, m] of metrics) {
     barMetrics[sym] = { dollarVolume20d: m.dollarVolume20d, atrPct: m.atrPct, hv20: m.hv20 };
+  }
+
+  // Bar features (1a) for signal symbols whose chart loaded: cache hits, plus one SPY chart.
+  let barFeatures: Record<string, BarFeatures> = {};
+  const signalSymbols = [...new Set(signals.map((s) => s.symbol))].filter((s) => metrics.has(s));
+  try {
+    barFeatures = await fetchFeatures(signalSymbols);
+  } catch (err) {
+    console.warn("[features] failed:", err instanceof Error ? err.message : err);
   }
 
   let watchChecks: WatchCheck[] = [];
@@ -126,9 +141,26 @@ export async function computeIngestExtras(
     }
   }
   console.log(
-    `[bars] metrics for ${metrics.size}/${symbols.length} symbols; [watch] ${watchChecks.length} checked, ${graduationSignals.length} graduated`,
+    `[bars] metrics for ${metrics.size}/${symbols.length} symbols, features for ${Object.keys(barFeatures).length}; [watch] ${watchChecks.length} checked, ${graduationSignals.length} graduated`,
   );
-  return { barMetrics, watchChecks, graduationSignals };
+  return { barMetrics, barFeatures, watchChecks, graduationSignals };
+}
+
+/**
+ * Compute 1a bar features from the per-run chart cache (no new requests for
+ * symbols already fetched) plus SPY for relative strength.
+ */
+export async function featuresFromCachedCharts(symbols: string[]): Promise<Record<string, BarFeatures>> {
+  const out: Record<string, BarFeatures> = {};
+  if (symbols.length === 0) return out;
+  const spy = await fetchDailyChart("SPY");
+  const spyBars = spy.ok ? parseChartBars(spy.json) : null;
+  if (!spyBars || spyBars.length === 0) console.warn("[features] SPY bars unavailable: rs_vs_spy_20d will be null");
+  for (const s of symbols) {
+    const res = await fetchDailyChart(s);
+    if (res.ok) out[s] = computeBarFeatures(parseChartBars(res.json), spyBars);
+  }
+  return out;
 }
 
 /** Default prep deps that talk to the web app over HTTP with the harvest key. */
@@ -156,4 +188,40 @@ export function httpPrepDeps(universeUrl: string, apiKey: string): HarvestPrepDe
       return ((await res.json()) as { id: string }).id;
     },
   };
+}
+
+/**
+ * STP daily states and triggers (PLAN.md 1g, log only) for every scanned symbol:
+ * the universe plus this run's signal symbols. Charts come from the per-run cache
+ * (volume spike and bar metrics already fetched them); earnings timestamps come
+ * from one quote batch per 50 symbols. A failure leaves a symbol out.
+ */
+export async function computeStpExtras(
+  symbols: readonly string[],
+  fetchQuotes: (s: string[]) => Promise<Map<string, { earningsTs?: number | null }>> = defaultDeps().fetchQuotes,
+  getChart: typeof fetchDailyChart = fetchDailyChart,
+): Promise<Record<string, StpResult>> {
+  const list = [...new Set(symbols)];
+  const out: Record<string, StpResult> = {};
+  if (list.length === 0) return out;
+  let quotes = new Map<string, { earningsTs?: number | null }>();
+  try {
+    quotes = await fetchQuotes(list);
+  } catch (err) {
+    console.warn("[stp] earnings quotes failed, EGOP off for this run:", err instanceof Error ? err.message : err);
+  }
+  let triggers = 0;
+  for (const s of list) {
+    try {
+      const res = await getChart(s);
+      if (!res.ok) continue;
+      const r = computeStp(parseChartBars(res.json), quotes.get(s)?.earningsTs ?? null);
+      out[s] = r;
+      if (r.trigger) triggers++;
+    } catch (err) {
+      console.warn(`[stp] ${s} failed:`, err instanceof Error ? err.message : err);
+    }
+  }
+  console.log(`[stp] states for ${Object.keys(out).length}/${list.length} symbols, ${triggers} triggers`);
+  return out;
 }

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   computeIngestExtras,
+  computeStpExtras,
   isStale,
   prepareHarvest,
   universeUrlFrom,
@@ -92,13 +95,18 @@ describe("computeIngestExtras", () => {
   it("fetches bars once for signal and watch symbols and emits graduations", async () => {
     const fetchMetrics = vi.fn(async (s: string[]) => new Map(s.filter((x) => x !== "FAIL").map((x) => [x, metric])));
     const evaluate = vi.fn(async () => new Map([["SMOL", { passes: true, failing: [], metrics: metric }]]));
+    const fetchFeatures = vi.fn(async (s: string[]) => Object.fromEntries(s.map((x) => [x, { features_version: 1 } as never])));
     const out = await computeIngestExtras(
       [{ symbol: "AAA", source: "REDDIT" }, { symbol: "AAA", source: "TWITTER" }, { symbol: "FAIL", source: "REDDIT" }],
       [watchRow],
       fetchMetrics,
       evaluate,
       now,
+      fetchFeatures,
     );
+    // Features only for signal symbols whose chart loaded (not FAIL, not the watch-only SMOL)
+    expect(fetchFeatures).toHaveBeenCalledWith(["AAA"]);
+    expect(Object.keys(out.barFeatures)).toEqual(["AAA"]);
     expect(fetchMetrics).toHaveBeenCalledTimes(1);
     expect(fetchMetrics).toHaveBeenCalledWith(["AAA", "FAIL", "SMOL"]);
     expect(Object.keys(out.barMetrics).sort()).toEqual(["AAA", "SMOL"]); // FAIL absent, not zero
@@ -114,7 +122,38 @@ describe("computeIngestExtras", () => {
       async () => { throw new Error("network"); },
       async () => { throw new Error("network"); },
       now,
+      async () => { throw new Error("network"); },
     );
-    expect(out).toEqual({ barMetrics: {}, watchChecks: [], graduationSignals: [] });
+    expect(out).toEqual({ barMetrics: {}, barFeatures: {}, watchChecks: [], graduationSignals: [] });
+  });
+});
+
+describe("computeStpExtras (PLAN.md 1g)", () => {
+  const amd = JSON.parse(readFileSync(join(__dirname, "fixtures/universe/chart-AMD-3mo.json"), "utf8"));
+
+  it("computes STP for every symbol from cached charts, de-duplicated, skipping failed charts", async () => {
+    const getChart = vi.fn(async (s: string) =>
+      s === "BAD" ? { ok: false as const, status: 500, rateLimited: false } : { ok: true as const, json: amd },
+    );
+    const fetchQuotes = vi.fn(async () => new Map([["AMD", { earningsTs: null }]]));
+    const out = await computeStpExtras(["AMD", "AMD", "BAD"], fetchQuotes, getChart as never);
+    expect(Object.keys(out)).toEqual(["AMD"]);
+    expect(getChart).toHaveBeenCalledTimes(2);
+    expect(out.AMD.atr14).toBeGreaterThan(0);
+  });
+
+  it("still computes STP when the earnings quote batch fails", async () => {
+    const out = await computeStpExtras(
+      ["AMD"],
+      async () => { throw new Error("crumb"); },
+      (async () => ({ ok: true as const, json: amd })) as never,
+    );
+    expect(out.AMD).toBeDefined();
+  });
+
+  it("returns {} for no symbols without fetching", async () => {
+    const fetchQuotes = vi.fn();
+    expect(await computeStpExtras([], fetchQuotes as never)).toEqual({});
+    expect(fetchQuotes).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,7 @@ const mockScoreBatch = vi.fn();
 const mockLoadUniverse = vi.fn();
 const mockRecordWatch = vi.fn();
 const mockApplyChecks = vi.fn();
+const mockStpCreateMany = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -19,6 +20,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     signal: { findMany: vi.fn().mockResolvedValue([]) },
     validatedTicker: { findMany: vi.fn().mockResolvedValue([]) },
+    stpSignal: { createMany: (...a: unknown[]) => mockStpCreateMany(...a) },
     $transaction: async (fn: (tx: unknown) => Promise<void>) =>
       fn({
         signal: { createMany: vi.fn(), updateMany: vi.fn() },
@@ -134,5 +136,42 @@ describe("processSignals with a universe (PR 1-0)", () => {
     expect(isOutside("SMOL")).toBe(true);
     expect(isOutside("LIQD")).toBe(false);
     expect(mockApplyChecks).toHaveBeenCalledWith(checks, "scan_1");
+  });
+
+  it("stores 1a bar features as-is and does not change any score, stage or label input (log only)", async () => {
+    const features = { features_version: 1, close_vs_sma20: 0.05, nr7: true, bar_date: "2026-11-19", rsi14: null };
+    await processSignals(two("LIQD"), { barMetrics: { LIQD: { dollarVolume20d: 5e7, atrPct: 0.05, hv20: 0.6 } } });
+    const without = { ...rows()[0] };
+    mockCreateManyTicker.mockClear();
+    await processSignals(two("LIQD"), {
+      barMetrics: { LIQD: { dollarVolume20d: 5e7, atrPct: 0.05, hv20: 0.6 } },
+      barFeatures: { LIQD: features },
+    });
+    const withF = rows()[0];
+    expect(withF.features).toEqual(features);
+    expect(without.features).toBeUndefined(); // column left null when no features
+    // opportunityScore, aiScore, stage, everything else identical
+    expect({ ...withF, features: undefined }).toEqual({ ...without, features: undefined });
+  });
+
+  it("stores 1g STP rows for every scanned symbol with universe membership, log only", async () => {
+    mockStpCreateMany.mockResolvedValue({ count: 2 });
+    const stpRow = {
+      barDate: "2026-11-19", htfOpens: 1, maState: 1, wellBid: 0, sizeFactor: 1, trigger: 1, triggerType: "inside",
+      firedRules: ["inside+"], atr14: 2, fudge: 0.22, entry: 10.22, stop: 8.78, risk: 1.44,
+      target2R: 13.1, target3R: 14.54, addLevel2R: 12.22, addLevel3R: 14.22,
+    };
+    await processSignals(two("LIQD"), { stp: { LIQD: stpRow, NOSIG: { ...stpRow, trigger: 0, triggerType: null } } });
+    const data = mockStpCreateMany.mock.calls[0][0].data as Array<Record<string, unknown>>;
+    expect(data).toHaveLength(2);
+    expect(data[0]).toMatchObject({ scanId: "scan_1", symbol: "LIQD", inUniverse: true, trigger: 1, entry: 10.22 });
+    expect(data[1]).toMatchObject({ symbol: "NOSIG", inUniverse: false, trigger: 0 });
+    // the ticker row is unaffected by STP data
+    expect(rows()[0]).not.toHaveProperty("stp");
+  });
+
+  it("does not fail the scan when storing STP rows throws", async () => {
+    mockStpCreateMany.mockRejectedValue(new Error("db down"));
+    await expect(processSignals(two("LIQD"), { stp: { LIQD: { barDate: null, htfOpens: null, maState: null, wellBid: null, sizeFactor: null, trigger: null, triggerType: null, firedRules: [], atr14: null, fudge: null, entry: null, stop: null, risk: null, target2R: null, target3R: null, addLevel2R: null, addLevel3R: null } } })).resolves.toBe("scan_1");
   });
 });

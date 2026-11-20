@@ -43,7 +43,7 @@ On daily bars `trendDirection = stp_htf_opens`, because the VWAP term is intrada
 - **BUTN (bullish U-turn), `+1`:** high < high[t-1], close[t-1] < open[t-1], close > close[t-1], low < low[t-1], close > low[t-1] and close > open.
 - **BRUTN (bearish U-turn), `-1`:** low > low[t-1], close[t-1] > open[t-1], close < close[t-1], high > high[t-1], close < high[t-1] and close < open.
 - **Mechanical I:** with sma20 ≥ sma50 and sma10 ≤ sma20, close crosses above sma20 → `+1`. With sma20 ≤ sma50 and sma10 ≥ sma20, close crosses below sma20 → `-1`.
-- **Mechanical II:** same moving-average conditions. Bullish when close > sma20 and sma10 crosses above sma20; bearish when close < sma20 and sma10 crosses below sma20.
+- **Mechanical II:** bullish when sma20 ≥ sma50, close > sma20 and sma10 crosses above sma20; bearish when sma20 ≤ sma50, close < sma20 and sma10 crosses below sma20. Note: in the original Pine indicator this block sat inside Mechanical I's `sma20 >= sma50 and sma10 <= sma20` condition, which made it unreachable (a crossover needs sma10 > sma20 on the same bar). A commented-out line checking `sma10[1] <= sma20[1]` shows the intent was the previous bar, which a crossover already implies.
 - **EGOP (earnings gap):** on the first bar after an earnings release, bullish when low > high[t-1] and close > open; bearish when high < low[t-1] and close < open. Use the `earningsDate` already fetched in `fundamentals.ts`.
 
 "Crosses above" means the value was ≤ the level at t-1 and is > the level at t. "Crosses below" is the mirror.
@@ -57,6 +57,8 @@ Bullish (`+1`) when any of these holds:
 - EGOP is bullish
 
 Bearish (`-1`) is the mirror. Store which rule fired as `stp_trigger_type` (`inside`, `butn`, `brutn`, `mech1`, `mech2`, `egop`).
+
+When bullish and bearish rules both fire on the same bar, bullish wins (Pine's `isATrade` checks the bullish conditions first): `stp_trigger = +1` and `stp_trigger_type` is the first bullish rule. Every rule that fired is still stored in `firedRules` so conflicts stay queryable.
 
 Note: the Pine code flags an inside candle against the trend direction only, not against its own body direction. Keep that behaviour.
 

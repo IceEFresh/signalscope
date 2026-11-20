@@ -17,6 +17,15 @@ export interface QuoteInfo {
   marketCap: number | null;
   /** 3-month average share volume, used only for the cheap pre-filter. */
   avgVolume3m: number | null;
+  /** Latest earnings release, unix seconds (Yahoo earningsTimestamp), for STP EGOP (1g). */
+  earningsTs?: number | null;
+}
+
+/** yahoo-finance2 may return earningsTimestamp as a Date or as unix seconds. */
+export function toUnixSeconds(v: unknown): number | null {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : Math.floor(v.getTime() / 1000);
+  if (typeof v === "number" && Number.isFinite(v)) return v > 1e12 ? Math.floor(v / 1000) : v;
+  return null;
 }
 
 export interface UniverseMemberData {
@@ -131,6 +140,7 @@ async function fetchQuotesYahoo(symbols: string[]): Promise<Map<string, QuoteInf
           price: q.regularMarketPrice ?? null,
           marketCap: q.marketCap ?? null,
           avgVolume3m: typeof rec.averageDailyVolume3Month === "number" ? rec.averageDailyVolume3Month : null,
+          earningsTs: toUnixSeconds(rec.earningsTimestamp),
         });
       }
     } catch (err) {
