@@ -84,6 +84,7 @@ The rule for the rest of this phase is that each PR adds data and changes no sco
 | 1c | Market regime fields per scan: SPY vs its 20-day SMA, VIX trend, TLT trend, SPY distribution-day count | #7, 14 |
 | 1d | Move AI models to current Claude (Haiku for scoring, Sonnet for reports), add prompt caching, and update the `PRICING` table | — |
 | 1f | Sector and industry rotation: keep Yahoo's `industry` field, which `fundamentals.ts` currently discards. Fetch daily bars for the 11 SPDR sector ETFs (XLK, XLF, XLV, XLY, XLP, XLE, XLI, XLB, XLU, XLRE, XLC) plus about 25 industry ETFs, mapped from Yahoo industry through a hand-built table. Store per scan: each sector's 20- and 60-day return vs SPY, its rank out of 11, and the 4-week change in that rank (the rotation signal). Also each sector's week-to-date, month-to-date and day return measured from the period open, matching Chris's "STP Sector Rotation" TradingView indicator, ranked by week-to-date. Store per ticker: return vs its sector and vs its industry ETF, plus the count of same-industry tickers in this scan (theme clustering). | #8 |
+| 1h | **Full option chains from Cboe** (Chris: options data is a priority). New harvester fetch of Cboe's free delayed-quote JSON per universe ticker: [Likely] `https://cdn.cboe.com/api/global/delayed_quotes/options/<TICKER>.json`, 15-min delayed, all expiries, with volume, OI, IV, greeks, bid/ask. Verify the URL and response shape first and save a real fixture. Store per ticker in `features`: ATM IV for the nearest and ~30-day expiry (term structure), IV/HV20 ratio (HV from 1a), 25-delta put−call skew, put/call volume and OI ratios across all expiries, total call and put premium (volume × mid × 100), and the count of contracts with volume ≥ 3× OI. Log only: the existing Yahoo OPTIONS_FLOW signal is unchanged; Phase 3 decides whether Cboe replaces it. Supersedes the implied-volatility half of 1b. Pace requests like the other sources and log ok/failed/429 counts. Add `cdn.cboe.com` to the cloud allowlist. | #6, Natenberg |
 | 1e | Make the Yahoo fetch resilient: retry with backoff and log failures per source. Alpaca market data stays a fallback for later. | — |
 
 Storage: new nullable columns, or one `features` JSONB column per ticker-scan row, added through a Prisma migration. Prefer JSONB so new features need no further migrations.
@@ -95,6 +96,7 @@ Storage: new nullable columns, or one `features` JSONB column per ticker-scan ro
 | 2a | Classify insiders as routine or opportunistic (same calendar month in 3+ prior years = routine), via EDGAR Form 4 history. Log the class now; gate on it later. | Cohen, Malloy & Pomorski 2012 |
 | 2b | Log `CONGRESS` as a separate feature and prepare a test that removes it from `HARD_CATALYST_SOURCES` | Belmont et al. 2022 |
 | 2c | Reddit: tag long-form fundamental DD posts separately from hype and price-pressure posts | Bradley et al. 2024 |
+| 2e | **Alpaca options trades and chain snapshots** (once Chris's Alpaca key exists). Alpaca's free indicative feed gives derived quotes and 15-minute-delayed derived trades, and its chain endpoint returns the latest trade, quote and greeks per contract. Log per ticker: count and premium of large prints (≥ $100K premium), trade count by expiry bucket. Don't infer buy or sell side from indicative quotes: they're modified. Real OPRA trades need Alpaca Algo Trader Plus ($99/mo); decide on that together with 2d. | — |
 | 2d | Decide on paid options flow (Unusual Whales at $125/mo) only after Phase 3 shows whether the options features carry any weight | — |
 
 ## Phase 3: Validate (from week 6, or week 2 with maintainer data)
@@ -130,6 +132,10 @@ Compare after at least 50 trades per arm.
 | Staging | None. Apart from PR 1-0, Phase 1–2 changes are log-only, so a bad deploy can't corrupt labels. Revisit before Phase 3 rule changes. | decision |
 | Secrets | `.env` lives only on the NAS, never committed. Separate API keys per service. | to confirm |
 | Claude Code instructions | Add a `CLAUDE.md` to the fork covering: the log-only rule for Phases 1–2, the testing rules from Phase 3, "no rule changes without an experiment-log entry", and how to run tests | to write |
+
+## Decided
+
+- **Daily timeframe first, free delayed data only** (Chris, 2026-11-20). All signals and features run on daily bars and 15-minute-delayed or end-of-day data. No intraday work and no paid data feeds (Unusual Whales, Massive, Alpaca Algo Trader Plus) until Phase 3 shows an edge on the daily timeframe.
 
 ## Open decisions (defaults assumed)
 
