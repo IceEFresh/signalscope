@@ -49,6 +49,7 @@ const SOURCE_LABELS: Record<string, string> = {
   TWITTER: "Twitter / X",
   STOCKTWITS: "StockTwits",
   POLYMARKET: "Polymarket",
+  GRADUATION: "Graduation Watch",
 };
 
 function formatSource(source: string): string {

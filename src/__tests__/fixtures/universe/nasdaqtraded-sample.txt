@@ -1,0 +1,17 @@
+Nasdaq Traded|Symbol|Security Name|Listing Exchange|Market Category|ETF|Round Lot Size|Test Issue|Financial Status|CQS Symbol|NASDAQ Symbol|NextShares
+Y|AAC.U|Ares Acquisition Corporation III Units, each consisting of one Class A ordinary share and one-tenth of one redeemable warrant|N| |N|100|N||AAC.U|AAC=|N
+Y|AAC.W|Ares Acquisition Corporation III Redeemable warrants, each whole warrant exercisable for one Class A ordinary share at an exercise price of $11.50|N| |N|100|N||AAC.WS|AAC+|N
+Y|AACIW|Armada Acquisition Corp. III - Warrant|Q|G|N|100|N|N||AACIW|N
+Y|AAPL|Apple Inc. - Common Stock|Q|Q|N|40|N|N||AAPL|N
+Y|AMD|Advanced Micro Devices, Inc. - Common Stock|Q|Q|N|40|N|N||AMD|N
+Y|BRK.B|Berkshire Hathaway Inc. New Common Stock|N| |N|40|N||BRK.B|BRK.B|N
+Y|PLTR|Palantir Technologies Inc. - Class A Common Stock|Q|Q|N|100|N|N||PLTR|N
+Y|SOFI|SoFi Technologies, Inc.  - Common Stock|Q|Q|N|100|N|N||SOFI|N
+Y|SPY|State Street SPDR S&P 500 ETF Trust|P| |Y|40|N||SPY|SPY|N
+Y|TSM|Taiwan Semiconductor Manufacturing Company Ltd.|N| |N|40|N||TSM|TSM|N
+Y|ZVZZT|NASDAQ TEST STOCK|Q|G|N|100|Y|N||ZVZZT|N
+Y|AACG|ATA Creativity Global - American Depositary Shares, each representing two common shares|Q|S|N|100|N|D||AACG|N
+Y|ABR$D|Arbor Realty Trust 6.375% Series D Cumulative Redeemable Preferred Stock, Liquidation Preference $25.00 per Share|N| |N|100|N||ABRpD|ABR-D|N
+Y|AACPR|Apogee Acquisition Corp - Rights|Q|G|N|100|N|N||AACPR|N
+N|BRK.A|Berkshire Hathaway Inc. Common Stock|N| |N|1|N||BRK.A|BRK.A|N
+File Creation Time: 1120202615:43|||||

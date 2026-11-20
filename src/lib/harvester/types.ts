@@ -1,4 +1,4 @@
-export type Source = "REDDIT" | "STOCKTWITS" | "SEC_INSIDER" | "SEC_FILING" | "OPTIONS_FLOW" | "VOLUME_SPIKE" | "TWITTER" | "CONGRESS" | "POLYMARKET";
+export type Source = "REDDIT" | "STOCKTWITS" | "SEC_INSIDER" | "SEC_FILING" | "OPTIONS_FLOW" | "VOLUME_SPIKE" | "TWITTER" | "CONGRESS" | "POLYMARKET" | "GRADUATION";
 
 export interface RawSignal {
   symbol: string;
@@ -38,6 +38,13 @@ export interface RawSignal {
   marketVolume24hr?: number;   // 24h volume in USD
   marketLiquidity?: number;    // available liquidity in USD
   marketEndDate?: string;      // market expiration (ISO)
+  // Graduation watch (PLAN.md PR 1-0)
+  filedAt?: string;            // filing or disclosure date of an insider/congress trade (ISO or YYYY-MM-DD)
+  filingKey?: string;          // stable id of the underlying filing, used to de-duplicate watch rows
+  reportingGapDays?: number;   // congress: days between trade and disclosure
+  graduationSource?: string;   // GRADUATION: INSIDER | POLITICIAN | ACTIVIST | NEW_INSIDER
+  filingAgeDays?: number;      // GRADUATION: days since the watched filing
+  flippedCriteria?: string[];  // GRADUATION: universe criteria that failed last check and pass now
 }
 
 export interface ScoredSignal extends RawSignal {
@@ -66,7 +73,7 @@ export interface FundamentalData {
   sharesOutstanding?: number | null;
 }
 
-export type SignalType = "insider_buy" | "options_flow" | "congress_buy" | "multi_source" | "reddit_velocity" | "twitter_velocity" | "polymarket_activity";
+export type SignalType = "insider_buy" | "options_flow" | "congress_buy" | "multi_source" | "reddit_velocity" | "twitter_velocity" | "polymarket_activity" | "graduation";
 
 export interface AiScoreResult {
   symbol: string;
@@ -125,9 +132,28 @@ export interface MomentumBreakdown {
   staleCount: number;       // postAge > 12h
 }
 
+/** Per-symbol liquidity/volatility metrics computed on the harvester (null = unavailable). */
+export interface IngestBarMetrics {
+  dollarVolume20d: number | null;
+  atrPct: number | null;
+  hv20: number | null;
+}
+
+/** Result of re-checking one graduation-watch row against the universe rule. */
+export interface WatchCheck {
+  watchId: string;
+  failingCriteria: string[];
+  graduated: boolean;
+  flippedCriteria: string[];
+}
+
 export interface HarvestIngestPayload {
   signals: RawSignal[];
   harvestedAt: string; // ISO timestamp
+  /** Universe the harvester scanned with; null/absent = static SCAN_SYMBOLS fallback. */
+  universeId?: string | null;
+  barMetrics?: Record<string, IngestBarMetrics>;
+  watchChecks?: WatchCheck[];
 }
 
 export interface AggregatedSymbol {

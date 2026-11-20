@@ -216,12 +216,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function fetchOptionsFlowSignals(): Promise<RawSignal[]> {
-  console.log("Options Flow: scanning", SCAN_SYMBOLS.length, "symbols...");
+/** Scans `symbols` (the generated universe when available, else the static SCAN_SYMBOLS list). */
+export async function fetchOptionsFlowSignals(symbols: readonly string[] = SCAN_SYMBOLS): Promise<RawSignal[]> {
+  console.log("Options Flow: scanning", symbols.length, "symbols...");
   const signals: RawSignal[] = [];
 
-  for (let i = 0; i < SCAN_SYMBOLS.length; i += BATCH_SIZE) {
-    const batch = SCAN_SYMBOLS.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+    const batch = symbols.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
       batch.map((symbol) => fetchOptionsChain(symbol))
     );
@@ -242,11 +243,11 @@ export async function fetchOptionsFlowSignals(): Promise<RawSignal[]> {
     }
 
     // Rate limit between batches (skip delay after last batch)
-    if (i + BATCH_SIZE < SCAN_SYMBOLS.length) {
+    if (i + BATCH_SIZE < symbols.length) {
       await sleep(BATCH_DELAY_MS);
     }
   }
 
-  console.log(`Options Flow: ${signals.length} signals from ${SCAN_SYMBOLS.length} symbols`);
+  console.log(`Options Flow: ${signals.length} signals from ${symbols.length} symbols`);
   return signals;
 }

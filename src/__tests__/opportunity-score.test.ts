@@ -17,14 +17,15 @@ const baseInput = {
 };
 
 describe("computeOpportunityScore", () => {
-  it("novel micro-cap with high velocity scores ~90+", () => {
+  it("novel high-ATR name with high velocity scores ~90+", () => {
     const score = computeOpportunityScore({
       aiScore: 20,
       firstSeenDaysAgo: null, // truly novel → 30
       priorAppearances: 0,
       avgVelocity: 3.0, // → 15
       price: 2.5,
-      marketCap: 30_000_000, // → 15
+      marketCap: 800_000_000, // no cap bonus since PR 1-0
+      atrPct: 0.07, // → 15 (PR 1-0 volatility term)
       wk52Lo: 2.0,
       wk52Hi: 10.0,
       medianSignalAgeHrs: 1, // → 5
@@ -32,7 +33,7 @@ describe("computeOpportunityScore", () => {
       sourceCount: 2,
       stage: "EARLY",
     });
-    // novelty 14 + inverted 20 + velocity 15 + cap 15 + near52wkLow 10 + short 5 + freshness 5 + recovery 5 (ratio 4.0) = 89
+    // novelty 14 + inverted 20 + velocity 15 + ATR% 15 + near52wkLow 10 + short 5 + freshness 5 + recovery 5 (ratio 4.0) = 89
     expect(score).toBeGreaterThanOrEqual(85);
     expect(score).toBeLessThanOrEqual(100);
   });
@@ -83,7 +84,7 @@ describe("computeOpportunityScore", () => {
     expect(highVel).toBeGreaterThan(lowVel);
   });
 
-  it("micro-cap scores more than large-cap", () => {
+  it("micro-cap scores more than large-cap (large-cap penalty kept)", () => {
     const micro = computeOpportunityScore({ ...baseInput, marketCap: 20_000_000 });
     const large = computeOpportunityScore({ ...baseInput, marketCap: 100_000_000_000 });
     expect(micro).toBeGreaterThan(large);
@@ -214,5 +215,29 @@ describe("computeOpportunityScore", () => {
       // no upvotes/comments → no adjustment
     });
     expect(withModerateComments).toBeGreaterThan(withoutComments);
+  });
+
+  describe("PR 1-0: universe-focused score", () => {
+    it("gives no bonus for market caps under $2B", () => {
+      const micro = computeOpportunityScore({ ...baseInput, marketCap: 20_000_000 });
+      const mid = computeOpportunityScore({ ...baseInput, marketCap: 5_000_000_000 });
+      expect(micro).toBe(mid);
+    });
+
+    it("gives no NasdaqCM/AMEX penny bonus", () => {
+      const penny = { ...baseInput, price: 2, wk52Lo: 1.5, wk52Hi: 3 };
+      expect(computeOpportunityScore({ ...penny, exchange: "NasdaqCM" })).toBe(
+        computeOpportunityScore({ ...penny, exchange: "NYSE" }),
+      );
+    });
+
+    it("adds 0/5/10/15 for ATR% below 3%, from 3%, 4.5% and 6%", () => {
+      const at = (atrPct: number | null) => computeOpportunityScore({ ...baseInput, atrPct });
+      const base = at(null);
+      expect(at(0.02)).toBe(base);
+      expect(at(0.03)).toBe(base + 5);
+      expect(at(0.05)).toBe(base + 10);
+      expect(at(0.08)).toBe(base + 15);
+    });
   });
 });

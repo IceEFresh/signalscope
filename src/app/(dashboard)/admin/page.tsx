@@ -33,6 +33,7 @@ const SOURCE_LABELS: Record<string, string> = {
   VOLUME_SPIKE: "Volume Spike",
   OPTIONS_FLOW: "Options Flow",
   POLYMARKET:   "Polymarket",
+  GRADUATION:   "Graduation",
 };
 
 function formatRelative(dateStr: string): string {

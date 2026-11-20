@@ -63,6 +63,7 @@ Changes:
    - Drop tickers from the watch after 90 days. [Guessing] Insider-buy predictive power in Cohen et al. is measured monthly and fades after a few months.
    - Once PR 2a ships, store the routine or opportunistic class on each watch row. Promote only opportunistic buys to a catalyst; log routine ones.
    - [Guessing] The openinsider screener URL in `sec-insider.ts` sets `pl=50`. If that parameter is a minimum share price, the source already ignores insider buys on stocks under $50, which defeats this watch. Verify before building.
+   - Status after PR 1-0's first cut: insider and politician rows are built from the existing openinsider and Capitol Trades sources. Activist (13D), new-insider (Form 3) and Form 144 rows need new EDGAR or Financial Datasets sources and are a follow-up; the table's `source` column already covers them. `pl=50` is still unverified (PR #4 diagnostic), so insider rows may miss stocks under $50 until it is resolved.
 
 Consequences:
 - Upstream's Buy and Strong Buy thresholds were calibrated on a mixed universe, so they're provisional until Phase 3 recalibrates them on liquid names only.

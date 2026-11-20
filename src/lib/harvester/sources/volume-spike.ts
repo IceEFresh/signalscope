@@ -3,13 +3,14 @@ import { SCAN_SYMBOLS } from "./ticker-utils";
 
 const VOLUME_SPIKE_THRESHOLD = 2.0;
 
-export async function fetchVolumeSpikeSignals(): Promise<RawSignal[]> {
-  console.log("Volume Spike: scanning", SCAN_SYMBOLS.length, "symbols...");
+/** Scans `symbols` (the generated universe when available, else the static SCAN_SYMBOLS list). */
+export async function fetchVolumeSpikeSignals(symbols: readonly string[] = SCAN_SYMBOLS): Promise<RawSignal[]> {
+  console.log("Volume Spike: scanning", symbols.length, "symbols...");
   const signals: RawSignal[] = [];
 
   // Process in parallel batches of 10 (same pattern as fundamentals.ts)
-  for (let i = 0; i < SCAN_SYMBOLS.length; i += 10) {
-    const batch = SCAN_SYMBOLS.slice(i, i + 10);
+  for (let i = 0; i < symbols.length; i += 10) {
+    const batch = symbols.slice(i, i + 10);
     const results = await Promise.allSettled(
       batch.map((symbol) => fetchVolumeData(symbol))
     );

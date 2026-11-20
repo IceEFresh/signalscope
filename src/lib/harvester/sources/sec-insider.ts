@@ -172,6 +172,8 @@ async function fetchFromOpenInsider(): Promise<RawSignal[]> {
       author: r.insiderName,
       insiderTitle: r.insiderTitle,
       purchaseValue: r.value,
+      filedAt: r.filingDate,
+      filingKey: `insider:${r.ticker}|${r.insiderName}|${r.tradeDate}|${r.qty}|${r.price}`,
     }));
 
     console.log(`OpenInsider: ${allRows.length} purchases found, ${signals.length} C-suite/director $50K+ signals`);
