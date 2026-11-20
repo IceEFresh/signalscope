@@ -4,9 +4,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-const { fetchVolumeData, fetchVolumeSpikeSignals } = await import(
+const { fetchVolumeData, fetchVolumeSpikeSignals, parseVolumeData } = await import(
   "@/lib/harvester/sources/volume-spike"
 );
+const { clearChartCache } = await import("@/lib/harvester/yahoo-chart");
 
 function chartResponse(
   symbol: string,
@@ -36,6 +37,7 @@ function chartResponse(
 describe("fetchVolumeData — volume average computation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearChartCache();
   });
 
   it("computes average from historical bars when meta.averageDailyVolume10Day is absent", async () => {
@@ -152,13 +154,13 @@ describe("fetchVolumeData — volume average computation", () => {
     expect(ratio).toBe(2.5);
   });
 
-  it("fetches with 15d range to get enough historical data", async () => {
+  it("fetches the shared 3-month daily chart (PLAN.md 1a replaces the 15d call)", async () => {
     mockFetch.mockResolvedValueOnce(chartResponse("CHK", [100, 200], 200));
 
     await fetchVolumeData("CHK");
 
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining("range=15d"),
+      expect.stringContaining("range=3mo"),
       expect.any(Object)
     );
     expect(mockFetch).toHaveBeenCalledWith(
@@ -174,6 +176,7 @@ describe("fetchVolumeSpikeSignals — rate limits (PR 1-0 review)", () => {
 
   beforeEach(() => {
     mockFetch.mockReset();
+    clearChartCache();
   });
 
   it("retries once on 429 and keeps the signal when the retry succeeds", async () => {
@@ -216,5 +219,32 @@ describe("fetchVolumeSpikeSignals — rate limits (PR 1-0 review)", () => {
     await p;
     expect(mockFetch).toHaveBeenCalledTimes(3);
     vi.useRealTimers();
+  });
+});
+
+describe("parseVolumeData on the 3-month chart (PLAN.md 1a)", () => {
+  const DAY = 86_400;
+  const now = new Date("2026-11-20T13:30:00Z"); // 8:30 ET harvest
+  const nowS = now.getTime() / 1000;
+
+  it("uses only the last 15 calendar days, matching the old range=15d call", () => {
+    // 40 daily bars: old ones at 10M, the last 15 calendar days at 1M, last bar 3M
+    const times = Array.from({ length: 40 }, (_, i) => nowS - (40 - i) * DAY);
+    const volumes = times.map((t, i) => (i === 39 ? 3_000_000 : t >= nowS - 15 * DAY ? 1_000_000 : 10_000_000));
+    const json = { chart: { result: [{ meta: {}, timestamp: times, indicators: { quote: [{ volume: volumes }] } }] } };
+    const d = parseVolumeData("W", json, now)!;
+    expect(d.averageDailyVolume10Day).toBe(1_000_000);
+    expect(d.regularMarketVolume).toBe(3_000_000);
+  });
+
+  it("gives the same result as a 15-day chart of the same bars", () => {
+    const times = Array.from({ length: 60 }, (_, i) => nowS - (60 - i) * DAY);
+    const volumes = times.map((_, i) => 1_000_000 + i * 10_000);
+    const full = { chart: { result: [{ meta: {}, timestamp: times, indicators: { quote: [{ volume: volumes }] } }] } };
+    const keep = times.map((t) => t >= nowS - 15 * DAY);
+    const short = {
+      chart: { result: [{ meta: {}, timestamp: times.filter((_, i) => keep[i]), indicators: { quote: [{ volume: volumes.filter((_, i) => keep[i]) }] } }] },
+    };
+    expect(parseVolumeData("W", full, now)).toEqual(parseVolumeData("W", short, now));
   });
 });

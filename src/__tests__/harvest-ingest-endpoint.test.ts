@@ -45,6 +45,7 @@ describe("POST /api/harvest/ingest", () => {
     expect(mockProcessSignals).toHaveBeenCalledWith(validPayload.signals, {
       universeId: null,
       barMetrics: {},
+      barFeatures: {},
       watchChecks: [],
     });
   });

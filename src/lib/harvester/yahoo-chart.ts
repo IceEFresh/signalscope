@@ -61,3 +61,30 @@ export class FetchStats {
     return `charts ok=${this.ok} failed=${this.failed} rate-limited(429)=${this.rateLimited} of ${this.total}`;
   }
 }
+
+/**
+ * One 3-month daily chart per symbol per harvest run (PLAN.md 1a). Volume spike,
+ * bar metrics and bar features all read from it, so a symbol is fetched once.
+ * Only successful responses are cached; a failure is retried by the next caller.
+ * The harvester is a one-shot process, so the cache lives for one run.
+ */
+const chartCache = new Map<string, Promise<ChartFetchResult>>();
+
+export function dailyChartUrl(symbol: string): string {
+  return `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=3mo`;
+}
+
+export function fetchDailyChart(symbol: string, opts: ChartFetchOptions = {}): Promise<ChartFetchResult> {
+  const hit = chartCache.get(symbol);
+  if (hit) return hit;
+  const p = fetchYahooChart(dailyChartUrl(symbol), opts).then((res) => {
+    if (!res.ok) chartCache.delete(symbol);
+    return res;
+  });
+  chartCache.set(symbol, p);
+  return p;
+}
+
+export function clearChartCache(): void {
+  chartCache.clear();
+}

@@ -153,6 +153,8 @@ export interface HarvestIngestPayload {
   /** Universe the harvester scanned with; null/absent = static SCAN_SYMBOLS fallback. */
   universeId?: string | null;
   barMetrics?: Record<string, IngestBarMetrics>;
+  /** PLAN.md 1a bar features per symbol (log only), stored in ValidatedTicker.features. */
+  barFeatures?: Record<string, Record<string, number | boolean | string | null>>;
   watchChecks?: WatchCheck[];
 }
 

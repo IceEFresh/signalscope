@@ -1,6 +1,6 @@
 import type { RawSignal } from "../types";
 import { SCAN_SYMBOLS } from "./ticker-utils";
-import { FetchStats, fetchYahooChart, type ChartFetchResult } from "../yahoo-chart";
+import { FetchStats, fetchDailyChart, type ChartFetchResult } from "../yahoo-chart";
 
 const VOLUME_SPIKE_THRESHOLD = 2.0;
 
@@ -62,14 +62,27 @@ interface VolumeData {
   averageDailyVolume10Day: number;
 }
 
-export function parseVolumeData(symbol: string, json: unknown): VolumeData | null {
+/** Upstream averaged the bars of a range=15d chart. 1a fetches 3 months once and keeps the same window. */
+export const VOLUME_WINDOW_DAYS = 15;
+
+export function parseVolumeData(symbol: string, json: unknown, now: Date = new Date()): VolumeData | null {
   const result = (json as { chart?: { result?: unknown[] } } | null)?.chart?.result?.[0] as
-    | { meta?: { regularMarketVolume?: number }; indicators?: { quote?: Array<{ volume?: (number | null)[] }> } }
+    | {
+        meta?: { regularMarketVolume?: number };
+        timestamp?: (number | null)[];
+        indicators?: { quote?: Array<{ volume?: (number | null)[] }> };
+      }
     | undefined;
   if (!result) return null;
 
   const meta = result.meta;
-  const volumes: (number | null)[] = result?.indicators?.quote?.[0]?.volume ?? [];
+  const allVolumes: (number | null)[] = result?.indicators?.quote?.[0]?.volume ?? [];
+  // Keep only the bars a range=15d request would have returned, so the signal is unchanged.
+  const times = result.timestamp ?? [];
+  const cutoff = now.getTime() / 1000 - VOLUME_WINDOW_DAYS * 24 * 60 * 60;
+  const volumes = times.length === allVolumes.length
+    ? allVolumes.filter((_, i) => times[i] == null || (times[i] as number) >= cutoff)
+    : allVolumes;
   const validVolumes = volumes.filter((v): v is number => v != null && v > 0);
 
   if (validVolumes.length < 2) return null;
@@ -87,11 +100,10 @@ async function fetchVolumeDataDetailed(
   symbol: string,
   retryDelayMs?: number,
 ): Promise<{ data: VolumeData | null; fetch: ChartFetchResult }> {
-  // Use 15d range to get enough daily bars to compute a 10-day average.
-  // The v8 chart API no longer returns averageDailyVolume10Day in meta,
-  // so we compute it from the historical volume time-series.
-  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=15d`;
-  const res = await fetchYahooChart(url, { retryDelayMs });
+  // The v8 chart API no longer returns averageDailyVolume10Day in meta, so we compute it
+  // from the volume series. PLAN.md 1a: the shared 3-month chart replaces the old range=15d
+  // call; parseVolumeData keeps the last 15 calendar days so the average is unchanged.
+  const res = await fetchDailyChart(symbol, { retryDelayMs });
   return { data: res.ok ? parseVolumeData(symbol, res.json) : null, fetch: res };
 }
 
