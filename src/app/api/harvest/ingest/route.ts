@@ -87,6 +87,8 @@ const ingestPayloadSchema = z.object({
       }),
     )
     .optional(),
+  // PLAN.md 1c market regime fields (log only)
+  regime: z.record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.null()])).optional(),
   watchChecks: z
     .array(
       z.object({
@@ -123,6 +125,7 @@ export async function POST(req: NextRequest) {
       barMetrics: parsed.barMetrics ?? {},
       barFeatures: parsed.barFeatures ?? {},
       stp: parsed.stp ?? {},
+      regime: parsed.regime,
       watchChecks: parsed.watchChecks ?? [],
     });
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);

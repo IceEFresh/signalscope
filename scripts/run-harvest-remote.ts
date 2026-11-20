@@ -4,6 +4,7 @@ import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
 import {
   computeIngestExtras,
   computeStpExtras,
+  computeRegimeExtras,
   httpPrepDeps,
   prepareHarvest,
   universeUrlFrom,
@@ -68,6 +69,9 @@ async function main() {
 
   // 1c. STP daily states and triggers for the universe plus signal symbols (PLAN.md 1g, log only)
   const stp = await computeStpExtras([...prep.scanSymbols, ...Object.keys(extras.barMetrics)]);
+
+  // 1d. Market regime fields for this scan (PLAN.md 1c, log only)
+  const regime = await computeRegimeExtras();
   const fetchElapsed = ((Date.now() - fetchStart) / 1000).toFixed(1);
   console.log(`[trace] Fetch completed in ${fetchElapsed}s — ${signals.length} signals`);
 
@@ -90,6 +94,7 @@ async function main() {
     barMetrics: extras.barMetrics,
     barFeatures: extras.barFeatures as unknown as HarvestIngestPayload["barFeatures"],
     stp,
+    regime: regime as unknown as HarvestIngestPayload["regime"],
     watchChecks: extras.watchChecks,
   };
 

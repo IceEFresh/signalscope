@@ -47,6 +47,7 @@ describe("POST /api/harvest/ingest", () => {
       barMetrics: {},
       barFeatures: {},
       stp: {},
+      regime: undefined,
       watchChecks: [],
     });
   });

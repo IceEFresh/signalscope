@@ -197,4 +197,10 @@ describe("processSignals with a universe (PR 1-0)", () => {
       options_flow_near_earnings: true,
     });
   });
+
+  it("stores 1c regime fields on the scan", async () => {
+    const regime = { regime_version: 1, spy_close_vs_sma20: -0.03, spy_distribution_days_25: 5, vix_close: 35.9 };
+    await processSignals(two("LIQD"), { regime });
+    expect(mockUpdateScan).toHaveBeenCalledWith({ where: { id: "scan_1" }, data: { regimeFeatures: regime } });
+  });
 });

@@ -162,6 +162,8 @@ export interface HarvestIngestPayload {
   barFeatures?: Record<string, Record<string, number | boolean | string | null>>;
   /** PLAN.md 1g STP states and triggers per scanned symbol (log only), stored in StpSignal. */
   stp?: Record<string, IngestStp>;
+  /** PLAN.md 1c market regime fields for this scan (log only), stored on Scan.regimeFeatures. */
+  regime?: Record<string, number | boolean | string | null>;
   watchChecks?: WatchCheck[];
 }
 
