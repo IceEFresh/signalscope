@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-const { fetchSecInsiderSignals } = await import(
+const { fetchSecInsiderSignals, parseOpenInsiderHtml, OPENINSIDER_SCREENER_URL } = await import(
   "@/lib/harvester/sources/sec-insider"
 );
 
@@ -249,5 +249,46 @@ describe("fetchSecInsiderSignals", () => {
 
     expect(insider).toBeDefined();
     expect(insider!.symbol).toBe("IFF");
+  });
+});
+
+describe("OpenInsider screener URL", () => {
+  it("is unchanged from upstream, so source output does not change", () => {
+    expect(OPENINSIDER_SCREENER_URL).toBe(
+      "http://openinsider.com/screener?s=&o=&pl=50&ph=&ll=&lh=&fd=7&fdr=&td=0&tdr=&feession=0&cession=0&sid=1&iession=0&ession=0&otype=&othertype=&ression=0&sortcol=0&cnt=100&page=1",
+    );
+  });
+
+  it("is the URL the harvester fetches", async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+    await fetchSecInsiderSignals();
+    expect(mockFetch.mock.calls[0][0]).toBe(OPENINSIDER_SCREENER_URL);
+  });
+});
+
+describe("parseOpenInsiderHtml", () => {
+  it("returns price per purchase row, including sub-$50 prices", () => {
+    const rows = parseOpenInsiderHtml(
+      makeOpenInsiderHtml([
+        makeRow({ ticker: "LOWP", name: "A", title: "CEO", tradeType: "P - Purchase", price: "$12.50", qty: "+10,000", value: "+$125,000" }),
+        makeRow({ ticker: "HIGH", name: "B", title: "Dir", tradeType: "P - Purchase", price: "$80.00", qty: "+1,000", value: "+$80,000" }),
+        makeRow({ ticker: "SELL", name: "C", title: "CFO", tradeType: "S - Sale", price: "$20.00", qty: "-5,000", value: "-$100,000" }),
+      ]),
+    );
+    expect(rows.map((r) => [r.ticker, r.price])).toEqual([["LOWP", 12.5], ["HIGH", 80]]);
+  });
+
+  it("returns [] for a page with no tinytable", () => {
+    expect(parseOpenInsiderHtml("<html><body>Service Unavailable</body></html>")).toEqual([]);
+  });
+
+  it("skips malformed rows with too few cells or non-numeric price", () => {
+    const rows = parseOpenInsiderHtml(
+      makeOpenInsiderHtml([
+        "<tr><td>only</td><td>two</td></tr>",
+        makeRow({ ticker: "BADP", name: "A", title: "CEO", tradeType: "P - Purchase", price: "n/a", qty: "+1", value: "+$60,000" }),
+      ]),
+    );
+    expect(rows).toEqual([]);
   });
 });
