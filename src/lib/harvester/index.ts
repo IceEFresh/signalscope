@@ -17,7 +17,7 @@ import { assessScanRegime } from "./regime-filter";
 
 import { computeOpportunityScore } from "./opportunity-score";
 import { computeEarningsFeatures } from "./earnings-features";
-import { tickerSectorFeatures, type SectorRotation } from "./universe/sector-rotation";
+import { tickerSectorFeatures, unmappedIndustries, type SectorRotation } from "./universe/sector-rotation";
 import { applyWatchChecks, loadUniverse, recordWatchEntries, type LoadedUniverse } from "./universe/store";
 import { resetCostTracker, getTotalCost } from "@/lib/ai";
 
@@ -878,6 +878,12 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
       const ind = fundamentalsMap.get(r.agg.symbol)?.industry;
       if (ind) industryCounts.set(ind, (industryCounts.get(ind) ?? 0) + 1);
     }
+    // 1f coverage log: which Yahoo industries the hand-built ETF map misses
+    const unmapped = unmappedIndustries(allValidatedResults.map((r) => fundamentalsMap.get(r.agg.symbol)?.industry));
+    console.log(
+      `[sectors] industries unmapped: ${unmapped.length} distinct` +
+        (unmapped.length ? ` (top: ${unmapped.slice(0, 5).map(([k, n]) => `${k} ×${n}`).join(", ")})` : ""),
+    );
 
     // Store validated tickers (candidates + UNSCORED non-candidates)
     const tickerDataList = allValidatedResults.map((result) => {

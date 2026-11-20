@@ -81,6 +81,31 @@ export const INDUSTRY_ETFS: Record<string, string> = {
   "Utilities—Renewable": "ICLN",
 };
 
+/**
+ * Yahoo has served industry names with an em dash ("Software—Application") and
+ * with a spaced hyphen ("Software - Application"). Normalize em dash, en dash and
+ * a spaced hyphen to one form before any lookup. A hyphen inside a word is kept.
+ */
+export function normalizeIndustry(industry: string): string {
+  return industry.replace(/\s*[—–]\s*/g, "—").replace(/\s+-\s+/g, "—").replace(/\s+/g, " ").trim();
+}
+
+const INDUSTRY_ETFS_NORMALIZED = new Map(Object.entries(INDUSTRY_ETFS).map(([k, v]) => [normalizeIndustry(k), v]));
+
+/** Industry ETF for a Yahoo industry string in either dash form, or null if unmapped. */
+export function industryEtfFor(industry: string | null | undefined): string | null {
+  return industry ? INDUSTRY_ETFS_NORMALIZED.get(normalizeIndustry(industry)) ?? null : null;
+}
+
+/** Distinct industries with no ETF mapping, most frequent first (for the per-run coverage log). */
+export function unmappedIndustries(industries: readonly (string | null | undefined)[]): Array<[string, number]> {
+  const counts = new Map<string, number>();
+  for (const ind of industries) {
+    if (ind && !industryEtfFor(ind)) counts.set(ind, (counts.get(ind) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
 export const ROTATION_ETFS: string[] = [...new Set([...Object.values(SECTOR_ETFS), ...Object.values(INDUSTRY_ETFS)])];
 
 export interface EtfStats {
@@ -204,7 +229,7 @@ export function tickerSectorFeatures(
   industryCount: number | null,
 ): TickerSectorFeatures {
   const sectorEtf = sector ? SECTOR_ETFS[sector] ?? null : null;
-  const industryEtf = industry ? INDUSTRY_ETFS[industry] ?? null : null;
+  const industryEtf = industryEtfFor(industry);
   const r = tickerReturn20d ?? null;
   const sStats = sectorEtf ? rotation?.etfs[sectorEtf] : undefined;
   const iStats = industryEtf ? rotation?.etfs[industryEtf] : undefined;
