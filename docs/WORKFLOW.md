@@ -23,7 +23,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.
-2. Implement the item, add tests, and run the four CI checks.
+2. Before writing code, run `/plan-eng-review` on the plan item (target: its section of docs/PLAN.md) and fix the plan where it finds problems. Then implement the item, add tests, and run the four CI checks.
 3. Open a PR titled `[<item-id>] <summary>`. The body covers:
    - the plan item and the plan section it implements
    - what changed and why
@@ -35,16 +35,9 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 5. When the reviewer posts `REQUEST_CHANGES`, fix every point on the same branch, push, reply under the review, and wait again.
 6. When the reviewer posts `APPROVED — NEXT: <item-id>`, start that item. Branch from `main` if the PR is merged. If it isn't merged yet, branch from the approved branch and say so in the new PR's body.
 
-## Reviewer checklist (engineering review)
+## Reviewer process
 
-- **Plan fit.** Does the PR implement the plan item and nothing else? Phase 1 and 2 PRs must not change scores or labels.
-- **Architecture.** Where does the new logic live, and does it follow the existing harvester patterns (`sources/*`, `index.ts` aggregation)?
-- **Data flow.** What happens when a fetch fails or returns null? A failure must never stop a harvest; nulls are stored as null, never as 0.
-- **Database.** Migrations only add nullable columns or tables. JSONB feature keys are named consistently. Indexes exist for new query paths.
-- **Performance.** Count the requests each scan adds against the Yahoo rate limits. Check the effect on runtime on the NAS.
-- **Tests.** Fixtures cover the happy path, empty or null data, and a malformed response.
-- **Point-in-time correctness.** No feature may use data from after the scan time. Look-ahead bias breaks every Phase 3 test.
-- **Security.** No secrets in code or logs.
+The reviewer runs `/plan-eng-review` (`.claude/skills/plan-eng-review/SKILL.md`) on every PR diff and posts its output as the PR review. The skill's final line is the verdict: `REQUEST_CHANGES` or `APPROVED — NEXT: <item-id>`.
 
 ## Merging
 

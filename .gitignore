@@ -35,7 +35,8 @@ yarn-error.log*
 !.env.example
 
 # local editor / IDE config
-.claude/
+.claude/*
+!.claude/skills/
 .cursor/
 .vscode/
 .mcp.json
