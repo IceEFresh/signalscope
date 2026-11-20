@@ -13,6 +13,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 2. `sec-insider.ts` investigation: what `pl=50` does, plus the https switch (small PR)
 3. PR 1-0: liquid volatile universe and graduation watch
 4. PR 1a: bar-feature module
+4b. PR 1g: STP daily signals (spec: docs/STP-SIGNALS.md)
 5. PR 1b: days to earnings and implied volatility
 6. PR 1c: market regime fields
 7. PR 1f: sector and industry rotation
