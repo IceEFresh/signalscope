@@ -131,3 +131,30 @@ describe("computeSectorExtras", () => {
     warn.mockRestore();
   });
 });
+
+describe("industry string normalization (review of #14)", () => {
+  it("maps em dash, en dash and spaced-hyphen forms to the same ETF", async () => {
+    const { industryEtfFor } = await import("@/lib/harvester/universe/sector-rotation");
+    expect(industryEtfFor("Software—Application")).toBe("IGV");
+    expect(industryEtfFor("Software - Application")).toBe("IGV");
+    expect(industryEtfFor("Software – Application")).toBe("IGV");
+    expect(industryEtfFor("Banks - Regional")).toBe("KRE");
+    expect(industryEtfFor("Drug Manufacturers - Specialty & Generic")).toBe("XPH");
+    expect(industryEtfFor("Semiconductors")).toBe("SMH");
+    expect(industryEtfFor("Some New Industry")).toBeNull();
+    expect(industryEtfFor(null)).toBeNull();
+  });
+
+  it("uses the normalized lookup for ticker features", () => {
+    const rot = { version: 1, bar_date: null, sectors: [], etfs: { IGV: { return_20d: 0.01, return_60d: null, rs_vs_spy_20d: null, rs_vs_spy_60d: null, rs_vs_spy_20d_4w_ago: null, wtd: null, mtd: null, day: null } } };
+    expect(tickerSectorFeatures("Technology", "Software - Infrastructure", 0.05, rot, 1)).toMatchObject({ industry_etf: "IGV" });
+  });
+
+  it("lists unmapped industries, most frequent first", async () => {
+    const { unmappedIndustries } = await import("@/lib/harvester/universe/sector-rotation");
+    expect(unmappedIndustries(["Shell Companies", "Software - Application", "Shell Companies", "Tobacco", null])).toEqual([
+      ["Shell Companies", 2],
+      ["Tobacco", 1],
+    ]);
+  });
+});
