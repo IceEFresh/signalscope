@@ -130,6 +130,10 @@ Compare after at least 50 trades per arm.
 | Secrets | `.env` lives only on the NAS, never committed. Separate API keys per service. | to confirm |
 | Claude Code instructions | Add a `CLAUDE.md` to the fork covering: the log-only rule for Phases 1–2, the testing rules from Phase 3, "no rule changes without an experiment-log entry", and how to run tests | to write |
 
+## Decided
+
+- **Daily timeframe first, free delayed data only** (Chris, 2026-11-20). All signals and features run on daily bars and 15-minute-delayed or end-of-day data. No intraday work and no paid data feeds (Unusual Whales, Massive, Alpaca Algo Trader Plus) until Phase 3 shows an edge on the daily timeframe.
+
 ## Open decisions (defaults assumed)
 
 - Instance stays private, with no public API or x402. Default: private. This also keeps the Unusual Whales personal-use terms intact if you add it.
