@@ -13,7 +13,24 @@ const C_SUITE_TITLES = new Set([
 
 const MIN_PURCHASE_VALUE = 50_000;
 
-interface InsiderRow {
+/**
+ * OpenInsider screener query: filings from the last 7 days (fd=7), 100 rows.
+ *
+ * Plain HTTP on purpose. openinsider.com resets the connection during the TLS
+ * handshake on port 443 (re-checked 2026-11-20), so an https:// URL returns
+ * nothing. See src/__tests__/sec-insider.test.ts.
+ *
+ * `pl=50` is unverified. If it is the screener's minimum share price, insider
+ * buys on stocks under $50 never reach this source. Run
+ * scripts/check-openinsider-pl.ts on a host that can reach openinsider.com
+ * before relying on it (docs/PLAN.md, PR 1-0 graduation watch).
+ *
+ * Kept byte-identical to upstream so this source's output does not change.
+ */
+export const OPENINSIDER_SCREENER_URL =
+  "http://openinsider.com/screener?s=&o=&pl=50&ph=&ll=&lh=&fd=7&fdr=&td=0&tdr=&feession=0&cession=0&sid=1&iession=0&ession=0&otype=&othertype=&ression=0&sortcol=0&cnt=100&page=1";
+
+export interface InsiderRow {
   filingDate: string;
   tradeDate: string;
   ticker: string;
@@ -48,7 +65,7 @@ function extractTicker(cellHtml: string): string {
   return tickerMatch ? tickerMatch[1] : stripped;
 }
 
-function parseOpenInsiderHtml(html: string): InsiderRow[] {
+export function parseOpenInsiderHtml(html: string): InsiderRow[] {
   const rows: InsiderRow[] = [];
 
   // Match table rows from the insider data table
@@ -112,9 +129,7 @@ function parseOpenInsiderHtml(html: string): InsiderRow[] {
 
 async function fetchFromOpenInsider(): Promise<RawSignal[]> {
   try {
-    // Fetch latest insider buying — open market purchases only, filed in last 7 days
-    // OpenInsider does not support HTTPS (port 443 refused) — must use HTTP
-    const url = "http://openinsider.com/screener?s=&o=&pl=50&ph=&ll=&lh=&fd=7&fdr=&td=0&tdr=&feession=0&cession=0&sid=1&iession=0&ession=0&otype=&othertype=&ression=0&sortcol=0&cnt=100&page=1";
+    const url = OPENINSIDER_SCREENER_URL;
 
     // OpenInsider's HTTP-only server is flaky — retry once on connect timeout / network errors.
     let res: Response | null = null;
