@@ -27,7 +27,7 @@ describe("fetchDailyChart per-run cache (PLAN.md 1a)", () => {
 
   it("does not cache failures, so a later caller retries", async () => {
     fetchMock
-      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) }) // not retried
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => amd });
     expect((await fetchDailyChart("AMD")).ok).toBe(false);
     expect((await fetchDailyChart("AMD")).ok).toBe(true);
@@ -63,7 +63,7 @@ describe("featuresFromCachedCharts", () => {
 
   it("skips symbols whose chart fails", async () => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes("/BAD?") ? { ok: false, status: 429, json: async () => ({}) } : { ok: true, status: 200, json: async () => amd },
+      url.includes("/BAD?") ? { ok: false, status: 404, json: async () => ({}) } : { ok: true, status: 200, json: async () => amd },
     );
     const out = await featuresFromCachedCharts(["BAD"]);
     expect(out).toEqual({});

@@ -1,4 +1,5 @@
 import { prisma, createDevPrismaClient } from "@/lib/prisma";
+import { withYahooRetry } from "@/lib/yahoo-retry";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { yahooFinance, withYahooTimeout } from "@/lib/yahoo-finance";
 import { computeReturnsFromSnapshots, detectCorporateAction } from "./returns";
@@ -10,7 +11,7 @@ async function fetchPricesBatch(symbols: string[]): Promise<Map<string, number>>
   for (let i = 0; i < symbols.length; i += 50) {
     const batch = symbols.slice(i, i + 50);
     try {
-      const quotes = await withYahooTimeout(yahooFinance.quote(batch));
+      const quotes = await withYahooRetry(() => withYahooTimeout(yahooFinance.quote(batch)), { label: "quote" });
       const list = Array.isArray(quotes) ? quotes : [quotes];
       for (const q of list) {
         if (q.symbol && q.regularMarketPrice != null) {

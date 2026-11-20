@@ -8,6 +8,7 @@
  * 1h uses Yahoo, which the harvester already reaches.
  */
 import { yahooFinance, withYahooTimeout } from "@/lib/yahoo-finance";
+import { withYahooRetry } from "@/lib/yahoo-retry";
 import { toUnixSeconds } from "./yahoo-time";
 
 export interface OptionContract {
@@ -81,8 +82,12 @@ export function fetchOptionsRaw(symbol: string, expiry?: number): Promise<unknow
   const key = `${symbol}|${expiry ?? "near"}`;
   const hit = rawCache.get(key);
   if (hit) return hit;
-  const p = withYahooTimeout(
-    expiry == null ? yahooFinance.options(symbol) : yahooFinance.options(symbol, { date: new Date(expiry * 1000) }),
+  const p = withYahooRetry(
+    () =>
+      withYahooTimeout(
+        expiry == null ? yahooFinance.options(symbol) : yahooFinance.options(symbol, { date: new Date(expiry * 1000) }),
+      ),
+    { label: "options" },
   ).catch((err) => {
     rawCache.delete(key);
     throw err;
