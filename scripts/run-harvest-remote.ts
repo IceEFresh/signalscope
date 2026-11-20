@@ -84,6 +84,7 @@ async function main() {
     harvestedAt: new Date().toISOString(),
     universeId: prep.universeId,
     barMetrics: extras.barMetrics,
+    barFeatures: extras.barFeatures as unknown as HarvestIngestPayload["barFeatures"],
     watchChecks: extras.watchChecks,
   };
 

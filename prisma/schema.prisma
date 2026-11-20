@@ -165,6 +165,7 @@ model ValidatedTicker {
   filterReason        String?     // PR 1-0: why stage is FILTERED for a non-P&D reason, e.g. "illiquid"
   dollarVolume20d     Float?      // PR 1-0: mean close*volume over the last 20 daily bars
   atrPct              Float?      // PR 1-0: ATR(14) / last close
+  features            Json?       // PR 1a: bar features (log only), keys in src/lib/harvester/universe/bar-features.ts
   tradeSetupEntryLo    Float?     // Entry range low price
   tradeSetupEntryHi    Float?     // Entry range high price
   tradeSetupStopLoss   Float?     // Stop loss price

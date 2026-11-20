@@ -7,9 +7,11 @@
  *
  * Shared parser for PR 1a and 1g, which also need completed bars only.
  */
-import { FetchStats, fetchYahooChart, type ChartFetchResult } from "../yahoo-chart";
+import { FetchStats, fetchDailyChart, type ChartFetchResult } from "../yahoo-chart";
 
 export interface DailyBar {
+  /** Session open; absent when Yahoo returned null for it. */
+  open?: number;
   high: number;
   low: number;
   close: number;
@@ -57,7 +59,7 @@ const ET_PARTS = new Intl.DateTimeFormat("en-US", {
   hourCycle: "h23",
 });
 
-function etParts(d: Date): { date: string; minutes: number } {
+export function etParts(d: Date): { date: string; minutes: number } {
   const p = Object.fromEntries(ET_PARTS.formatToParts(d).map((x) => [x.type, x.value]));
   return { date: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute) };
 }
@@ -90,6 +92,7 @@ export function parseChartBars(json: unknown, now: Date = new Date()): DailyBar[
   const lows = q.low ?? [];
   const closes = q.close ?? [];
   const volumes = q.volume ?? [];
+  const opens = q.open ?? [];
   const times = result?.timestamp ?? [];
   const regular = result?.meta?.currentTradingPeriod?.regular;
   const bars: DailyBar[] = [];
@@ -99,7 +102,11 @@ export function parseChartBars(json: unknown, now: Date = new Date()): DailyBar[
     if (!Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c) || c <= 0) continue;
     const t = times[i];
     if (t != null && isOpenSessionBar(t, now, regular)) continue;
-    bars.push(t != null ? { high: h, low: l, close: c, volume: v, time: t } : { high: h, low: l, close: c, volume: v });
+    const bar: DailyBar = { high: h, low: l, close: c, volume: v };
+    const o = opens[i];
+    if (o != null && Number.isFinite(o) && o > 0) bar.open = o;
+    if (t != null) bar.time = t;
+    bars.push(bar);
   }
   return bars;
 }
@@ -142,8 +149,8 @@ async function fetchBarMetricsDetailed(
   symbol: string,
   retryDelayMs?: number,
 ): Promise<{ metrics: BarMetrics | null; fetch: ChartFetchResult }> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=3mo`;
-  const res = await fetchYahooChart(url, { retryDelayMs });
+  // Shared per-run chart (PLAN.md 1a): volume spike and bar features read the same response.
+  const res = await fetchDailyChart(symbol, { retryDelayMs });
   return { metrics: res.ok ? computeBarMetrics(parseChartBars(res.json)) : null, fetch: res };
 }
 

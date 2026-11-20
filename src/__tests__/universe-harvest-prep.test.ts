@@ -92,13 +92,18 @@ describe("computeIngestExtras", () => {
   it("fetches bars once for signal and watch symbols and emits graduations", async () => {
     const fetchMetrics = vi.fn(async (s: string[]) => new Map(s.filter((x) => x !== "FAIL").map((x) => [x, metric])));
     const evaluate = vi.fn(async () => new Map([["SMOL", { passes: true, failing: [], metrics: metric }]]));
+    const fetchFeatures = vi.fn(async (s: string[]) => Object.fromEntries(s.map((x) => [x, { features_version: 1 } as never])));
     const out = await computeIngestExtras(
       [{ symbol: "AAA", source: "REDDIT" }, { symbol: "AAA", source: "TWITTER" }, { symbol: "FAIL", source: "REDDIT" }],
       [watchRow],
       fetchMetrics,
       evaluate,
       now,
+      fetchFeatures,
     );
+    // Features only for signal symbols whose chart loaded (not FAIL, not the watch-only SMOL)
+    expect(fetchFeatures).toHaveBeenCalledWith(["AAA"]);
+    expect(Object.keys(out.barFeatures)).toEqual(["AAA"]);
     expect(fetchMetrics).toHaveBeenCalledTimes(1);
     expect(fetchMetrics).toHaveBeenCalledWith(["AAA", "FAIL", "SMOL"]);
     expect(Object.keys(out.barMetrics).sort()).toEqual(["AAA", "SMOL"]); // FAIL absent, not zero
@@ -114,7 +119,8 @@ describe("computeIngestExtras", () => {
       async () => { throw new Error("network"); },
       async () => { throw new Error("network"); },
       now,
+      async () => { throw new Error("network"); },
     );
-    expect(out).toEqual({ barMetrics: {}, watchChecks: [], graduationSignals: [] });
+    expect(out).toEqual({ barMetrics: {}, barFeatures: {}, watchChecks: [], graduationSignals: [] });
   });
 });

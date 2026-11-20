@@ -58,6 +58,10 @@ const ingestPayloadSchema = z.object({
   barMetrics: z
     .record(z.string(), z.object({ dollarVolume20d: nullableNum, atrPct: nullableNum, hv20: nullableNum }))
     .optional(),
+  // PLAN.md 1a bar features (log only)
+  barFeatures: z
+    .record(z.string(), z.record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.null()])))
+    .optional(),
   watchChecks: z
     .array(
       z.object({
@@ -92,6 +96,7 @@ export async function POST(req: NextRequest) {
     const scanId = await processSignals(parsed.signals, {
       universeId: parsed.universeId ?? null,
       barMetrics: parsed.barMetrics ?? {},
+      barFeatures: parsed.barFeatures ?? {},
       watchChecks: parsed.watchChecks ?? [],
     });
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);

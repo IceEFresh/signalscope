@@ -473,6 +473,8 @@ export interface ProcessContext {
   /** Universe the harvester scanned with; null = fell back to SCAN_SYMBOLS, use the latest stored one. */
   universeId?: string | null;
   barMetrics?: Record<string, IngestBarMetrics>;
+  /** PLAN.md 1a bar features, stored as-is in ValidatedTicker.features. Never read by scoring. */
+  barFeatures?: Record<string, Record<string, number | boolean | string | null>>;
   watchChecks?: WatchCheck[];
 }
 
@@ -557,6 +559,7 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
     const inUniverse = makeUniverseCheck(universe, allSignals);
     const isIlliquid = (symbol: string) => inUniverse(symbol) === false;
     const barMetrics = ctx.barMetrics ?? {};
+    const barFeatures = ctx.barFeatures ?? {};
     if (universe) {
       await prisma.scan.update({ where: { id: scan.id }, data: { universeId: universe.id } });
       console.log(`[universe] Using ${universe.id} (${universe.symbols.size} symbols, refreshed ${universe.refreshedAt.toISOString()})`);
@@ -911,6 +914,8 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
         filterReason: result.filterReason ?? null,
         dollarVolume20d: bars?.dollarVolume20d ?? null,
         atrPct: bars?.atrPct ?? null,
+        // Log only (PLAN.md 1a): stored for Phase 3, not used by any score, stage or label.
+        features: barFeatures[result.agg.symbol] ?? undefined,
       };
     });
 

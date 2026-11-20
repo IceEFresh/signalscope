@@ -135,4 +135,20 @@ describe("processSignals with a universe (PR 1-0)", () => {
     expect(isOutside("LIQD")).toBe(false);
     expect(mockApplyChecks).toHaveBeenCalledWith(checks, "scan_1");
   });
+
+  it("stores 1a bar features as-is and does not change any score, stage or label input (log only)", async () => {
+    const features = { features_version: 1, close_vs_sma20: 0.05, nr7: true, bar_date: "2026-11-19", rsi14: null };
+    await processSignals(two("LIQD"), { barMetrics: { LIQD: { dollarVolume20d: 5e7, atrPct: 0.05, hv20: 0.6 } } });
+    const without = { ...rows()[0] };
+    mockCreateManyTicker.mockClear();
+    await processSignals(two("LIQD"), {
+      barMetrics: { LIQD: { dollarVolume20d: 5e7, atrPct: 0.05, hv20: 0.6 } },
+      barFeatures: { LIQD: features },
+    });
+    const withF = rows()[0];
+    expect(withF.features).toEqual(features);
+    expect(without.features).toBeUndefined(); // column left null when no features
+    // opportunityScore, aiScore, stage, everything else identical
+    expect({ ...withF, features: undefined }).toEqual({ ...without, features: undefined });
+  });
 });
