@@ -69,6 +69,11 @@ export interface FundamentalData {
   sector?: string;
   exchange?: string;
   earningsDate?: string;
+  /** PR 1b: earnings release (unix s), Yahoo's estimated window, and whether it is an estimate */
+  earningsTs?: number | null;
+  earningsTsStart?: number | null;
+  earningsTsEnd?: number | null;
+  isEarningsDateEstimate?: boolean | null;
   floatShares?: number | null;
   sharesOutstanding?: number | null;
 }
