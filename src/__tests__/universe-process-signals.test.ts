@@ -213,6 +213,7 @@ describe("processSignals with a universe (PR 1-0)", () => {
   });
 
   it("adds 1f sector/industry keys and industry clustering, and stores the rotation on the scan", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { fetchFundamentals } = await import("@/lib/harvester/fundamentals");
     vi.mocked(fetchFundamentals).mockResolvedValueOnce(
       new Map([
@@ -243,6 +244,10 @@ describe("processSignals with a universe (PR 1-0)", () => {
     expect((liqd.features as Record<string, number>).rs_vs_sector_20d).toBeCloseTo(0.08, 12);
     expect((liqd.features as Record<string, number>).rs_vs_industry_20d).toBeCloseTo(0.05, 12);
     expect(mockUpdateScan).toHaveBeenCalledWith({ where: { id: "scan_1" }, data: { sectorRotation } });
+    expect(log.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith("[sectors] industries unmapped"))).toBe(
+      "[sectors] industries unmapped: 0 distinct",
+    );
+    log.mockRestore();
   });
 
   it("stores 1d shadow scores in features without changing aiScore, stage or opportunity score", async () => {
