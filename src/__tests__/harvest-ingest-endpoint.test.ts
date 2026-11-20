@@ -42,7 +42,11 @@ describe("POST /api/harvest/ingest", () => {
     expect(res.status).toBe(200);
     expect(json.status).toBe("completed");
     expect(json.scanId).toBe("scan_123");
-    expect(mockProcessSignals).toHaveBeenCalledWith(validPayload.signals);
+    expect(mockProcessSignals).toHaveBeenCalledWith(validPayload.signals, {
+      universeId: null,
+      barMetrics: {},
+      watchChecks: [],
+    });
   });
 
   it("returns 401 when x-harvest-key is missing", async () => {
@@ -142,7 +146,7 @@ describe("POST /api/harvest/ingest", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mockProcessSignals).toHaveBeenCalledWith([fullSignal]);
+    expect(mockProcessSignals).toHaveBeenCalledWith([fullSignal], expect.anything());
   });
 
   it("passes netPremium and callPremiumRatio from OPTIONS_FLOW signal to processSignals", async () => {

@@ -3,7 +3,13 @@
  *
  * Unlike aiScore (which measures signal confidence / documentation quality),
  * opportunityScore is designed to correlate with actual returns: low-consensus,
- * novel, fast-moving, small-cap tickers near 52-week lows score highest.
+ * novel, fast-moving tickers near 52-week lows score highest.
+ *
+ * PR 1-0 (2026-11-20, scope decisions, see scripts/backtesting-experiments.md #26):
+ * every market-cap term is removed (the microcap tiers +6 to +15 below $2B and,
+ * per Chris, the large-cap penalties -12 at $10B+ and -20 at $50B+), as is the
+ * NasdaqCM/AMEX penny bonus (+8). An ATR% volatility term (0 to +15) takes their
+ * place. Scoring now targets the liquid, volatile universe.
  */
 
 interface OpportunityScoreInput {
@@ -12,6 +18,7 @@ interface OpportunityScoreInput {
   priorAppearances: number;
   avgVelocity: number;
   price: number | null | undefined;
+  /** Not scored since PR 1-0; kept so callers and stored inputs stay unchanged. */
   marketCap: number | null | undefined;
   wk52Lo: number | null | undefined;
   wk52Hi: number | null | undefined;
@@ -22,6 +29,8 @@ interface OpportunityScoreInput {
   totalUpvotes?: number;
   totalComments?: number;
   exchange?: string | null;
+  /** ATR(14) / price from daily bars; null when bars were unavailable. */
+  atrPct?: number | null;
 }
 
 export function computeOpportunityScore(input: OpportunityScoreInput): number {
@@ -49,13 +58,12 @@ export function computeOpportunityScore(input: OpportunityScoreInput): number {
   else if (input.avgVelocity >= 1.5) score += 8;
   else if (input.avgVelocity >= 1.0) score += 4;
 
-  // --- Price / market cap (-20 to +15) ---
-  if (input.marketCap != null) {
-    if (input.marketCap < 50_000_000) score += 15;
-    else if (input.marketCap < 300_000_000) score += 12;
-    else if (input.marketCap < 2_000_000_000) score += 6;
-    else if (input.marketCap >= 50_000_000_000) score -= 20;
-    else if (input.marketCap >= 10_000_000_000) score -= 12;
+  // --- Volatility, ATR% (0-15) --- PR 1-0 replacement for the microcap and penny bonuses.
+  // [Guessing] tiers; the universe floor is 3% ATR (or 40% HV).
+  if (input.atrPct != null) {
+    if (input.atrPct >= 0.06) score += 15;
+    else if (input.atrPct >= 0.045) score += 10;
+    else if (input.atrPct >= 0.03) score += 5;
   }
 
   // --- Near 52-week low (0-10) ---
@@ -75,13 +83,6 @@ export function computeOpportunityScore(input: OpportunityScoreInput): number {
   if (input.medianSignalAgeHrs != null) {
     if (input.medianSignalAgeHrs < 3) score += 5;
     else if (input.medianSignalAgeHrs < 6) score += 3;
-  }
-
-  // --- Exchange penny bonus (0-8) --- ML: NasdaqCM/AMEX penny is #1 exchange feature across all horizons
-  const exLower = input.exchange?.toLowerCase() ?? "";
-  const isPenny = input.price != null && input.price < 5;
-  if (isPenny && (exLower.includes("american") || exLower.includes("nasdaqcm") || exLower.includes("nasdaq capital"))) {
-    score += 8;
   }
 
   // --- Recovery ratio (0-4) --- ML: beaten-down stocks underperform momentum on average

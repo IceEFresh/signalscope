@@ -135,6 +135,9 @@ export async function fetchCongressSignals(): Promise<RawSignal[]> {
         url: `https://www.capitoltrades.com/trades?ticker=${symbol}&txId=${trade.txId}`,
         author: `${chamber} ${politician}`,
         purchaseValue: trade.value,
+        filedAt: trade.pubDate,
+        filingKey: `congress:${trade.txId}`,
+        reportingGapDays: trade.reportingGap,
       });
     }
 

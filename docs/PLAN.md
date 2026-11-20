@@ -42,7 +42,7 @@ Universe rule, refreshed weekly. [Guessing] The thresholds are starting points t
 Changes:
 1. Replace the static `SCAN_SYMBOLS` with the generated universe list. Build it with a weekly job: take the Nasdaq Trader symbol directory (free, covers every NYSE and Nasdaq listing), drop ETFs and anything under $5, then apply the filters above using Yahoo daily bars. Store it in a table with the refresh date, so every scan records which universe it used.
 2. Tickers found by social or insider sources that fall outside the universe are still stored, but at stage FILTERED with reason `illiquid`. They never get Buy or Strong Buy. Keeping them allows a later comparison against liquid names.
-3. Neutralize the microcap and exchange-penny bonuses in `opportunity-score.ts`. Within the universe, replace them with a volatility term (ATR%).
+3. Remove every market-cap term from `opportunity-score.ts`: the microcap bonuses and, per Chris (2026-11-20), the large-cap penalties (−12 at ≥$10B, −20 at ≥$50B), which work against the liquidity goal. Also remove the exchange-penny bonus. Within the universe, replace them with a volatility term (ATR%).
 4. Record each ticker's dollar volume and ATR% on every scan row.
 5. Graduation watch for informed buyers on names outside the universe. One `graduation_watch` table with a `source` column covers every informed-actor type:
 
@@ -63,6 +63,9 @@ Changes:
    - Drop tickers from the watch after 90 days. [Guessing] Insider-buy predictive power in Cohen et al. is measured monthly and fades after a few months.
    - Once PR 2a ships, store the routine or opportunistic class on each watch row. Promote only opportunistic buys to a catalyst; log routine ones.
    - Decision (Chris, 2026-11-20): insider buys need a share price of at least $5. Set `pl=5` in `OPENINSIDER_SCREENER_URL`, which replaces `pl=50` (very likely a $50 minimum share price), and also drop parsed rows priced under $5 in code, so the floor holds whatever `pl` turns out to mean. Update the URL test. This changes the source's output, so it ships inside PR 1-0, the exception to the log-only rule.
+   - Status after PR 1-0's first cut: insider and politician rows are built from the existing openinsider and Capitol Trades sources, with the $5 insider floor above. Activist (13D), new-insider (Form 3) and Form 144 rows need new EDGAR or Financial Datasets sources and are a follow-up; the table's `source` column already covers them.
+
+6. Decision (Chris, 2026-11-20): remove the $1T market-cap cap on recommendations (`ACTIONABLE_MARKET_CAP_MAX` in `recommendation.ts`, plus the same filter in alerts, report generation, IBKR sync and the broker executor). The liquid universe gates eligibility. Logged as experiment #27; rule version 5.
 
 Consequences:
 - Upstream's Buy and Strong Buy thresholds were calibrated on a mixed universe, so they're provisional until Phase 3 recalibrates them on liquid names only.

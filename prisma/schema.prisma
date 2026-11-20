@@ -41,6 +41,7 @@ model Scan {
   scanOfHighConv   Int?
   scanOfConvDelta  Float?
   regimeSkipped    Boolean           @default(false)
+  universeId       String?           // Universe the scan used (PR 1-0); null = static SCAN_SYMBOLS fallback
   error            String?
   signals          Signal[]
   validatedTickers ValidatedTicker[]
@@ -109,6 +110,7 @@ enum SignalSource {
   TWITTER
   CONGRESS
   POLYMARKET
+  GRADUATION
 }
 
 model ValidatedTicker {
@@ -159,6 +161,10 @@ model ValidatedTicker {
   medianSignalAgeHrs  Float?      // median post age (hours) of social signals at harvest time
   netPremium          Float?      // call premium - put premium in $ (positive = bullish)
   callPremiumRatio    Float?      // call premium / (call + put premium), 0-1
+  inUniverse          Boolean?    // PR 1-0: in the scan's liquid universe (null = no universe available)
+  filterReason        String?     // PR 1-0: why stage is FILTERED for a non-P&D reason, e.g. "illiquid"
+  dollarVolume20d     Float?      // PR 1-0: mean close*volume over the last 20 daily bars
+  atrPct              Float?      // PR 1-0: ATR(14) / last close
   tradeSetupEntryLo    Float?     // Entry range low price
   tradeSetupEntryHi    Float?     // Entry range high price
   tradeSetupStopLoss   Float?     // Stop loss price
@@ -461,4 +467,64 @@ enum BrokerOrderRole {
   STOP
   TARGET
   EXIT_TIMEOUT
+}
+
+// PR 1-0: liquid, volatile universe, rebuilt weekly by the harvester.
+model Universe {
+  id             String           @id @default(cuid())
+  refreshedAt    DateTime         @default(now())
+  rule           Json             // thresholds used for this build
+  directoryCount Int
+  prefilterCount Int
+  memberCount    Int
+  members        UniverseMember[]
+
+  @@index([refreshedAt])
+}
+
+model UniverseMember {
+  id              String   @id @default(cuid())
+  universeId      String
+  universe        Universe @relation(fields: [universeId], references: [id], onDelete: Cascade)
+  symbol          String
+  price           Float?
+  marketCap       Float?
+  dollarVolume20d Float?
+  atrPct          Float?
+  hv20            Float?
+  hasOptions      Boolean
+
+  @@unique([universeId, symbol])
+  @@index([symbol])
+}
+
+// PR 1-0: informed buys on names outside the universe, watched for 90 days.
+model GraduationWatch {
+  id               String    @id @default(cuid())
+  symbol           String
+  source           String    // INSIDER | POLITICIAN | ACTIVIST | NEW_INSIDER
+  firstFiledAt     DateTime
+  lastFiledAt      DateTime
+  actorNames       String[]
+  actorRoles       String[]
+  filingKeys       String[]  // de-duplicates repeat listings of the same filing
+  totalValue       Float?
+  filingCount      Int       @default(0)
+  isCluster        Boolean   @default(false)
+  reportingGapDays Int?      // politicians: days from trade to disclosure
+  politicianOwner  String?   // politicians: self | spouse | ... (not yet available from the source)
+  committees       String[]  // politicians: committee assignments (not yet available from the source)
+  insiderClass     String?   // routine | opportunistic, filled once PR 2a ships
+  lastCheckedAt    DateTime?
+  failingCriteria  String[]
+  graduatedAt      DateTime?
+  graduatedScanId  String?
+  flippedCriteria  String[]
+  expiresAt        DateTime
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([symbol, source])
+  @@index([expiresAt])
+  @@index([graduatedAt])
 }

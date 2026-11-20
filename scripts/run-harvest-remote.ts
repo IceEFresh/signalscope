@@ -1,6 +1,12 @@
 import "dotenv/config";
 import { fetchSignals } from "../src/lib/harvester/index.js";
 import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
+import {
+  computeIngestExtras,
+  httpPrepDeps,
+  prepareHarvest,
+  universeUrlFrom,
+} from "../src/lib/harvester/universe/harvest-prep.js";
 import { writeFileSync } from "fs";
 
 const ENDPOINT_URL = process.env.HARVEST_ENDPOINT_URL;
@@ -44,11 +50,20 @@ async function main() {
     process.exit(1);
   }
 
+  // 0. Universe and graduation watch (PR 1-0). Falls back to SCAN_SYMBOLS on any failure.
+  const universeUrl = universeUrlFrom(ENDPOINT_URL, process.env.HARVEST_UNIVERSE_URL);
+  const prep = await prepareHarvest(httpPrepDeps(universeUrl, API_KEY));
+  console.log(`[trace] Universe: ${prep.universeId ?? "static fallback"} (${prep.scanSymbols.length} symbols), watch: ${prep.watch.length}`);
+
   // 1. Fetch signals locally
   console.log(`[trace] Endpoint: ${ENDPOINT_URL}`);
   console.log(`[trace] Starting local signal fetch...`);
   const fetchStart = Date.now();
-  const signals = await fetchSignals();
+  const signals = await fetchSignals({ scanSymbols: prep.scanSymbols });
+
+  // 1b. Bar metrics for every symbol, and the daily watch re-check
+  const extras = await computeIngestExtras(signals, prep.watch);
+  signals.push(...extras.graduationSignals);
   const fetchElapsed = ((Date.now() - fetchStart) / 1000).toFixed(1);
   console.log(`[trace] Fetch completed in ${fetchElapsed}s — ${signals.length} signals`);
 
@@ -67,6 +82,9 @@ async function main() {
   const payload: HarvestIngestPayload = {
     signals,
     harvestedAt: new Date().toISOString(),
+    universeId: prep.universeId,
+    barMetrics: extras.barMetrics,
+    watchChecks: extras.watchChecks,
   };
 
   // 2. POST to the web app for processing

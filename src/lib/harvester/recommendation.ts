@@ -34,6 +34,10 @@
 //   55-60 aiScore threshold. Dead zone: no Buy signals for 13 days.
 //   $1T keeps true mega-caps (AAPL/NVDA/MSFT/GOOGL/AMZN ≥ $1.5T) at Watch
 //   while restoring Buy eligibility for large-cap catalyst-backed signals.
+//
+// Rule v5 (2026-11-20, Chris): no market-cap cap; the liquid universe gates eligibility.
+//   ACTIONABLE_MARKET_CAP_MAX and its filters (alerts, report generation, IBKR sync,
+//   broker executor) are removed. Scope decision, not a tested result: experiment #27.
 
 import type { TickerStage } from "@/generated/prisma/client";
 import type { AggregatedSymbol, FundamentalData, Source } from "./types";
@@ -42,10 +46,6 @@ export type Recommendation = "Strong Buy" | "Buy" | "Watch" | "Avoid";
 
 /** Insider / options / congress — the only sources that count as a hard catalyst for rec rules. */
 export const HARD_CATALYST_SOURCES = new Set<Source>(["SEC_INSIDER", "OPTIONS_FLOW", "CONGRESS"]);
-/** Large-cap threshold used by peer-context buckets; above this is no longer an actionable breakout label.
- *  Set to $1T to block only true mega-caps (AAPL/NVDA/MSFT/GOOGL/AMZN) while allowing large-caps
- *  with genuine catalyst signals (INTC, AMD, GE, AVGO etc.) to surface as Buy recommendations. */
-export const ACTIONABLE_MARKET_CAP_MAX = 1_000_000_000_000;
 
 export function hasHardCatalyst(sources: Iterable<Source>): boolean {
   for (const source of sources) {
@@ -72,10 +72,6 @@ function signalsFresh(ctx: RecommendationInput): boolean {
 
 function isEmergingStage(stage: TickerStage): boolean {
   return stage === "EARLY" || stage === "FORMING";
-}
-
-function isActionableMarketCap(ctx: RecommendationInput): boolean {
-  return ctx.marketCap === null || ctx.marketCap <= ACTIONABLE_MARKET_CAP_MAX;
 }
 
 export interface RecommendationRulePath {
@@ -111,7 +107,6 @@ export const RECOMMENDATION_RULE_PATHS: readonly RecommendationRulePath[] = [
     recommendation: "Strong Buy",
     match: (ctx) =>
       ctx.stage === "FORMING" &&
-      isActionableMarketCap(ctx) &&
       ctx.hasCatalystSource &&
       ctx.sourceCount >= 2 &&
       ctx.aiScore >= 60,
@@ -122,7 +117,6 @@ export const RECOMMENDATION_RULE_PATHS: readonly RecommendationRulePath[] = [
     recommendation: "Buy",
     match: (ctx) =>
       isEmergingStage(ctx.stage) &&
-      isActionableMarketCap(ctx) &&
       ctx.hasCatalystSource &&
       ctx.sourceCount >= 2 &&
       ctx.aiScore >= 55,
@@ -133,7 +127,6 @@ export const RECOMMENDATION_RULE_PATHS: readonly RecommendationRulePath[] = [
     recommendation: "Buy",
     match: (ctx) =>
       ctx.stage === "FORMING" &&
-      isActionableMarketCap(ctx) &&
       ctx.sourceCount >= 2 &&
       ctx.aiScore >= 60,
   },
@@ -143,7 +136,6 @@ export const RECOMMENDATION_RULE_PATHS: readonly RecommendationRulePath[] = [
     recommendation: "Buy",
     match: (ctx) =>
       ctx.stage === "CONFIRMED" &&
-      isActionableMarketCap(ctx) &&
       ctx.aiScore >= 60 &&
       signalsFresh(ctx),
   },
@@ -170,7 +162,7 @@ export function buildRecommendationInput(
 }
 
 /** Bump when rule semantics change so downstream consumers can detect drift. */
-export const RECOMMENDATION_RULE_VERSION = 4;
+export const RECOMMENDATION_RULE_VERSION = 5;
 
 /**
  * Derives the recommendation label from quantitative inputs. Pure function —

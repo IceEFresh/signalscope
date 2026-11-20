@@ -1,6 +1,6 @@
 import { prisma, createDevPrismaClient } from "@/lib/prisma";
 import type { PrismaClient } from "@/generated/prisma/client";
-import type { AggregatedSymbol, NoveltyContext, PndAiResult, RawSignal, SignalType } from "./types";
+import type { AggregatedSymbol, IngestBarMetrics, NoveltyContext, PndAiResult, RawSignal, SignalType, WatchCheck } from "./types";
 import { fetchRedditSignals } from "./sources/reddit";
 import { fetchStockTwitsSignals } from "./sources/stocktwits";
 import { fetchSecInsiderSignals } from "./sources/sec-insider";
@@ -16,6 +16,7 @@ import { fetchFundamentals } from "./fundamentals";
 import { assessScanRegime } from "./regime-filter";
 
 import { computeOpportunityScore } from "./opportunity-score";
+import { applyWatchChecks, loadUniverse, recordWatchEntries, type LoadedUniverse } from "./universe/store";
 import { resetCostTracker, getTotalCost } from "@/lib/ai";
 
 const SOURCE_WEIGHTS: Record<string, number> = {
@@ -24,6 +25,9 @@ const SOURCE_WEIGHTS: Record<string, number> = {
   VOLUME_SPIKE: 2.5,
   CONGRESS: 2.5,
   POLYMARKET: 2.0,
+  // PR 1-0: a watched informed buy whose ticker just entered the universe. Weighted like the
+  // other filing-based sources so a lone GRADUATION signal becomes a scored candidate.
+  GRADUATION: 2.5,
   TWITTER: 1.2,
   SEC_FILING: 1,
   REDDIT: 1,
@@ -326,10 +330,16 @@ function classifySignalType(agg: AggregatedSymbol): SignalType {
   const hasVolume = sources.has("VOLUME_SPIKE");
   const hasCongress = sources.has("CONGRESS");
   const hasPolymarket = sources.has("POLYMARKET");
+  const hasGraduation = sources.has("GRADUATION");
 
   // Multi-source: social (Reddit/StockTwits/Twitter) + at least one of insider/options/volume/congress/polymarket
   if ((hasReddit || hasStockTwits || hasTwitter) && (hasInsider || hasOptions || hasVolume || hasCongress || hasPolymarket) && sources.size >= 3) {
     return "multi_source";
+  }
+
+  // Graduation: a watched informed buy on a ticker that just entered the universe (PR 1-0)
+  if (hasGraduation && !hasInsider && !hasCongress) {
+    return "graduation";
   }
 
   // Insider buy: has SEC insider signal (Form 4 open market purchase)
@@ -383,15 +393,17 @@ async function mirrorToDevDb(
  * Fetch raw signals from all sources in parallel (network-bound, needs local IP).
  * No DB access, no AI calls.
  */
-export async function fetchSignals(): Promise<RawSignal[]> {
-  console.log("Fetching signals from all sources...");
+export async function fetchSignals(
+  { scanSymbols = SCAN_SYMBOLS }: { scanSymbols?: readonly string[] } = {},
+): Promise<RawSignal[]> {
+  console.log(`Fetching signals from all sources (volume/options universe: ${scanSymbols.length} symbols)...`);
   const sourceNames = ["reddit", "stocktwits", "secInsider", "optionsFlow", "volumeSpike", "twitter", "congress", "polymarket"] as const;
   const sourceResults = await Promise.allSettled([
     fetchRedditSignals(),
     fetchStockTwitsSignals(),
     fetchSecInsiderSignals(),
-    fetchOptionsFlowSignals(),
-    fetchVolumeSpikeSignals(),
+    fetchOptionsFlowSignals(scanSymbols),
+    fetchVolumeSpikeSignals(scanSymbols),
     fetchTwitterSignals(),
     fetchCongressSignals(),
     fetchPolymarketSignals(),
@@ -408,6 +420,7 @@ export async function fetchSignals(): Promise<RawSignal[]> {
   );
 
   // Phase 2: Search Polymarket for symbols discovered by other sources but not in SCAN_SYMBOLS
+  // (phase 1 still searches the static list, so this comparison stays on it too)
   const scanSymbolSet = new Set(SCAN_SYMBOLS);
   const extraSymbols = [...new Set(allSignals.map((s) => s.symbol))].filter(
     (s) => !scanSymbolSet.has(s)
@@ -455,11 +468,36 @@ export function deduplicateCongressSignals(signals: RawSignal[], seenTxIds: Set<
   return filtered;
 }
 
+/** Extra harvester data that rides along with the signals (PR 1-0). */
+export interface ProcessContext {
+  /** Universe the harvester scanned with; null = fell back to SCAN_SYMBOLS, use the latest stored one. */
+  universeId?: string | null;
+  barMetrics?: Record<string, IngestBarMetrics>;
+  watchChecks?: WatchCheck[];
+}
+
+/** Reason stored on rows outside the universe (stage FILTERED). */
+export const ILLIQUID_FILTER_REASON = "illiquid";
+
+/**
+ * Universe membership for one scan. Returns null when no universe exists yet,
+ * so nothing is filtered as illiquid until the first build lands.
+ * A ticker with a GRADUATION signal in this scan counts as inside.
+ */
+export function makeUniverseCheck(
+  universe: LoadedUniverse | null,
+  signals: readonly RawSignal[],
+): (symbol: string) => boolean | null {
+  if (!universe) return () => null;
+  const graduated = new Set(signals.filter((s) => s.source === "GRADUATION").map((s) => s.symbol));
+  return (symbol) => universe.symbols.has(symbol) || graduated.has(symbol);
+}
+
 /**
  * Process pre-fetched signals: aggregate, score, filter P&D, generate reports, write to DB.
  * This is the heavy work that runs on the web app host.
  */
-export async function processSignals(allSignals: RawSignal[]): Promise<string> {
+export async function processSignals(allSignals: RawSignal[], ctx: ProcessContext = {}): Promise<string> {
   console.log("Processing signals...");
   resetCostTracker();
 
@@ -508,6 +546,23 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
     }
 
     console.log(`Total raw signals: ${allSignals.length}`);
+
+    // 2a. Universe (PR 1-0). A load failure must not stop the harvest: treat it as "no universe".
+    let universe: LoadedUniverse | null = null;
+    try {
+      universe = await loadUniverse(ctx.universeId ?? null);
+    } catch (err) {
+      console.warn("[universe] load failed, scanning without the liquidity gate:", err instanceof Error ? err.message : err);
+    }
+    const inUniverse = makeUniverseCheck(universe, allSignals);
+    const isIlliquid = (symbol: string) => inUniverse(symbol) === false;
+    const barMetrics = ctx.barMetrics ?? {};
+    if (universe) {
+      await prisma.scan.update({ where: { id: scan.id }, data: { universeId: universe.id } });
+      console.log(`[universe] Using ${universe.id} (${universe.symbols.size} symbols, refreshed ${universe.refreshedAt.toISOString()})`);
+    } else {
+      console.warn("[universe] No universe stored yet: illiquid filter off for this scan");
+    }
 
     // 2b. Macro options-flow regime assessment (see src/lib/harvester/regime-filter.ts).
     //     Persist features for observability/trailing-mean even when the gate is off.
@@ -582,21 +637,28 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
     // 6. AI scoring in batches of 15 (parallelized).
     //    Regime-skipped scans bypass AI scoring entirely to save cost — heuristic only,
     //    and every row will be forced to UNSCORED below so they never surface in dashboard/alerts/tweets.
+    //    Candidates outside the universe (PR 1-0) are FILTERED as illiquid, so they get the
+    //    heuristic score only and no AI spend.
+    const illiquidCandidates = validCandidates.filter((c) => isIlliquid(c.symbol));
+    const liquidCandidates = validCandidates.filter((c) => !isIlliquid(c.symbol));
+    if (illiquidCandidates.length > 0) {
+      console.log(`[universe] ${illiquidCandidates.length} candidates outside the universe → FILTERED (illiquid), not AI-scored`);
+    }
     const scoreResults = regime.skip
       ? validCandidates.map((c) => defaultScore(c, noveltyMap.get(c.symbol)))
       : (
           await Promise.all(
             (() => {
               const scoreBatches: AggregatedSymbol[][] = [];
-              for (let i = 0; i < validCandidates.length; i += 15) {
-                scoreBatches.push(validCandidates.slice(i, i + 15));
+              for (let i = 0; i < liquidCandidates.length; i += 15) {
+                scoreBatches.push(liquidCandidates.slice(i, i + 15));
               }
               return scoreBatches.map((batch) =>
                 scoreSymbolBatch(batch, fundamentalsMap, noveltyMap, scan.id)
               );
             })()
           )
-        ).flat();
+        ).flat().concat(illiquidCandidates.map((c) => defaultScore(c, noveltyMap.get(c.symbol))));
 
     const scoreMap = new Map(scoreResults.map((s) => [s.symbol, s]));
 
@@ -610,6 +672,7 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
       pndFlags: string[];
       pndScore: number;
       stage: "EARLY" | "FORMING" | "CONFIRMED" | "FILTERED" | "UNSCORED";
+      filterReason?: string;
       signalType: SignalType;
       rawAiScore?: number;
       pndAiConfidence?: number;
@@ -628,7 +691,7 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
     // Skipped on regime-flagged scans — those rows are headed to UNSCORED, no point spending AI on them.
     const borderlineCandidates = regime.skip
       ? []
-      : validCandidates.filter((agg) => {
+      : liquidCandidates.filter((agg) => {
           const pnd = pndResultsMap.get(agg.symbol)!;
           const effectiveCount = pnd.flags.filter((f) => !INFORMATIONAL_FLAGS.has(f)).length;
           return effectiveCount === PND_THRESHOLD - 1;
@@ -654,14 +717,14 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
       const pndAiResult = aiPndResultsMap.get(agg.symbol) as PndAiResult | undefined;
       const finalPndFlagged = pndAiResult !== undefined ? pndAiResult.flagged : pnd.flagged;
 
-      if (finalPndFlagged) filteredCount++;
+      if (finalPndFlagged || isIlliquid(agg.symbol)) filteredCount++;
 
       const aiScore = scoreMap.get(agg.symbol);
       const score = aiScore?.score ?? 30;
       const sentiment = aiScore?.sentiment ?? "neutral";
       const novelty = noveltyMap.get(agg.symbol);
       const sources = new Set(agg.signals.map((s) => s.source));
-      const hasNonSocialSource = sources.has("SEC_INSIDER") || sources.has("OPTIONS_FLOW") || sources.has("VOLUME_SPIKE") || sources.has("CONGRESS") || sources.has("POLYMARKET");
+      const hasNonSocialSource = sources.has("SEC_INSIDER") || sources.has("OPTIONS_FLOW") || sources.has("VOLUME_SPIKE") || sources.has("CONGRESS") || sources.has("POLYMARKET") || sources.has("GRADUATION");
       const pctFrom52wkLow = parsePctFrom52wkLow(fundamentals?.price, fundamentals?.wk52Lo, fundamentals?.fiftyTwoWeekRange);
       const wk52Lo = fundamentals?.wk52Lo ?? undefined;
       const isAmexPenny = !!(
@@ -677,8 +740,11 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
         fundamentals.price != null && fundamentals.price < 5
       );
       const wk52HighRatio = (fundamentals?.wk52Hi && fundamentals?.price) ? fundamentals.wk52Hi / fundamentals.price : undefined;
+      const illiquid = isIlliquid(agg.symbol);
       const stage: "EARLY" | "FORMING" | "CONFIRMED" | "FILTERED" | "UNSCORED" = regime.skip
         ? "UNSCORED"
+        : illiquid
+        ? "FILTERED"
         : determineStage(score, agg.sourceCount, agg.weightedSourceScore, agg.avgVelocity, finalPndFlagged, hasNonSocialSource, novelty, agg.subredditCount, pctFrom52wkLow, wk52Lo, isAmexPenny, isNasdaqSmallPenny, agg.medianSignalAgeHrs, fundamentals?.marketCap, fundamentals?.shortFloat, wk52HighRatio, agg.totalUpvotes, agg.totalComments, fundamentals?.price);
 
       const signalType = classifySignalType(agg);
@@ -691,6 +757,7 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
         pndFlags: pnd.flags,
         pndScore: pnd.score,
         stage,
+        filterReason: illiquid ? ILLIQUID_FILTER_REASON : undefined,
         signalType,
         rawAiScore: scoreMap.get(agg.symbol)?.rawScore,
         pndAiConfidence: pndAiResult?.confidence,
@@ -706,6 +773,7 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
       const heuristic = defaultScore(agg, noveltyMap.get(agg.symbol));
       const signalType = classifySignalType(agg);
 
+      const illiquid = isIlliquid(agg.symbol);
       unscoredResults.push({
         agg,
         score: heuristic.score,
@@ -713,7 +781,8 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
         pndFlagged: pnd.flagged,
         pndFlags: pnd.flags,
         pndScore: pnd.score,
-        stage: "UNSCORED",
+        stage: illiquid ? "FILTERED" : "UNSCORED",
+        filterReason: illiquid ? ILLIQUID_FILTER_REASON : undefined,
         signalType,
         rawAiScore: heuristic.rawScore,
       });
@@ -777,6 +846,7 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
     const tickerDataList = allValidatedResults.map((result) => {
       const fundamentals = fundamentalsMap.get(result.agg.symbol);
       const novelty = noveltyMap.get(result.agg.symbol);
+      const bars = barMetrics[result.agg.symbol];
       return {
         scanId: scan.id,
         symbol: result.agg.symbol,
@@ -804,6 +874,7 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
           totalUpvotes: result.agg.totalUpvotes,
           totalComments: result.agg.totalComments,
           exchange: fundamentals?.exchange,
+          atrPct: bars?.atrPct ?? null,
         }),
         stage: result.stage,
         signalCount: result.agg.signals.length,
@@ -836,6 +907,10 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
         medianSignalAgeHrs: result.agg.medianSignalAgeHrs,
         netPremium: result.agg.netPremium,
         callPremiumRatio: result.agg.callPremiumRatio,
+        inUniverse: inUniverse(result.agg.symbol),
+        filterReason: result.filterReason ?? null,
+        dollarVolume20d: bars?.dollarVolume20d ?? null,
+        atrPct: bars?.atrPct ?? null,
       };
     });
 
@@ -847,7 +922,7 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
       status: "COMPLETED" as const,
       completedAt: new Date(),
       signalCount,
-      validatedCount: validatedResults.filter((r) => !r.pndFlagged).length,
+      validatedCount: validatedResults.filter((r) => !r.pndFlagged && !r.filterReason).length,
       filteredCount,
       aiCost,
     };
@@ -913,6 +988,16 @@ export async function processSignals(allSignals: RawSignal[]): Promise<string> {
     await mirrorToDevDb(devPrisma, "scan complete", async (client) => {
       await client.scan.update({ where: { id: scan.id }, data: scanUpdateData });
     });
+
+    // Graduation watch (PR 1-0). Runs after the scan is committed; a failure is logged, never thrown.
+    try {
+      const added = await recordWatchEntries(allSignals, isIlliquid);
+      await applyWatchChecks(ctx.watchChecks ?? [], scan.id);
+      const graduated = (ctx.watchChecks ?? []).filter((c) => c.graduated).length;
+      console.log(`[watch] ${added} watch rows added/updated, ${ctx.watchChecks?.length ?? 0} checked, ${graduated} graduated`);
+    } catch (err) {
+      console.warn("[watch] update failed:", err instanceof Error ? err.message : err);
+    }
 
     console.log(
       `Scan ${scan.id} completed: ${signalCount} signals, ${scanUpdateData.validatedCount} validated, ${filteredCount} filtered`

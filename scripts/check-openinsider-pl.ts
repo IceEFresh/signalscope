@@ -1,10 +1,11 @@
 /**
- * Diagnostic: what does `pl=50` do in the OpenInsider screener URL?
+ * Diagnostic: what does `pl` do in the OpenInsider screener URL?
  *
- * Fetches the production screener URL, then the same URL with `pl` blank,
- * and prints purchase counts and share-price ranges for each. If the `pl=50`
- * run has no purchases under $50 while the blank run does, `pl` is a minimum
- * share price.
+ * Fetches the production screener URL (pl=5 since PR 1-0), the same URL with
+ * pl=50 (upstream's value) and with `pl` blank, and prints purchase counts and
+ * share-price ranges for each. If the pl=50 run has no purchases under $50
+ * while the blank run does, `pl` is a minimum share price. The harvester also
+ * drops sub-$5 rows in code, so the floor holds either way.
  *
  * Read-only: no database access, no writes. Needs plain-HTTP access to
  * openinsider.com, so run it on the NAS, not in a cloud sandbox:
@@ -16,8 +17,9 @@ import {
 } from "../src/lib/harvester/sources/sec-insider";
 
 const VARIANTS: Record<string, string> = {
-  "pl=50 (production)": OPENINSIDER_SCREENER_URL,
-  "pl blank": OPENINSIDER_SCREENER_URL.replace("&pl=50&", "&pl=&"),
+  "pl=5 (production)": OPENINSIDER_SCREENER_URL,
+  "pl=50 (upstream)": OPENINSIDER_SCREENER_URL.replace("&pl=5&", "&pl=50&"),
+  "pl blank": OPENINSIDER_SCREENER_URL.replace("&pl=5&", "&pl=&"),
 };
 
 async function summarize(label: string, url: string): Promise<void> {

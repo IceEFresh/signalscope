@@ -19,6 +19,7 @@ export const SOURCE_METH_NAME: Record<string, string> = {
   VOLUME_SPIKE: "Volume Spike",
   STOCKTWITS: "StockTwits",
   POLYMARKET: "Polymarket",
+  GRADUATION: "Graduation Watch",
 };
 
 export const STAGE_TOOLTIP_BY_DISPLAY = Object.fromEntries(

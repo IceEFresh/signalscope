@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
 import { z } from "zod";
 import { processSignals } from "@/lib/harvester";
 import { handleApiError } from "@/lib/api-error";
+import { checkHarvestKey } from "@/lib/harvest-auth";
 
 const signalSchema = z.object({
   symbol: z.string(),
-  source: z.enum(["REDDIT", "STOCKTWITS", "SEC_INSIDER", "SEC_FILING", "OPTIONS_FLOW", "VOLUME_SPIKE", "TWITTER", "CONGRESS", "POLYMARKET"]),
+  source: z.enum(["REDDIT", "STOCKTWITS", "SEC_INSIDER", "SEC_FILING", "OPTIONS_FLOW", "VOLUME_SPIKE", "TWITTER", "CONGRESS", "POLYMARKET", "GRADUATION"]),
   title: z.string().optional(),
   body: z.string().optional(),
   url: z.string().optional(),
@@ -39,33 +39,41 @@ const signalSchema = z.object({
   marketEndDate: z.string().nullable().optional().transform((v) => v ?? undefined),
   netPremium: z.number().nullable().optional().transform((v) => v ?? undefined),
   callPremiumRatio: z.number().nullable().optional().transform((v) => v ?? undefined),
+  // Graduation watch (PR 1-0)
+  filedAt: z.string().optional(),
+  filingKey: z.string().optional(),
+  reportingGapDays: z.number().optional(),
+  graduationSource: z.string().optional(),
+  filingAgeDays: z.number().optional(),
+  flippedCriteria: z.array(z.string()).optional(),
 });
+
+const nullableNum = z.number().finite().nullable();
 
 const ingestPayloadSchema = z.object({
   signals: z.array(signalSchema).min(1),
   harvestedAt: z.string().datetime(),
+  // PR 1-0 additions; optional so an older harvester still works.
+  universeId: z.string().nullable().optional(),
+  barMetrics: z
+    .record(z.string(), z.object({ dollarVolume20d: nullableNum, atrPct: nullableNum, hv20: nullableNum }))
+    .optional(),
+  watchChecks: z
+    .array(
+      z.object({
+        watchId: z.string(),
+        failingCriteria: z.array(z.string()),
+        graduated: z.boolean(),
+        flippedCriteria: z.array(z.string()),
+      }),
+    )
+    .optional(),
 });
 
 export async function POST(req: NextRequest) {
   try {
-    // Auth: shared secret via x-harvest-key header
-    const harvestKey = req.headers.get("x-harvest-key");
-    const expectedKey = process.env.HARVEST_API_KEY;
-
-    if (!expectedKey) {
-      console.error("[harvest/ingest] HARVEST_API_KEY not configured");
-      return NextResponse.json({ error: "Endpoint not configured" }, { status: 503 });
-    }
-
-    const bufKey = harvestKey ? Buffer.from(harvestKey, "utf8") : null;
-    const bufExpected = Buffer.from(expectedKey, "utf8");
-    const keyMatch =
-      bufKey !== null &&
-      bufKey.byteLength === bufExpected.byteLength &&
-      timingSafeEqual(bufKey, bufExpected);
-    if (!keyMatch) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const denied = checkHarvestKey(req, "harvest/ingest");
+    if (denied) return denied;
 
     const body = await req.json();
     const parsed = ingestPayloadSchema.parse(body);
@@ -81,7 +89,11 @@ export async function POST(req: NextRequest) {
     console.log(`[harvest/ingest] Source breakdown:`, JSON.stringify(sourceCounts));
 
     const t0 = Date.now();
-    const scanId = await processSignals(parsed.signals);
+    const scanId = await processSignals(parsed.signals, {
+      universeId: parsed.universeId ?? null,
+      barMetrics: parsed.barMetrics ?? {},
+      watchChecks: parsed.watchChecks ?? [],
+    });
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
     console.log(`[harvest/ingest] Processing completed in ${elapsed}s — scanId=${scanId}`);

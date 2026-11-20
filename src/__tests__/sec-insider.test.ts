@@ -252,10 +252,24 @@ describe("fetchSecInsiderSignals", () => {
   });
 });
 
+describe("$5 share-price floor", () => {
+  it("drops C-suite purchases under $5/share and keeps $5 and above", async () => {
+    const html = makeOpenInsiderHtml([
+      makeRow({ ticker: "SUBF", name: "A", title: "CEO", tradeType: "P - Purchase", price: "$4.99", qty: "+100,000", value: "+$499,000" }),
+      makeRow({ ticker: "FIVE", name: "B", title: "CFO", tradeType: "P - Purchase", price: "$5.00", qty: "+20,000", value: "+$100,000" }),
+    ]);
+    mockFetch.mockImplementation(async (url: string) =>
+      url.includes("openinsider.com") ? { ok: true, text: async () => html } : { ok: false, status: 404 },
+    );
+    const symbols = (await fetchSecInsiderSignals()).map((s) => s.symbol);
+    expect(symbols).toEqual(["FIVE"]);
+  });
+});
+
 describe("OpenInsider screener URL", () => {
-  it("is unchanged from upstream, so source output does not change", () => {
+  it("uses pl=5, the $5 minimum share price (PLAN.md PR 1-0 decision), otherwise unchanged from upstream", () => {
     expect(OPENINSIDER_SCREENER_URL).toBe(
-      "http://openinsider.com/screener?s=&o=&pl=50&ph=&ll=&lh=&fd=7&fdr=&td=0&tdr=&feession=0&cession=0&sid=1&iession=0&ession=0&otype=&othertype=&ression=0&sortcol=0&cnt=100&page=1",
+      "http://openinsider.com/screener?s=&o=&pl=5&ph=&ll=&lh=&fd=7&fdr=&td=0&tdr=&feession=0&cession=0&sid=1&iession=0&ession=0&otype=&othertype=&ression=0&sortcol=0&cnt=100&page=1",
     );
   });
 
