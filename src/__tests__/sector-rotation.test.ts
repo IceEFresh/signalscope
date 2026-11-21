@@ -6,6 +6,10 @@ import {
   computeEtfStats,
   computeSectorRotation,
   INDUSTRY_ETFS,
+  industryEtfFor,
+  MACRO_ETFS,
+  THEME_ETFS,
+  UNMAPPED_INDUSTRY_ETFS,
   rankDesc,
   ROTATION_ETFS,
   SECTOR_ETFS,
@@ -39,9 +43,27 @@ describe("sector and industry ETF maps", () => {
     expect(Object.keys(SECTOR_ETFS)).toHaveLength(11);
     expect(new Set(Object.values(SECTOR_ETFS)).size).toBe(11);
   });
-  it("lists every ETF once for fetching (11 sectors plus about 25+ industry ETFs)", () => {
+  it("lists every ETF once for fetching: 11 sectors, 33 industry, 2 unmapped industry, 3 theme, 14 macro", () => {
     expect(ROTATION_ETFS.length).toBe(new Set(ROTATION_ETFS).size);
-    expect(new Set(Object.values(INDUSTRY_ETFS)).size).toBeGreaterThanOrEqual(25);
+    expect(new Set(Object.values(INDUSTRY_ETFS)).size).toBe(33);
+    expect(ROTATION_ETFS).toHaveLength(63);
+  });
+  it("uses Chris's ETFs where his list covers the industry, and does not map theme or macro ETFs", () => {
+    expect(industryEtfFor("Biotechnology")).toBe("IBB");
+    expect(industryEtfFor("Medical Devices")).toBe("XHE");
+    expect(industryEtfFor("Healthcare Plans")).toBe("XHS");
+    expect(industryEtfFor("Residential Construction")).toBe("XHB");
+    expect(industryEtfFor("Railroads")).toBe("XTN");
+    expect(industryEtfFor("Telecom Services")).toBe("XTL");
+    expect(industryEtfFor("Farm Products")).toBe("MOO");
+    expect(industryEtfFor("Building Products & Equipment")).toBe("PAVE");
+    expect(industryEtfFor("Other Industrial Metals & Mining")).toBe("XME");
+    const mapped = new Set(Object.values(INDUSTRY_ETFS));
+    for (const e of [...UNMAPPED_INDUSTRY_ETFS, ...THEME_ETFS, ...MACRO_ETFS]) {
+      expect(mapped.has(e)).toBe(false);
+      expect(ROTATION_ETFS).toContain(e);
+    }
+    for (const old of ["IGV", "XBI", "IHI", "IHF", "ITB", "IYT"]) expect(ROTATION_ETFS).not.toContain(old);
   });
 });
 
@@ -134,10 +156,10 @@ describe("computeSectorExtras", () => {
 
 describe("industry string normalization (review of #14)", () => {
   it("maps em dash, en dash and spaced-hyphen forms to the same ETF", async () => {
-    const { industryEtfFor } = await import("@/lib/harvester/universe/sector-rotation");
-    expect(industryEtfFor("Software—Application")).toBe("IGV");
-    expect(industryEtfFor("Software - Application")).toBe("IGV");
-    expect(industryEtfFor("Software – Application")).toBe("IGV");
+
+    expect(industryEtfFor("Software—Application")).toBe("XSW");
+    expect(industryEtfFor("Software - Application")).toBe("XSW");
+    expect(industryEtfFor("Software – Application")).toBe("XSW");
     expect(industryEtfFor("Banks - Regional")).toBe("KRE");
     expect(industryEtfFor("Drug Manufacturers - Specialty & Generic")).toBe("XPH");
     expect(industryEtfFor("Semiconductors")).toBe("SMH");
@@ -146,8 +168,8 @@ describe("industry string normalization (review of #14)", () => {
   });
 
   it("uses the normalized lookup for ticker features", () => {
-    const rot = { version: 1, bar_date: null, sectors: [], etfs: { IGV: { return_20d: 0.01, return_60d: null, rs_vs_spy_20d: null, rs_vs_spy_60d: null, rs_vs_spy_20d_4w_ago: null, wtd: null, mtd: null, day: null } } };
-    expect(tickerSectorFeatures("Technology", "Software - Infrastructure", 0.05, rot, 1)).toMatchObject({ industry_etf: "IGV" });
+    const rot = { version: 1, bar_date: null, sectors: [], etfs: { XSW: { return_20d: 0.01, return_60d: null, rs_vs_spy_20d: null, rs_vs_spy_60d: null, rs_vs_spy_20d_4w_ago: null, wtd: null, mtd: null, day: null } } };
+    expect(tickerSectorFeatures("Technology", "Software - Infrastructure", 0.05, rot, 1)).toMatchObject({ industry_etf: "XSW" });
   });
 
   it("lists unmapped industries, most frequent first", async () => {

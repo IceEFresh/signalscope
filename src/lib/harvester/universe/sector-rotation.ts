@@ -28,22 +28,24 @@ export const SECTOR_ETFS: Record<string, string> = {
 };
 
 /**
- * Yahoo `assetProfile.industry` → industry ETF. [Guessing] hand-built mapping;
- * an industry not listed gets null industry fields (it falls back to sector only).
+ * Yahoo `assetProfile.industry` → industry ETF. Where Chris's TradingView
+ * "!!Sector Rotation" list covers an industry, its ETF is used (XSW, IBB, XHE,
+ * XHS, XHB, XTN, XTL, MOO, PAVE); the rest are hand-picked. An industry not
+ * listed gets null industry fields (it falls back to sector only).
  */
 export const INDUSTRY_ETFS: Record<string, string> = {
   Semiconductors: "SMH",
   "Semiconductor Equipment & Materials": "SMH",
-  "Software—Application": "IGV",
-  "Software—Infrastructure": "IGV",
-  "Information Technology Services": "IGV",
-  Biotechnology: "XBI",
+  "Software—Application": "XSW",
+  "Software—Infrastructure": "XSW",
+  "Information Technology Services": "XSW",
+  Biotechnology: "IBB",
   "Drug Manufacturers—Specialty & Generic": "XPH",
   "Drug Manufacturers—General": "XPH",
-  "Medical Devices": "IHI",
-  "Medical Instruments & Supplies": "IHI",
-  "Healthcare Plans": "IHF",
-  "Medical Care Facilities": "IHF",
+  "Medical Devices": "XHE",
+  "Medical Instruments & Supplies": "XHE",
+  "Healthcare Plans": "XHS",
+  "Medical Care Facilities": "XHS",
   "Banks—Regional": "KRE",
   "Banks—Diversified": "KBE",
   "Capital Markets": "IAI",
@@ -54,16 +56,16 @@ export const INDUSTRY_ETFS: Record<string, string> = {
   "Oil & Gas Integrated": "XOP",
   "Oil & Gas Equipment & Services": "OIH",
   "Oil & Gas Refining & Marketing": "CRAK",
-  "Residential Construction": "ITB",
+  "Residential Construction": "XHB",
   "Specialty Retail": "XRT",
   "Apparel Retail": "XRT",
   "Internet Retail": "XRT",
   "Department Stores": "XRT",
   Airlines: "JETS",
   "Aerospace & Defense": "ITA",
-  Trucking: "IYT",
-  Railroads: "IYT",
-  "Integrated Freight & Logistics": "IYT",
+  Trucking: "XTN",
+  Railroads: "XTN",
+  "Integrated Freight & Logistics": "XTN",
   Steel: "XME",
   "Other Industrial Metals & Mining": "XME",
   Copper: "COPX",
@@ -79,7 +81,26 @@ export const INDUSTRY_ETFS: Record<string, string> = {
   "Auto Manufacturers": "CARZ",
   "REIT—Residential": "REZ",
   "Utilities—Renewable": "ICLN",
+  "Telecom Services": "XTL",
+  "Agricultural Inputs": "MOO",
+  "Farm Products": "MOO",
+  "Engineering & Construction": "PAVE",
+  "Building Products & Equipment": "PAVE",
+  "Infrastructure Operations": "PAVE",
 };
+
+/**
+ * Fetched for their stats in `etfs` only: not ranked and not mapped to an
+ * industry. From Chris's "!!Sector Rotation" screen.
+ * - LIT, MJ: industry ETFs with no Yahoo industry of their own ("Other
+ *   Industrial Metals & Mining" stays XME; Yahoo has no cannabis industry).
+ * - QTUM, AIQ, CIBR: themes (quantum, AI, cybersecurity).
+ * - The rest: macro rows (indexes, commodities, Treasuries, bitcoin). SPY is
+ *   fetched separately as the benchmark.
+ */
+export const UNMAPPED_INDUSTRY_ETFS = ["LIT", "MJ"] as const;
+export const THEME_ETFS = ["QTUM", "AIQ", "CIBR"] as const;
+export const MACRO_ETFS = ["QQQ", "IWM", "DIA", "RSP", "GLD", "SLV", "USO", "UNG", "DBA", "DBB", "IEF", "SHY", "TLH", "HODL"] as const;
 
 /**
  * Yahoo has served industry names with an em dash ("Software—Application") and
@@ -106,7 +127,15 @@ export function unmappedIndustries(industries: readonly (string | null | undefin
   return [...counts.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-export const ROTATION_ETFS: string[] = [...new Set([...Object.values(SECTOR_ETFS), ...Object.values(INDUSTRY_ETFS)])];
+export const ROTATION_ETFS: string[] = [
+  ...new Set([
+    ...Object.values(SECTOR_ETFS),
+    ...Object.values(INDUSTRY_ETFS),
+    ...UNMAPPED_INDUSTRY_ETFS,
+    ...THEME_ETFS,
+    ...MACRO_ETFS,
+  ]),
+];
 
 export interface EtfStats {
   return_20d: number | null;
@@ -133,7 +162,7 @@ export interface SectorRotation {
   version: number;
   bar_date: string | null;
   sectors: SectorRow[];
-  /** Stats for every fetched ETF (sector and industry), keyed by ETF symbol. */
+  /** Stats for every fetched ETF (sector, industry, theme and macro), keyed by ETF symbol. */
   etfs: Record<string, EtfStats>;
 }
 
