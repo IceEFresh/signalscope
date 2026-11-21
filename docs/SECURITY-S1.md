@@ -18,6 +18,10 @@ The reviewer ran CodeQL 2.27.5 (code-scanning suites for JavaScript/TypeScript, 
 
 The Actions and Python suites found nothing.
 
+### Dependabot (3 open alerts, 2026-11-20)
+
+All three are medium-severity advisories in `next`: response injection when forwarding fetched responses, HttpOnly cookie exposure on Edge routes, and an SVG bypass in the image optimizer. All three are fixed in **16.4.5**. Upgrade `next` to at least 16.4.5, and confirm the alerts close after merge.
+
 ### npm audit (40 advisories: 4 critical, 19 high, 16 moderate, 1 low; 25 in production dependencies)
 
 The critical ones in production are `next`, `next-auth` / `@auth/core` and `proxy-addr`. The high ones include `@x402/*`, `prisma` / `@prisma/config`, `sharp`, `zod`, `mysql2`, `body-parser`, `fast-uri`, `effect`, `deepmerge-ts` and `@modelcontextprotocol/sdk` (pulled in by `yahoo-finance2`).
@@ -37,4 +41,4 @@ The critical ones in production are `next`, `next-auth` / `@auth/core` and `prox
 ## For Chris after merge
 
 - In GitHub → Security → Code scanning, dismiss the `js/insufficient-password-hash` alert as "Won't fix", with the reason above.
-- Check that Dependabot alerts are switched on for the fork (Settings → Code security). The API showed 0 open Dependabot alerts while `npm audit` showed 40, which suggests alerts were never enabled after forking.
+- Dependabot alerts are on (Chris confirmed on 2026-11-20).
