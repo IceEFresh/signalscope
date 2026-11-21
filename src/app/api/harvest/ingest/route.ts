@@ -50,6 +50,8 @@ const signalSchema = z.object({
   tradeDate: z.string().optional(),
   insiderClass: z.enum(["routine", "opportunistic", "unclassified"]).optional(),
   insiderPriorYears: z.number().optional(),
+  // PR 2b politician office (log only)
+  office: z.string().optional(),
 });
 
 const nullableNum = z.number().finite().nullable();

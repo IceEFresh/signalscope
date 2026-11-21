@@ -10,7 +10,7 @@ import {
   RECOMMENDATION_RULE_PATHS,
   type RecommendationInput,
 } from "@/lib/harvester/recommendation";
-import { congressAblation } from "@/lib/harvester/congress-features";
+import { politicianAblation } from "@/lib/harvester/politician-features";
 import type { Source } from "@/lib/harvester/types";
 
 interface Row {
@@ -209,15 +209,15 @@ async function main() {
   evaluate("EARLY + catalyst", (r) => r.stage === "EARLY" && r.hasCatalystSource);
   evaluate("FORMING + catalyst", (r) => r.stage === "FORMING" && r.hasCatalystSource);
 
-  // PLAN.md 2b: what changes if CONGRESS stops counting as a hard catalyst.
+  // PLAN.md 2b: what changes if elected-politician trades (source CONGRESS) stop counting as a hard catalyst.
   // Not applied anywhere; run this, then log the result in scripts/backtesting-experiments.md.
-  console.log("\n== 2b ablation: CONGRESS removed from HARD_CATALYST_SOURCES ==");
-  const ablated = rows.map((r) => ({ r, a: congressAblation({ input: rowToInput(r), sources: r.catalystSources }) }));
-  const congressOnly = (r: Row) => r.catalystSources.has("CONGRESS") && r.catalystSources.size === 1;
-  evaluate("CONGRESS present", (r) => r.catalystSources.has("CONGRESS"));
-  evaluate("CONGRESS is the only hard catalyst", congressOnly);
-  evaluate("Other hard catalyst, no CONGRESS", (r) => r.hasCatalystSource && !r.catalystSources.has("CONGRESS"));
-  for (const variant of ["withoutCongressRules", "withoutCongressRulesAndCap"] as const) {
+  console.log("\n== 2b ablation: elected politicians (CONGRESS) removed from HARD_CATALYST_SOURCES ==");
+  const ablated = rows.map((r) => ({ r, a: politicianAblation({ input: rowToInput(r), sources: r.catalystSources }) }));
+  const politicianOnly = (r: Row) => r.catalystSources.has("CONGRESS") && r.catalystSources.size === 1;
+  evaluate("Elected politician present", (r) => r.catalystSources.has("CONGRESS"));
+  evaluate("Elected politician is the only hard catalyst", politicianOnly);
+  evaluate("Other hard catalyst, no politician", (r) => r.hasCatalystSource && !r.catalystSources.has("CONGRESS"));
+  for (const variant of ["withoutPoliticianRules", "withoutPoliticianRulesAndCap"] as const) {
     const changed = ablated.filter(({ a }) => a[variant] !== a.current);
     console.log(`\n-- ${variant}: ${changed.length} of ${rows.length} rows change recommendation --`);
     const transitions = new Map<string, number>();
