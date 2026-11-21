@@ -408,3 +408,32 @@ describe("fetchRedditSignals — hot sort", () => {
     expect(hotSignals[0].symbol).toBe("PLTR");
   });
 });
+
+// ── PLAN.md 2c: post type tagged on the full text ─────────────────────────────
+
+describe("fetchRedditSignals — post type (2c)", () => {
+  it("classifies on the full self-text before the 2,000-char trim, and tags comments", async () => {
+    const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
+    const ddText =
+      "Revenue grew 18% year over year, margins expanded, free cash flow covered capex, " +
+      "debt fell, management raised guidance and the backlog is a record. Valuation via DCF. " +
+      words(900);
+    mockFetch.mockImplementation(async (url: string | URL | Request) => {
+      const u = urlStr(url);
+      if (u.includes("/wallstreetbets/new.json") && !u.includes("after=")) {
+        return redditListing([
+          { title: "PLTR turnaround thesis", selftext: ddText, permalink: "/r/wallstreetbets/comments/d1/dd/", link_flair_text: "DD" },
+          { title: "PLTR 🚀🚀 to the moon", selftext: "", permalink: "/r/wallstreetbets/comments/h1/yolo/", link_flair_text: "YOLO" },
+        ]);
+      }
+      return emptyListing();
+    });
+    const sigs = await fetchRedditSignals();
+    const dd = sigs.find((s) => s.title === "PLTR turnaround thesis");
+    const hype = sigs.find((s) => s.title === "PLTR 🚀🚀 to the moon");
+    expect(dd?.redditPostType).toBe("dd");
+    expect(dd?.redditWords).toBe(ddText.trim().split(/\s+/).length);
+    expect(dd!.body!.length).toBeLessThanOrEqual(2000);
+    expect(hype?.redditPostType).toBe("hype");
+  });
+});

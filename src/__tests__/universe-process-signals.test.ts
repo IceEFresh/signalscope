@@ -161,6 +161,9 @@ describe("processSignals with a universe (PR 1-0)", () => {
       sector_rank_20d: null, sector_rank_change_4w: null, industry_ticker_count: null,
       // 1d shadow score: none in this fixture
       shadow_ai_score: null, shadow_ai_raw_score: null, shadow_ai_sentiment: null, shadow_ai_model: null,
+      // 2c Reddit post type: the fixture's Reddit signals carry no type
+      reddit_dd_count: 0, reddit_hype_count: 0, reddit_other_count: 0, reddit_comment_count: 0,
+      reddit_dd_max_upvotes: null, reddit_dd_max_words: null, reddit_post_type_basis: null,
     });
     // opportunityScore, aiScore, stage, everything else identical
     expect({ ...withF, features: undefined }).toEqual({ ...without, features: undefined });
