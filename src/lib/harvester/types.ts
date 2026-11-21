@@ -168,6 +168,8 @@ export interface HarvestIngestPayload {
   regime?: Record<string, number | boolean | string | null>;
   /** PLAN.md 1f sector and industry rotation for this scan (log only), stored on Scan.sectorRotation. */
   sectorRotation?: unknown;
+  /** PLAN.md 1h option-chain features per symbol (log only), merged into ValidatedTicker.features. */
+  optionsFeatures?: Record<string, Record<string, number | null>>;
   watchChecks?: WatchCheck[];
 }
 

@@ -15,6 +15,8 @@ import { computeStp, type StpResult } from "./stp";
 import { computeRegime, REGIME_SYMBOLS, type RegimeFeatures } from "./regime";
 import { computeSectorRotation, ROTATION_ETFS, type SectorRotation } from "./sector-rotation";
 import { etParts } from "./bar-metrics";
+import { fetchOptionsRaw, normalizeChain, type NormalizedChain } from "../options-chain";
+import { computeOptionsFeatures, daysToExpiry, MIN_NEAR_DAYS, pickExpiry, type OptionsFeatures } from "./options-features";
 import { fetchDailyChart } from "../yahoo-chart";
 import { buildUniverse, defaultDeps, evaluateSymbols, type UniverseBuildResult } from "./build";
 import { applyWatchResults, type ActiveWatchRow } from "./watch";
@@ -284,4 +286,59 @@ export async function computeSectorExtras(
     console.warn("[sectors] failed:", err instanceof Error ? err.message : err);
     return null;
   }
+}
+
+/**
+ * Option-chain features (PLAN.md 1h, log only) for this run's signal symbols.
+ * The default (nearest) chain gives the expiry list and is cached when
+ * options-flow already scanned the ticker; then the first expiry at least
+ * MIN_NEAR_DAYS out and the one closest to 30 days are fetched (reused when the
+ * same), so at most two new requests per ticker. Paced like options-flow (5 per 2 s). Symbols
+ * with no listed options, or whose fetch fails, are left out.
+ */
+export async function computeOptionsExtras(
+  symbols: readonly string[],
+  hv20: Record<string, number | null | undefined>,
+  {
+    fetchRaw = fetchOptionsRaw,
+    now = new Date(),
+    batchSize = 5,
+    batchDelayMs = 2_000,
+  }: { fetchRaw?: (s: string, expiry?: number) => Promise<unknown>; now?: Date; batchSize?: number; batchDelayMs?: number } = {},
+): Promise<Record<string, OptionsFeatures>> {
+  const nowS = now.getTime() / 1000;
+  const out: Record<string, OptionsFeatures> = {};
+  let failed = 0;
+  let noOptions = 0;
+  const load = async (s: string, expiry?: number): Promise<NormalizedChain | null> => normalizeChain(await fetchRaw(s, expiry));
+  const one = async (s: string) => {
+    try {
+      const base = await load(s);
+      if (!base) {
+        noOptions++;
+        return;
+      }
+      const byExpiry = new Map<number, NormalizedChain | null>([[base.expiry, base]]);
+      const get = async (e: number | null | undefined) => {
+        if (e == null) return null;
+        if (!byExpiry.has(e)) byExpiry.set(e, await load(s, e));
+        return byExpiry.get(e) ?? null;
+      };
+      // Skip 0DTE / expiring chains (also handles an already-expired default chain after the close).
+      const near = await get(base.expirations.find((e) => daysToExpiry(e, nowS) >= MIN_NEAR_DAYS));
+      const far = await get(pickExpiry(base.expirations, nowS));
+      out[s] = computeOptionsFeatures(near, far, hv20[s] ?? null, nowS);
+    } catch {
+      failed++;
+    }
+  };
+  const list = [...new Set(symbols)];
+  for (let i = 0; i < list.length; i += batchSize) {
+    await Promise.all(list.slice(i, i + batchSize).map(one));
+    if (batchDelayMs > 0 && i + batchSize < list.length) await new Promise((r) => setTimeout(r, batchDelayMs));
+  }
+  const line = `[options] features for ${Object.keys(out).length}/${list.length} symbols (no options ${noOptions}, failed ${failed})`;
+  if (failed > 0) console.warn(line);
+  else console.log(line);
+  return out;
 }

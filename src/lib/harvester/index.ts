@@ -10,7 +10,7 @@ import { fetchTwitterSignals } from "./sources/twitter";
 import { fetchCongressSignals } from "./sources/congress";
 import { fetchPolymarketSignals } from "./sources/polymarket";
 import { SCAN_SYMBOLS } from "./sources/ticker-utils";
-import { scoreSymbolBatch, defaultScore } from "./scoring";
+import { scoreSymbolBatch, scoreSymbolBatchShadow, defaultScore, type ShadowScore } from "./scoring";
 import { checkPndFlags, aiPndAssessment, INFORMATIONAL_FLAGS, PND_THRESHOLD } from "./pnd-filter";
 import { fetchFundamentals } from "./fundamentals";
 import { assessScanRegime } from "./regime-filter";
@@ -483,6 +483,8 @@ export interface ProcessContext {
   regime?: Record<string, number | boolean | string | null>;
   /** PLAN.md 1f sector rotation, stored on Scan.sectorRotation; per-ticker keys go into features. */
   sectorRotation?: SectorRotation;
+  /** PLAN.md 1h option-chain features per symbol, merged into features. Never read by scoring. */
+  optionsFeatures?: Record<string, Record<string, number | null>>;
   watchChecks?: WatchCheck[];
 }
 
@@ -672,6 +674,23 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
         ).flat().concat(illiquidCandidates.map((c) => defaultScore(c, noveltyMap.get(c.symbol))));
 
     const scoreMap = new Map(scoreResults.map((s) => [s.symbol, s]));
+
+    // PR 1d shadow scoring (Chris: "shadow first"). Same batches scored by Claude Haiku 5.5 and
+    // logged in features only; never affects aiScore, stage or labels. A failure leaves it empty.
+    const shadowMap = new Map<string, ShadowScore>();
+    if (!regime.skip && liquidCandidates.length > 0) {
+      try {
+        const batches: AggregatedSymbol[][] = [];
+        for (let i = 0; i < liquidCandidates.length; i += 15) batches.push(liquidCandidates.slice(i, i + 15));
+        const results = await Promise.all(
+          batches.map((b) => scoreSymbolBatchShadow(b, fundamentalsMap, noveltyMap, scan.id)),
+        );
+        for (const m of results) for (const [sym, v] of m) shadowMap.set(sym, v);
+        if (shadowMap.size > 0) console.log(`[shadow-scoring] ${shadowMap.size}/${liquidCandidates.length} candidates shadow-scored`);
+      } catch (err) {
+        console.warn("[shadow-scoring] skipped:", err instanceof Error ? err.message : err);
+      }
+    }
 
     // 6. P&D filter + AI assessment for borderline
     let filteredCount = 0;
@@ -951,6 +970,13 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
             ctx.sectorRotation,
             fundamentals?.industry ? industryCounts.get(fundamentals.industry) ?? null : null,
           ),
+          // PR 1h option-chain features (log only)
+          ...(ctx.optionsFeatures?.[result.agg.symbol] ?? {}),
+          // PR 1d shadow score (log only)
+          shadow_ai_score: shadowMap.get(result.agg.symbol)?.score ?? null,
+          shadow_ai_raw_score: shadowMap.get(result.agg.symbol)?.rawScore ?? null,
+          shadow_ai_sentiment: shadowMap.get(result.agg.symbol)?.sentiment ?? null,
+          shadow_ai_model: shadowMap.get(result.agg.symbol)?.model ?? null,
         },
       };
     });

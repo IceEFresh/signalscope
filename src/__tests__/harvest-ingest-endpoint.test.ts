@@ -49,6 +49,7 @@ describe("POST /api/harvest/ingest", () => {
       stp: {},
       regime: undefined,
       sectorRotation: undefined,
+      optionsFeatures: {},
       watchChecks: [],
     });
   });

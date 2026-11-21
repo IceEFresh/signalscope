@@ -31,8 +31,10 @@ vi.mock("@/lib/prisma", () => ({
   createDevPrismaClient: vi.fn().mockReturnValue(null),
 }));
 vi.mock("@/lib/ai", () => ({ resetCostTracker: vi.fn(), getTotalCost: vi.fn().mockReturnValue(0) }));
+const mockShadowBatch = vi.fn();
 vi.mock("@/lib/harvester/scoring", () => ({
   scoreSymbolBatch: (...a: unknown[]) => mockScoreBatch(...a),
+  scoreSymbolBatchShadow: (...a: unknown[]) => mockShadowBatch(...a),
   defaultScore: vi.fn((agg: { symbol: string }) => ({ symbol: agg.symbol, score: 20, sentiment: "neutral", rawScore: 20 })),
 }));
 vi.mock("@/lib/harvester/pnd-filter", () => ({
@@ -66,6 +68,7 @@ beforeEach(() => {
     batch.map((b) => ({ symbol: b.symbol, score: 70, sentiment: "bullish", reasoning: "r", rawScore: 70 })),
   );
   mockLoadUniverse.mockResolvedValue({ id: "u1", refreshedAt: new Date(), symbols: new Set(["LIQD"]) });
+  mockShadowBatch.mockResolvedValue(new Map());
   mockRecordWatch.mockResolvedValue(0);
   mockApplyChecks.mockResolvedValue(undefined);
 });
@@ -156,6 +159,8 @@ describe("processSignals with a universe (PR 1-0)", () => {
       // 1f sector keys: no sector, industry or rotation in this fixture
       industry: null, sector_etf: null, industry_etf: null, rs_vs_sector_20d: null, rs_vs_industry_20d: null,
       sector_rank_20d: null, sector_rank_change_4w: null, industry_ticker_count: null,
+      // 1d shadow score: none in this fixture
+      shadow_ai_score: null, shadow_ai_raw_score: null, shadow_ai_sentiment: null, shadow_ai_model: null,
     });
     // opportunityScore, aiScore, stage, everything else identical
     expect({ ...withF, features: undefined }).toEqual({ ...without, features: undefined });
@@ -243,5 +248,36 @@ describe("processSignals with a universe (PR 1-0)", () => {
       "[sectors] industries unmapped: 0 distinct",
     );
     log.mockRestore();
+  });
+
+  it("stores 1d shadow scores in features without changing aiScore, stage or opportunity score", async () => {
+    await processSignals(two("LIQD"));
+    const baseline = { ...rows()[0] };
+    mockCreateManyTicker.mockClear();
+    mockShadowBatch.mockResolvedValue(
+      new Map([["LIQD", { score: 22, rawScore: 22, sentiment: "bearish", model: "claude-haiku-5-5" }]]),
+    );
+    await processSignals(two("LIQD"));
+    const row = rows()[0];
+    expect(row.features).toMatchObject({
+      shadow_ai_score: 22, shadow_ai_raw_score: 22, shadow_ai_sentiment: "bearish", shadow_ai_model: "claude-haiku-5-5",
+    });
+    expect(row.aiScore).toBe(baseline.aiScore);
+    expect(row.stage).toBe(baseline.stage);
+    expect(row.opportunityScore).toBe(baseline.opportunityScore);
+    // shadow scoring only sees liquid candidates
+    const lastBatch = mockShadowBatch.mock.calls.at(-1)![0] as Array<{ symbol: string }>;
+    expect(lastBatch.map((a) => a.symbol)).toEqual(["LIQD"]);
+  });
+
+  it("keeps the scan going when shadow scoring throws", async () => {
+    mockShadowBatch.mockRejectedValue(new Error("anthropic down"));
+    await expect(processSignals(two("LIQD"))).resolves.toBe("scan_1");
+    expect((rows()[0].features as Record<string, unknown>).shadow_ai_score).toBeNull();
+  });
+
+  it("merges 1h option features into features", async () => {
+    await processSignals(two("LIQD"), { optionsFeatures: { LIQD: { opt_features_version: 1, opt_atm_iv_30d: 0.62, opt_skew_25d: 0.04 } } });
+    expect(rows()[0].features).toMatchObject({ opt_atm_iv_30d: 0.62, opt_skew_25d: 0.04 });
   });
 });
