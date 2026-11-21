@@ -13,6 +13,8 @@ import { fetchBarMetricsMany, parseChartBars, type BarMetrics } from "./bar-metr
 import { computeBarFeatures, type BarFeatures } from "./bar-features";
 import { computeStp, type StpResult } from "./stp";
 import { computeRegime, REGIME_SYMBOLS, type RegimeFeatures } from "./regime";
+import { computeSectorRotation, ROTATION_ETFS, type SectorRotation } from "./sector-rotation";
+import { etParts } from "./bar-metrics";
 import { fetchDailyChart } from "../yahoo-chart";
 import { buildUniverse, defaultDeps, evaluateSymbols, type UniverseBuildResult } from "./build";
 import { applyWatchResults, type ActiveWatchRow } from "./watch";
@@ -247,4 +249,39 @@ export async function computeRegimeExtras(getChart: typeof fetchDailyChart = fet
   const r = computeRegime(spy, vix, tlt);
   console.log(`[regime] SPY vs SMA20 ${r.spy_close_vs_sma20?.toFixed(4) ?? "null"}, distribution days ${r.spy_distribution_days_25 ?? "null"}, VIX ${r.vix_close ?? "null"}`);
   return r;
+}
+
+/**
+ * Sector and industry rotation for this scan (PLAN.md 1f, log only): one cached
+ * 3-month chart per sector and industry ETF (~40 requests per run, paced), with
+ * SPY from the cache. Failed ETFs are left out; their fields are null.
+ */
+export async function computeSectorExtras(
+  getChart: typeof fetchDailyChart = fetchDailyChart,
+  { delayMs = 300 }: { delayMs?: number } = {},
+): Promise<SectorRotation | null> {
+  try {
+    const spyRes = await getChart("SPY");
+    const spy = spyRes.ok ? parseChartBars(spyRes.json) : null;
+    const etfBars: Record<string, ReturnType<typeof parseChartBars> | null> = {};
+    let ok = 0;
+    for (let i = 0; i < ROTATION_ETFS.length; i++) {
+      const etf = ROTATION_ETFS[i];
+      const res = await getChart(etf);
+      etfBars[etf] = res.ok ? parseChartBars(res.json) : null;
+      if (res.ok) ok++;
+      if (delayMs > 0 && i + 1 < ROTATION_ETFS.length) await new Promise((r) => setTimeout(r, delayMs));
+    }
+    const last = spy && spy.length > 0 ? spy[spy.length - 1] : undefined;
+    const barDate = last?.time != null ? etParts(new Date(last.time * 1000)).date : null;
+    const rotation = computeSectorRotation(etfBars, spy, barDate);
+    const top = rotation.sectors.filter((s) => s.rank_wtd === 1).map((s) => s.etf)[0] ?? "n/a";
+    const line = `[sectors] ETF charts ok=${ok}/${ROTATION_ETFS.length}; strongest week-to-date: ${top}`;
+    if (ok < ROTATION_ETFS.length) console.warn(line);
+    else console.log(line);
+    return rotation;
+  } catch (err) {
+    console.warn("[sectors] failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
 }

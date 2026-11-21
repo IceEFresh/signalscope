@@ -4,8 +4,8 @@ import { toUnixSeconds } from "./yahoo-time";
 
 async function fetchQuoteSummaryData(
   symbols: string[]
-): Promise<Map<string, { sector?: string; floatShares?: number | null; shortFloat?: number | null }>> {
-  const result = new Map<string, { sector?: string; floatShares?: number | null; shortFloat?: number | null }>();
+): Promise<Map<string, { sector?: string; industry?: string; floatShares?: number | null; shortFloat?: number | null }>> {
+  const result = new Map<string, { sector?: string; industry?: string; floatShares?: number | null; shortFloat?: number | null }>();
   const CONCURRENCY = 5;
   for (let i = 0; i < symbols.length; i += CONCURRENCY) {
     const batch = symbols.slice(i, i + CONCURRENCY);
@@ -17,6 +17,8 @@ async function fetchQuoteSummaryData(
           );
           result.set(sym, {
             sector: (summary.assetProfile as Record<string, unknown> | null | undefined)?.sector as string | undefined,
+            // PR 1f: keep the industry (upstream discarded it)
+            industry: (summary.assetProfile as Record<string, unknown> | null | undefined)?.industry as string | undefined,
             floatShares:
               typeof (summary.defaultKeyStatistics as Record<string, unknown> | null | undefined)?.floatShares === "number"
                 ? (summary.defaultKeyStatistics as Record<string, unknown>).floatShares as number
@@ -98,6 +100,7 @@ export async function fetchFundamentals(
       wk52Hi: fiftyTwoHigh ?? null,
       name: q.longName ?? q.shortName,
       sector: extra?.sector ?? ((q as Record<string, unknown>).sector as string | undefined),
+      industry: extra?.industry,
       exchange: q.fullExchangeName ?? q.exchange,
       earningsDate,
       earningsTs,

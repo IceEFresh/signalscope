@@ -65,6 +65,17 @@ describe("fetchFundamentals — data extraction", () => {
     expect(result.get("PTON")!.sector).toBe("Consumer Cyclical");
   });
 
+  it("keeps the industry from assetProfile (PR 1f)", async () => {
+    mockQuote.mockResolvedValueOnce([{ symbol: "NVDA", regularMarketPrice: 180 }]);
+    mockQuoteSummary.mockResolvedValueOnce({
+      assetProfile: { sector: "Technology", industry: "Semiconductors" },
+      defaultKeyStatistics: null,
+    });
+    const nvda = (await fetchFundamentals(["NVDA"])).get("NVDA")!;
+    expect(nvda.sector).toBe("Technology");
+    expect(nvda.industry).toBe("Semiconductors");
+  });
+
   it("extracts earningsDate from earningsTimestamp", async () => {
     // 1704067200 = 2024-01-01T00:00:00Z
     mockQuote.mockResolvedValueOnce([

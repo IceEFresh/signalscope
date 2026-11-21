@@ -67,6 +67,8 @@ export interface FundamentalData {
   wk52Hi?: number | null;
   name?: string;
   sector?: string;
+  /** PR 1f: Yahoo assetProfile.industry */
+  industry?: string;
   exchange?: string;
   earningsDate?: string;
   /** PR 1b: earnings release (unix s), Yahoo's estimated window, and whether it is an estimate */
@@ -164,6 +166,8 @@ export interface HarvestIngestPayload {
   stp?: Record<string, IngestStp>;
   /** PLAN.md 1c market regime fields for this scan (log only), stored on Scan.regimeFeatures. */
   regime?: Record<string, number | boolean | string | null>;
+  /** PLAN.md 1f sector and industry rotation for this scan (log only), stored on Scan.sectorRotation. */
+  sectorRotation?: unknown;
   watchChecks?: WatchCheck[];
 }
 
