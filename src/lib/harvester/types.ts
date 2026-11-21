@@ -42,7 +42,9 @@ export interface RawSignal {
   filedAt?: string;            // filing or disclosure date of an insider/congress trade (ISO or YYYY-MM-DD)
   tradeDate?: string;          // SEC_INSIDER: transaction date (YYYY-MM-DD)
   insiderClass?: "routine" | "opportunistic" | "unclassified"; // SEC_INSIDER: PLAN.md 2a, log only
-  insiderPriorYears?: number;  // SEC_INSIDER: prior calendar years (of 3) with a Form 4 at this issuer
+  insiderPriorYears?: number;
+  redditPostType?: "dd" | "hype" | "other" | "comment"; // REDDIT: PLAN.md 2c, log only
+  redditWords?: number;        // REDDIT: words in the full self-text (or comment), before the 2,000-char trim  // SEC_INSIDER: prior calendar years (of 3) with a Form 4 at this issuer
   filingKey?: string;          // stable id of the underlying filing, used to de-duplicate watch rows
   reportingGapDays?: number;   // congress: days between trade and disclosure
   office?: string;             // CONGRESS (elected politicians, PLAN.md 2b): house | senate | president | vice_president | state:<XX>:<office>

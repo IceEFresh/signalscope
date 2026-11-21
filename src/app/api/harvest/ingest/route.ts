@@ -50,6 +50,9 @@ const signalSchema = z.object({
   tradeDate: z.string().optional(),
   insiderClass: z.enum(["routine", "opportunistic", "unclassified"]).optional(),
   insiderPriorYears: z.number().optional(),
+  // PR 2c Reddit post type (log only)
+  redditPostType: z.enum(["dd", "hype", "other", "comment"]).optional(),
+  redditWords: z.number().optional(),
   // PR 2b politician office (log only)
   office: z.string().optional(),
 });

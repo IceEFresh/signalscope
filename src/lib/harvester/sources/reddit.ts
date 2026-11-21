@@ -1,5 +1,6 @@
 import type { RawSignal } from "../types";
 import { extractTickers } from "./ticker-utils";
+import { classifyRedditPost, countWords } from "../reddit-post-type";
 
 type SortConfig = { type: "new" | "rising" | "hot"; limit: number; pages?: number };
 
@@ -95,6 +96,8 @@ async function processRedditPosts(
     const tickers = extractTickers(text);
     const postAgeHours = (nowSeconds - created_utc) / 3600;
     const flair = link_flair_text || undefined;
+    // PLAN.md 2c: classify on the full text, before the body is trimmed (log only)
+    const cls = classifyRedditPost({ title, selftext, flair });
 
     for (const symbol of tickers) {
       signals.push({
@@ -110,6 +113,8 @@ async function processRedditPosts(
         postAge: postAgeHours,
         sortType: sort,
         flair,
+        redditPostType: cls.postType,
+        redditWords: cls.words,
       });
     }
   }
@@ -150,6 +155,8 @@ async function processRedditPosts(
           postAge: postAgeHours,
           sortType: "comment",
           flair,
+          redditPostType: "comment",
+          redditWords: countWords(comment.body),
         });
       }
     }
