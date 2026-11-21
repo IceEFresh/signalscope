@@ -10,6 +10,8 @@ import {
   RECOMMENDATION_RULE_PATHS,
   type RecommendationInput,
 } from "@/lib/harvester/recommendation";
+import { politicianAblation } from "@/lib/harvester/politician-features";
+import type { Source } from "@/lib/harvester/types";
 
 interface Row {
   symbol: string;
@@ -17,6 +19,8 @@ interface Row {
   stage: string;
   sourceCount: number;
   hasCatalystSource: boolean;
+  /** Hard-catalyst sources present (PLAN.md 2b ablation). */
+  catalystSources: Set<Source>;
   pndFlagged: boolean;
   price: number | null;
   medianSignalAgeHrs: number | null;
@@ -78,8 +82,13 @@ async function main() {
     select: { scanId: true, symbol: true, source: true },
   });
   const catalystKeys = new Set<string>();
+  const catalystSources = new Map<string, Set<Source>>();
   for (const s of sigs) {
-    if (HARD_CATALYST_SOURCES.has(s.source)) catalystKeys.add(`${s.scanId}|${s.symbol}`);
+    if (!HARD_CATALYST_SOURCES.has(s.source)) continue;
+    const key = `${s.scanId}|${s.symbol}`;
+    catalystKeys.add(key);
+    if (!catalystSources.has(key)) catalystSources.set(key, new Set());
+    catalystSources.get(key)!.add(s.source);
   }
 
   const rows: Row[] = perf
@@ -92,6 +101,7 @@ async function main() {
         stage: vt.stage,
         sourceCount: vt.sourceCount ?? 0,
         hasCatalystSource: catalystKeys.has(`${vt.scanId}|${vt.symbol}`),
+        catalystSources: catalystSources.get(`${vt.scanId}|${vt.symbol}`) ?? new Set<Source>(),
         pndFlagged: vt.pndFlagged ?? false,
         price: vt.price,
         medianSignalAgeHrs: vt.medianSignalAgeHrs,
@@ -198,6 +208,32 @@ async function main() {
   evaluate("EARLY/FORMING combined", isEmerging);
   evaluate("EARLY + catalyst", (r) => r.stage === "EARLY" && r.hasCatalystSource);
   evaluate("FORMING + catalyst", (r) => r.stage === "FORMING" && r.hasCatalystSource);
+
+  // PLAN.md 2b: what changes if elected-politician trades (source CONGRESS) stop counting as a hard catalyst.
+  // Not applied anywhere; run this, then log the result in scripts/backtesting-experiments.md.
+  console.log("\n== 2b ablation: elected politicians (CONGRESS) removed from HARD_CATALYST_SOURCES ==");
+  const ablated = rows.map((r) => ({ r, a: politicianAblation({ input: rowToInput(r), sources: r.catalystSources }) }));
+  const politicianOnly = (r: Row) => r.catalystSources.has("CONGRESS") && r.catalystSources.size === 1;
+  evaluate("Elected politician present", (r) => r.catalystSources.has("CONGRESS"));
+  evaluate("Elected politician is the only hard catalyst", politicianOnly);
+  evaluate("Other hard catalyst, no politician", (r) => r.hasCatalystSource && !r.catalystSources.has("CONGRESS"));
+  for (const variant of ["withoutPoliticianRules", "withoutPoliticianRulesAndCap"] as const) {
+    const changed = ablated.filter(({ a }) => a[variant] !== a.current);
+    console.log(`\n-- ${variant}: ${changed.length} of ${rows.length} rows change recommendation --`);
+    const transitions = new Map<string, number>();
+    for (const { a } of changed) {
+      const k = `${a.current} -> ${a[variant]}`;
+      transitions.set(k, (transitions.get(k) ?? 0) + 1);
+    }
+    for (const [k, n] of [...transitions.entries()].sort((x, y) => y[1] - x[1])) console.log(`   ${k.padEnd(24)} n=${n}`);
+    for (const rec of ["Strong Buy", "Buy"] as const) {
+      const set = new Set(ablated.filter(({ a }) => a[variant] === rec).map(({ r }) => r));
+      const before = new Set(ablated.filter(({ a }) => a.current === rec).map(({ r }) => r));
+      evaluate(`${rec} today`, (r) => before.has(r));
+      evaluate(`${rec} after ${variant}`, (r) => set.has(r));
+      evaluate(`${rec} today, lost after ${variant}`, (r) => before.has(r) && !set.has(r));
+    }
+  }
 
   await prisma.$disconnect();
 }

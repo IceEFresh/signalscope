@@ -47,6 +47,7 @@ export interface RawSignal {
   redditWords?: number;        // REDDIT: words in the full self-text (or comment), before the 2,000-char trim  // SEC_INSIDER: prior calendar years (of 3) with a Form 4 at this issuer
   filingKey?: string;          // stable id of the underlying filing, used to de-duplicate watch rows
   reportingGapDays?: number;   // congress: days between trade and disclosure
+  office?: string;             // CONGRESS (elected politicians, PLAN.md 2b): house | senate | president | vice_president | state:<XX>:<office>
   graduationSource?: string;   // GRADUATION: INSIDER | POLITICIAN | ACTIVIST | NEW_INSIDER
   filingAgeDays?: number;      // GRADUATION: days since the watched filing
   flippedCriteria?: string[];  // GRADUATION: universe criteria that failed last check and pass now
