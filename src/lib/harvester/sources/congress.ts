@@ -134,6 +134,7 @@ export async function fetchCongressSignals(): Promise<RawSignal[]> {
         body: `${chamber} ${politician} bought ~$${trade.value.toLocaleString()} of ${trade.issuerName} (${symbol}). Trade date: ${trade.txDate}, disclosed: ${trade.pubDate.slice(0, 10)}. Reporting gap: ${trade.reportingGap} days.${trade.sector ? ` Sector: ${trade.sector}.` : ""}`,
         url: `https://www.capitoltrades.com/trades?ticker=${symbol}&txId=${trade.txId}`,
         author: `${chamber} ${politician}`,
+        office: trade.chamber === "senate" ? "senate" : "house",
         purchaseValue: trade.value,
         filedAt: trade.pubDate,
         filingKey: `congress:${trade.txId}`,

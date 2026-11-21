@@ -18,6 +18,7 @@ import { assessScanRegime } from "./regime-filter";
 import { computeOpportunityScore } from "./opportunity-score";
 import { computeEarningsFeatures } from "./earnings-features";
 import { annotateInsiderClasses, insiderClassFeatures } from "./insider-class";
+import { politicianFeatures } from "./politician-features";
 import { tickerSectorFeatures, unmappedIndustries, type SectorRotation } from "./universe/sector-rotation";
 import { applyWatchChecks, loadUniverse, recordWatchEntries, type LoadedUniverse } from "./universe/store";
 import { resetCostTracker, getTotalCost } from "@/lib/ai";
@@ -1009,6 +1010,8 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
           ...(ctx.optionsFeatures?.[result.agg.symbol] ?? {}),
           // PR 2a insider routine/opportunistic class (log only)
           ...insiderClassFeatures(result.agg.signals),
+          // PR 2b elected-politician trades as their own feature (log only)
+          ...politicianFeatures(result.agg.signals),
           // PR 1d shadow score (log only)
           shadow_ai_score: shadowMap.get(result.agg.symbol)?.score ?? null,
           shadow_ai_raw_score: shadowMap.get(result.agg.symbol)?.rawScore ?? null,
