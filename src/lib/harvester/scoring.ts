@@ -1,57 +1,9 @@
 import { chatJSON } from "@/lib/ai";
+import { shadowChatJSON, shadowScoringEnabled } from "@/lib/ai/shadow";
 import type { AggregatedSymbol, AiScoreResult, FundamentalData, NoveltyContext } from "./types";
 
-export async function scoreSymbolBatch(
-  symbols: AggregatedSymbol[],
-  fundamentalsMap?: Map<string, FundamentalData>,
-  noveltyMap?: Map<string, NoveltyContext>,
-  scanId?: string
-): Promise<AiScoreResult[]> {
-  if (symbols.length === 0) return [];
-
-  const symbolSummaries = symbols.map((s) => {
-    const fundamentals = fundamentalsMap?.get(s.symbol);
-    const novelty = noveltyMap?.get(s.symbol);
-    return {
-      symbol: s.symbol,
-      sourceCount: s.sourceCount,
-      subredditCount: s.subredditCount,
-      signalCount: s.signals.length,
-      totalUpvotes: s.totalUpvotes,
-      totalComments: s.totalComments,
-      avgVelocity: s.avgVelocity,
-      momentum: s.momentum,
-      sampleTitles: s.signals
-        .slice(0, 3)
-        .map((sig) => sig.title)
-        .filter(Boolean),
-      sources: [...new Set(s.signals.map((sig) => sig.source))],
-      ...(fundamentals
-        ? {
-            price: fundamentals.price,
-            marketCap: fundamentals.marketCap,
-            shortFloat: fundamentals.shortFloat,
-            exchange: fundamentals.exchange,
-            fiftyTwoWeekRange: fundamentals.fiftyTwoWeekRange,
-          }
-        : {}),
-      ...(novelty
-        ? {
-            isNovel: novelty.isNovel,
-            daysSinceFirstSeen: novelty.daysSinceFirstSeen,
-            priorAppearances: novelty.priorAppearances,
-          }
-        : {}),
-      medianSignalAgeHrs: s.medianSignalAgeHrs,
-    };
-  });
-
-  try {
-    const response = await chatJSON({
-      callPoint: "scoring",
-      tier: "mini",
-      temperature: 0.3,
-      systemPrompt: `You are a stock signal analyst. Score each symbol from 0-100 based on breakout potential.
+/** Scoring system prompt, shared by the production call and the PR 1d shadow call. */
+export const SCORING_SYSTEM_PROMPT = `You are a stock signal analyst. Score each symbol from 0-100 based on breakout potential.
 
 HARD RULES:
 - Tickers with REAL catalysts (SEC filings, earnings, FDA, partnerships, contracts, insider buys, unusual options flow) ALWAYS score higher than pure social media signals.
@@ -138,26 +90,69 @@ Reddit comment engagement (check totalComments field):
 Volume Spike source (n_volume_spike feature is a key ML signal — presence, not count):
 - When VOLUME_SPIKE is among the signal sources, treat it as corroborating evidence equal in weight to OPTIONS_FLOW. Apply +3 to +5 when it appears alongside social signals.
 
-Return JSON: { "scores": [{ "symbol": "X", "score": 0-100, "sentiment": "bullish|bearish|neutral", "reasoning": "brief — state confidence level and what the score is based on" }] }`,
-      userMessage: JSON.stringify(symbolSummaries),
-      context: scanId ? { trigger: "harvest" as const, scanId } : undefined,
-    });
+Return JSON: { "scores": [{ "symbol": "X", "score": 0-100, "sentiment": "bullish|bearish|neutral", "reasoning": "brief — state confidence level and what the score is based on" }] }`;
 
-    const parsed = JSON.parse(response.content);
-    const rawScores = Array.isArray(parsed?.scores) ? parsed.scores : null;
-    if (!rawScores) {
-      console.warn("AI scoring returned unexpected structure, using heuristic fallback");
-      return symbols.map((s) => defaultScore(s, noveltyMap?.get(s.symbol)));
-    }
+/** The per-symbol JSON the model scores (same input for production and shadow). */
+export function buildScoringPayload(
+  symbols: AggregatedSymbol[],
+  fundamentalsMap?: Map<string, FundamentalData>,
+  noveltyMap?: Map<string, NoveltyContext>,
+) {
+  return symbols.map((s) => {
+    const fundamentals = fundamentalsMap?.get(s.symbol);
+    const novelty = noveltyMap?.get(s.symbol);
+    return {
+      symbol: s.symbol,
+      sourceCount: s.sourceCount,
+      subredditCount: s.subredditCount,
+      signalCount: s.signals.length,
+      totalUpvotes: s.totalUpvotes,
+      totalComments: s.totalComments,
+      avgVelocity: s.avgVelocity,
+      momentum: s.momentum,
+      sampleTitles: s.signals
+        .slice(0, 3)
+        .map((sig) => sig.title)
+        .filter(Boolean),
+      sources: [...new Set(s.signals.map((sig) => sig.source))],
+      ...(fundamentals
+        ? {
+            price: fundamentals.price,
+            marketCap: fundamentals.marketCap,
+            shortFloat: fundamentals.shortFloat,
+            exchange: fundamentals.exchange,
+            fiftyTwoWeekRange: fundamentals.fiftyTwoWeekRange,
+          }
+        : {}),
+      ...(novelty
+        ? {
+            isNovel: novelty.isNovel,
+            daysSinceFirstSeen: novelty.daysSinceFirstSeen,
+            priorAppearances: novelty.priorAppearances,
+          }
+        : {}),
+      medianSignalAgeHrs: s.medianSignalAgeHrs,
+    };
+  });
 
-    // Map back to input symbols — use heuristic fallback for any missing/malformed entries
-    return symbols.map((s) => {
+}
+
+/**
+ * Map model scores back to the input symbols and apply the social-only cap.
+ * Missing or malformed entries get `fallback(symbol)` (the heuristic for production).
+ */
+export function mapScores(
+  symbols: AggregatedSymbol[],
+  rawScores: unknown[],
+  fallback: (s: AggregatedSymbol) => AiScoreResult | null,
+): (AiScoreResult | null)[] {
+  return symbols.map((s) => {
       const item = rawScores.find(
         (r: unknown) =>
           typeof r === "object" && r !== null && (r as Record<string, unknown>).symbol === s.symbol
       ) as AiScoreResult | undefined;
       if (!item || typeof item.score !== "number" || typeof item.sentiment !== "string") {
-        return defaultScore(s, noveltyMap?.get(s.symbol));
+        return fallback(s);
       }
 
       // Enforce social-only cap: tickers without a catalyst source (SEC_INSIDER/OPTIONS_FLOW/CONGRESS)
@@ -175,10 +170,79 @@ Return JSON: { "scores": [{ "symbol": "X", "score": 0-100, "sentiment": "bullish
         reasoning: typeof item.reasoning === "string" ? item.reasoning : "",
       };
     });
+}
+
+export async function scoreSymbolBatch(
+  symbols: AggregatedSymbol[],
+  fundamentalsMap?: Map<string, FundamentalData>,
+  noveltyMap?: Map<string, NoveltyContext>,
+  scanId?: string
+): Promise<AiScoreResult[]> {
+  if (symbols.length === 0) return [];
+
+  const symbolSummaries = buildScoringPayload(symbols, fundamentalsMap, noveltyMap);
+
+  try {
+    const response = await chatJSON({
+      callPoint: "scoring",
+      tier: "mini",
+      temperature: 0.3,
+      systemPrompt: SCORING_SYSTEM_PROMPT,
+      userMessage: JSON.stringify(symbolSummaries),
+      context: scanId ? { trigger: "harvest" as const, scanId } : undefined,
+    });
+
+    const parsed = JSON.parse(response.content);
+    const rawScores = Array.isArray(parsed?.scores) ? parsed.scores : null;
+    if (!rawScores) {
+      console.warn("AI scoring returned unexpected structure, using heuristic fallback");
+      return symbols.map((s) => defaultScore(s, noveltyMap?.get(s.symbol)));
+    }
+
+    return mapScores(symbols, rawScores, (s) => defaultScore(s, noveltyMap?.get(s.symbol))) as AiScoreResult[];
   } catch (err) {
     console.error("AI scoring error:", err);
     return symbols.map((s) => defaultScore(s, noveltyMap?.get(s.symbol)));
   }
+}
+
+/** Shadow score for one symbol (PR 1d), logged in features only. */
+export interface ShadowScore {
+  score: number;
+  rawScore: number;
+  sentiment: string;
+  model: string;
+}
+
+/**
+ * PR 1d shadow scoring: the same prompt and payload scored by Claude Haiku 5.5.
+ * Never throws and never touches the production score: any failure returns an
+ * empty map, and symbols the model skipped are simply absent (no heuristic).
+ */
+export async function scoreSymbolBatchShadow(
+  symbols: AggregatedSymbol[],
+  fundamentalsMap?: Map<string, FundamentalData>,
+  noveltyMap?: Map<string, NoveltyContext>,
+  scanId?: string,
+  call: typeof shadowChatJSON = shadowChatJSON,
+): Promise<Map<string, ShadowScore>> {
+  const out = new Map<string, ShadowScore>();
+  if (symbols.length === 0 || !shadowScoringEnabled()) return out;
+  try {
+    const res = await call(
+      SCORING_SYSTEM_PROMPT,
+      JSON.stringify(buildScoringPayload(symbols, fundamentalsMap, noveltyMap)),
+      { scanId },
+    );
+    const raw = (res.json as { scores?: unknown })?.scores;
+    if (!Array.isArray(raw)) return out;
+    mapScores(symbols, raw, () => null).forEach((r, i) => {
+      if (r) out.set(symbols[i].symbol, { score: r.score, rawScore: r.rawScore ?? r.score, sentiment: r.sentiment, model: res.model });
+    });
+  } catch (err) {
+    console.warn("[shadow-scoring] failed (production score unaffected):", err instanceof Error ? err.message : err);
+  }
+  return out;
 }
 
 export function defaultScore(s: AggregatedSymbol, novelty?: NoveltyContext): AiScoreResult {
