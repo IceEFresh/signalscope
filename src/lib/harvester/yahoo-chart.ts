@@ -1,8 +1,10 @@
 /**
- * Yahoo v8 chart fetch with one retry on HTTP 429, plus per-run counters so a
- * source that is being rate-limited shows up in the harvest log instead of
- * silently returning fewer signals (PR 1-0 review).
+ * Yahoo v8 chart fetch with retries on HTTP 429, 5xx and network errors
+ * (exponential backoff, PLAN.md 1e), plus per-run counters so a source that is
+ * being rate-limited shows up in the harvest log instead of silently returning
+ * fewer signals (PR 1-0 review).
  */
+import { isRetryableStatus, withYahooRetry, DEFAULT_RETRIES } from "@/lib/yahoo-retry";
 
 const USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
 
@@ -11,34 +13,41 @@ export type ChartFetchResult =
   | { ok: false; status: number | null; rateLimited: boolean };
 
 export interface ChartFetchOptions {
-  /** Wait before the single retry after a 429. */
+  /** First backoff before a retry; doubles each retry (PLAN.md 1e). */
   retryDelayMs?: number;
+  /** Retries after the first attempt. */
+  retries?: number;
   timeoutMs?: number;
 }
 
 export const DEFAULT_RETRY_DELAY_MS = 3_000;
 
-export async function fetchYahooChart(url: string, opts: ChartFetchOptions = {}): Promise<ChartFetchResult> {
-  const { retryDelayMs = DEFAULT_RETRY_DELAY_MS, timeoutMs = 10_000 } = opts;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    let res: Response;
-    try {
-      res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(timeoutMs) });
-    } catch {
-      return { ok: false, status: null, rateLimited: false };
-    }
-    if (res.status === 429 && attempt === 1) {
-      if (retryDelayMs > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
-      continue;
-    }
-    if (!res.ok) return { ok: false, status: res.status, rateLimited: res.status === 429 };
-    try {
-      return { ok: true, json: await res.json() };
-    } catch {
-      return { ok: false, status: res.status, rateLimited: false };
-    }
+class RetryableHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
   }
-  return { ok: false, status: 429, rateLimited: true };
+}
+
+export async function fetchYahooChart(url: string, opts: ChartFetchOptions = {}): Promise<ChartFetchResult> {
+  const { retryDelayMs = DEFAULT_RETRY_DELAY_MS, retries = DEFAULT_RETRIES, timeoutMs = 10_000 } = opts;
+  try {
+    return await withYahooRetry(
+      async (): Promise<ChartFetchResult> => {
+        const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(timeoutMs) });
+        if (isRetryableStatus(res.status)) throw new RetryableHttpError(res.status);
+        if (!res.ok) return { ok: false, status: res.status, rateLimited: false };
+        try {
+          return { ok: true, json: await res.json() };
+        } catch {
+          return { ok: false, status: res.status, rateLimited: false };
+        }
+      },
+      { retries, baseDelayMs: retryDelayMs, label: "chart" },
+    );
+  } catch (err) {
+    const status = err instanceof RetryableHttpError ? err.status : null;
+    return { ok: false, status, rateLimited: status === 429 };
+  }
 }
 
 /** Per-run fetch counters. `rateLimited` counts symbols still 429 after the retry. */

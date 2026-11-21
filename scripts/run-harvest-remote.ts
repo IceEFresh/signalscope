@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { fetchSignals } from "../src/lib/harvester/index.js";
 import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
+import { yahooHealthSummary } from "../src/lib/yahoo-retry.js";
 import {
   computeIngestExtras,
   computeStpExtras,
@@ -97,6 +98,8 @@ async function main() {
     console.log("No signals fetched — skipping remote processing");
     process.exit(0);
   }
+
+  console.log(yahooHealthSummary()); // PLAN.md 1e: per-endpoint calls / retries / failures this run
 
   const payload: HarvestIngestPayload = {
     signals,

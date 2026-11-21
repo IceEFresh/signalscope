@@ -1,4 +1,5 @@
 import { yahooFinance, withYahooTimeout } from "@/lib/yahoo-finance";
+import { withYahooRetry } from "@/lib/yahoo-retry";
 import type { FundamentalData } from "./types";
 import { toUnixSeconds } from "./yahoo-time";
 
@@ -12,8 +13,9 @@ async function fetchQuoteSummaryData(
     await Promise.all(
       batch.map(async (sym) => {
         try {
-          const summary = await withYahooTimeout(
-            yahooFinance.quoteSummary(sym, { modules: ["assetProfile", "defaultKeyStatistics"] }),
+          const summary = await withYahooRetry(
+            () => withYahooTimeout(yahooFinance.quoteSummary(sym, { modules: ["assetProfile", "defaultKeyStatistics"] })),
+            { label: "quoteSummary" },
           );
           result.set(sym, {
             sector: (summary.assetProfile as Record<string, unknown> | null | undefined)?.sector as string | undefined,
@@ -51,7 +53,7 @@ export async function fetchFundamentals(
       for (let i = 0; i < symbols.length; i += 50) {
         const batch = symbols.slice(i, i + 50);
         try {
-          const quotes = await withYahooTimeout(yahooFinance.quote(batch));
+          const quotes = await withYahooRetry(() => withYahooTimeout(yahooFinance.quote(batch)), { label: "quote" });
           const list = Array.isArray(quotes) ? quotes : [quotes];
           quoteRows.push(...list);
         } catch (err) {
@@ -130,7 +132,7 @@ export async function fetchCurrentPrices(
   for (let i = 0; i < symbols.length; i += 50) {
     const batch = symbols.slice(i, i + 50);
     try {
-      const quotes = await withYahooTimeout(yahooFinance.quote(batch));
+      const quotes = await withYahooRetry(() => withYahooTimeout(yahooFinance.quote(batch)), { label: "quote" });
       const list = Array.isArray(quotes) ? quotes : [quotes];
       for (const q of list) {
         if (q.symbol) priceMap.set(q.symbol, q.regularMarketPrice ?? null);
@@ -151,7 +153,7 @@ export async function fetchCurrentPrice(
   symbol: string
 ): Promise<number | null> {
   try {
-    const q = await withYahooTimeout(yahooFinance.quote(symbol));
+    const q = await withYahooRetry(() => withYahooTimeout(yahooFinance.quote(symbol)), { label: "quote" });
     return q.regularMarketPrice ?? null;
   } catch {
     return null;

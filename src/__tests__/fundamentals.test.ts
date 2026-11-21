@@ -65,6 +65,15 @@ describe("fetchFundamentals — data extraction", () => {
     expect(result.get("PTON")!.sector).toBe("Consumer Cyclical");
   });
 
+  it("retries a rate-limited quote batch instead of dropping it (PR 1e)", async () => {
+    mockQuote
+      .mockRejectedValueOnce(Object.assign(new Error("Too Many Requests"), { status: 429 }))
+      .mockResolvedValueOnce([{ symbol: "AMD", regularMarketPrice: 120 }]);
+    const amd = (await fetchFundamentals(["AMD"])).get("AMD");
+    expect(amd?.price).toBe(120);
+    expect(mockQuote).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the industry from assetProfile (PR 1f)", async () => {
     mockQuote.mockResolvedValueOnce([{ symbol: "NVDA", regularMarketPrice: 180 }]);
     mockQuoteSummary.mockResolvedValueOnce({

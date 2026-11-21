@@ -7,6 +7,7 @@
  * survivor. Expect roughly 10 to 15 minutes, once a week.
  */
 import { yahooFinance, withYahooTimeout } from "@/lib/yahoo-finance";
+import { withYahooRetry } from "@/lib/yahoo-retry";
 import { toUnixSeconds } from "../yahoo-time";
 import { fetchSymbolDirectory } from "./symbol-directory";
 import { fetchBarMetricsMany, type BarMetrics } from "./bar-metrics";
@@ -126,7 +127,7 @@ async function fetchQuotesYahoo(symbols: string[]): Promise<Map<string, QuoteInf
   for (let i = 0; i < symbols.length; i += 50) {
     const batch = symbols.slice(i, i + 50);
     try {
-      const res = await withYahooTimeout(yahooFinance.quote(batch));
+      const res = await withYahooRetry(() => withYahooTimeout(yahooFinance.quote(batch)), { label: "quote" });
       const list = Array.isArray(res) ? res : [res];
       for (const q of list) {
         if (!q?.symbol) continue;
@@ -149,7 +150,9 @@ async function fetchQuotesYahoo(symbols: string[]): Promise<Map<string, QuoteInf
 
 async function hasListedOptionsYahoo(symbol: string): Promise<boolean | null> {
   try {
-    const res = (await withYahooTimeout(yahooFinance.options(symbol))) as { expirationDates?: unknown[] };
+    const res = (await withYahooRetry(() => withYahooTimeout(yahooFinance.options(symbol)), { label: "options" })) as {
+      expirationDates?: unknown[];
+    };
     return Array.isArray(res.expirationDates) && res.expirationDates.length > 0;
   } catch {
     return null;

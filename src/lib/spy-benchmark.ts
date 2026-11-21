@@ -1,4 +1,5 @@
 import { TTLCache } from "@/lib/cache";
+import { withYahooRetry } from "@/lib/yahoo-retry";
 import { yahooFinance, withYahooTimeout } from "@/lib/yahoo-finance";
 
 export const SPY_BENCHMARK_SYMBOL = "SPY";
@@ -21,12 +22,16 @@ async function fetchChartBars(
   windowStart: Date,
   windowEnd: Date,
 ): Promise<SpyHistoryBar[]> {
-  const result = await withYahooTimeout(
-    yahooFinance.chart(SPY_BENCHMARK_SYMBOL, {
-      period1: windowStart,
-      period2: windowEnd,
-      interval: "1d",
-    }),
+  const result = await withYahooRetry(
+    () =>
+      withYahooTimeout(
+        yahooFinance.chart(SPY_BENCHMARK_SYMBOL, {
+          period1: windowStart,
+          period2: windowEnd,
+          interval: "1d",
+        }),
+      ),
+    { label: "chart" },
   );
   if (!result?.quotes || !Array.isArray(result.quotes)) return [];
   type RawBar = { date: Date; close: number | null; adjclose?: number | null };

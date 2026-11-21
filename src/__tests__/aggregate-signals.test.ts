@@ -19,7 +19,7 @@ vi.mock("@/lib/ai", () => ({
   chatJSON: vi.fn(),
 }));
 
-const { aggregateSignals, resolveFlairWeight } = await import("@/lib/harvester/index");
+const { aggregateSignals, resolveFlairWeight, summarizeSourceHealth } = await import("@/lib/harvester/index");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -537,5 +537,25 @@ describe("aggregateSignals — net premium", () => {
     const [agg] = aggregateSignals(signals);
     expect(agg.netPremium).toBe(-200000);
     expect(agg.callPremiumRatio).toBe(0.35);
+  });
+});
+
+describe("summarizeSourceHealth (PLAN.md 1e)", () => {
+  it("lists every source's count and flags empty and failed sources", () => {
+    const h = summarizeSourceHealth(
+      ["reddit", "stocktwits", "secInsider"],
+      [
+        { status: "fulfilled", value: [1, 2, 3] },
+        { status: "fulfilled", value: [] },
+        { status: "rejected", reason: new Error("boom") },
+      ],
+    );
+    expect(h.line).toBe("[sources] reddit=3 stocktwits=0 secInsider=ERROR (failed: secInsider; empty: stocktwits)");
+    expect(h.empty).toEqual(["stocktwits"]);
+    expect(h.failed).toEqual(["secInsider"]);
+  });
+
+  it("has no flags when every source returned signals", () => {
+    expect(summarizeSourceHealth(["a"], [{ status: "fulfilled", value: [1] }]).line).toBe("[sources] a=1");
   });
 });
