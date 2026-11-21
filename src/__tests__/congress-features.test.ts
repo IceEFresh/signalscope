@@ -44,6 +44,10 @@ describe("congressFeatures", () => {
     expect(congressFeatures([cong(), { symbol: "AMD", source: "OPTIONS_FLOW" }]).congress_only_catalyst).toBe(false);
   });
 
+  it("does not count a signal without an author as a member", () => {
+    expect(congressFeatures([cong(), cong({ author: undefined })]).congress_members).toBe(1);
+  });
+
   it("uses null, not 0, when values and gaps are missing", () => {
     expect(congressFeatures([cong({ purchaseValue: undefined, reportingGapDays: undefined })])).toMatchObject({
       congress_value_total: null,

@@ -31,7 +31,8 @@ export function congressFeatures(signals: readonly RawSignal[]): Record<string, 
   const otherCatalyst = [...sources].some((s) => HARD_CATALYST_SOURCES_WITHOUT_CONGRESS.has(s));
   return {
     congress_count: cong.length,
-    congress_members: new Set(cong.map((s) => s.author ?? "")).size,
+    /** Distinct members by author ("<chamber> <name>"); signals without an author are not counted. */
+    congress_members: new Set(cong.map((s) => s.author).filter((a): a is string => !!a)).size,
     congress_value_total: values.length ? values.reduce((a, b) => a + b, 0) : null,
     congress_min_reporting_gap_days: gaps.length ? Math.min(...gaps) : null,
     congress_max_reporting_gap_days: gaps.length ? Math.max(...gaps) : null,
