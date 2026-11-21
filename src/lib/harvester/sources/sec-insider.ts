@@ -53,7 +53,14 @@ function isCsuiteOrDirector(title: string): boolean {
 
 /** Remove tags, then any leftover "<" or ">", so a nested "<<script>script>" can't leave a partial tag. */
 export function stripTags(html: string): string {
-  return html.replace(/<[^>]*>/g, "").replace(/[<>]/g, "");
+  // Repeat until nothing changes, so removing one tag can't expose another.
+  let prev: string;
+  let out = html;
+  do {
+    prev = out;
+    out = out.replace(/<[^>]*>/g, "");
+  } while (out !== prev);
+  return out.replace(/[<>]/g, "");
 }
 
 function extractTicker(cellHtml: string): string {
