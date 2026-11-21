@@ -17,6 +17,7 @@ import { assessScanRegime } from "./regime-filter";
 
 import { computeOpportunityScore } from "./opportunity-score";
 import { computeEarningsFeatures } from "./earnings-features";
+import { annotateInsiderClasses, insiderClassFeatures } from "./insider-class";
 import { tickerSectorFeatures, unmappedIndustries, type SectorRotation } from "./universe/sector-rotation";
 import { applyWatchChecks, loadUniverse, recordWatchEntries, type LoadedUniverse } from "./universe/store";
 import { resetCostTracker, getTotalCost } from "@/lib/ai";
@@ -416,6 +417,11 @@ export async function fetchSignals(
       console.error(`[harvest] Source "${sourceNames[i]}" threw an unexpected error:`, r.reason);
     }
   });
+  // PLAN.md 1e: one line per run with every source's count, so a source that silently
+  // returns nothing (blocked, rate-limited, page changed) is visible in the harvest log.
+  const health = summarizeSourceHealth(sourceNames, sourceResults);
+  if (health.empty.length > 0 || health.failed.length > 0) console.warn(health.line);
+  else console.log(health.line);
 
   const allSignals: RawSignal[] = sourceResults.flatMap((r) =>
     r.status === "fulfilled" ? r.value : []
@@ -438,8 +444,37 @@ export async function fetchSignals(
     }
   }
 
+  // PLAN.md 2a: routine/opportunistic class on insider buys (log only; needs SEC_USER_AGENT)
+  try {
+    await annotateInsiderClasses(allSignals);
+  } catch (err) {
+    console.warn("[insider-class] failed:", err instanceof Error ? err.message : err);
+  }
+
   console.log(`Total raw signals: ${allSignals.length}`);
   return allSignals;
+}
+
+/** Per-source signal counts for one run; sources that threw or returned nothing are listed. */
+export function summarizeSourceHealth(
+  names: readonly string[],
+  results: readonly PromiseSettledResult<readonly unknown[]>[],
+): { line: string; empty: string[]; failed: string[] } {
+  const empty: string[] = [];
+  const failed: string[] = [];
+  const parts = names.map((name, i) => {
+    const r = results[i];
+    if (!r || r.status === "rejected") {
+      failed.push(name);
+      return `${name}=ERROR`;
+    }
+    if (r.value.length === 0) empty.push(name);
+    return `${name}=${r.value.length}`;
+  });
+  const flags = [failed.length ? `failed: ${failed.join(",")}` : "", empty.length ? `empty: ${empty.join(",")}` : ""]
+    .filter(Boolean)
+    .join("; ");
+  return { line: `[sources] ${parts.join(" ")}${flags ? ` (${flags})` : ""}`, empty, failed };
 }
 
 /** Extract txId values from CONGRESS signal URLs. */
@@ -972,6 +1007,8 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
           ),
           // PR 1h option-chain features (log only)
           ...(ctx.optionsFeatures?.[result.agg.symbol] ?? {}),
+          // PR 2a insider routine/opportunistic class (log only)
+          ...insiderClassFeatures(result.agg.signals),
           // PR 1d shadow score (log only)
           shadow_ai_score: shadowMap.get(result.agg.symbol)?.score ?? null,
           shadow_ai_raw_score: shadowMap.get(result.agg.symbol)?.rawScore ?? null,

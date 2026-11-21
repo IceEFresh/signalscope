@@ -172,6 +172,7 @@ async function fetchFromOpenInsider(): Promise<RawSignal[]> {
       insiderTitle: r.insiderTitle,
       purchaseValue: r.value,
       filedAt: r.filingDate,
+      tradeDate: r.tradeDate,
       filingKey: `insider:${r.ticker}|${r.insiderName}|${r.tradeDate}|${r.qty}|${r.price}`,
     }));
 

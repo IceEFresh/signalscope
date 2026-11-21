@@ -117,7 +117,7 @@ describe("fetchBarMetricsMany counts (PR 1-0 review)", () => {
     vi.restoreAllMocks();
   });
 
-  it("retries 429 once, logs ok / failed / 429 counts, and omits failed symbols", async () => {
+  it("retries 429 twice (PLAN.md 1e), logs ok / failed / 429 counts, and omits failed symbols", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
@@ -130,7 +130,8 @@ describe("fetchBarMetricsMany counts (PR 1-0 review)", () => {
     const out = await fetchBarMetricsMany(["AMD", "RL", "BAD"], { delayMs: 0, retryDelayMs: 0, label: "bars" });
 
     expect([...out.keys()]).toEqual(["AMD"]);
-    expect(calls.filter((u) => u.includes("/RL?"))).toHaveLength(2);
+    expect(calls.filter((u) => u.includes("/RL?"))).toHaveLength(3); // 1 attempt + 2 retries
+    expect(calls.filter((u) => u.includes("/BAD?"))).toHaveLength(1); // 404 is not retried
     expect(warn).toHaveBeenCalledWith("[bars] charts ok=1 failed=1 rate-limited(429)=1 of 3");
   });
 });

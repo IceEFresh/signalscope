@@ -204,8 +204,10 @@ describe("fetchVolumeSpikeSignals — rate limits (PR 1-0 review)", () => {
     expect(signals.map((s) => s.symbol)).toEqual(["OK1", "OK2"]);
     const line = warn.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith("Volume Spike:"));
     expect(line).toContain("ok=2 failed=2 rate-limited(429)=2 of 6");
-    // each 429 symbol was tried twice
-    expect(mockFetch.mock.calls.filter(([u]) => String(u).includes("/RL1?"))).toHaveLength(2);
+    // 429, 5xx and network errors get two retries each (PLAN.md 1e)
+    expect(mockFetch.mock.calls.filter(([u]) => String(u).includes("/RL1?"))).toHaveLength(3);
+    expect(mockFetch.mock.calls.filter(([u]) => String(u).includes("/BAD?"))).toHaveLength(3);
+    expect(mockFetch.mock.calls.filter(([u]) => String(u).includes("/NET?"))).toHaveLength(3);
     warn.mockRestore();
   });
 
