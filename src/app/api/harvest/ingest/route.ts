@@ -46,6 +46,10 @@ const signalSchema = z.object({
   graduationSource: z.string().optional(),
   filingAgeDays: z.number().optional(),
   flippedCriteria: z.array(z.string()).optional(),
+  // PR 2a insider class (log only)
+  tradeDate: z.string().optional(),
+  insiderClass: z.enum(["routine", "opportunistic", "unclassified"]).optional(),
+  insiderPriorYears: z.number().optional(),
 });
 
 const nullableNum = z.number().finite().nullable();

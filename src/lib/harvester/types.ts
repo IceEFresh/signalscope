@@ -40,6 +40,9 @@ export interface RawSignal {
   marketEndDate?: string;      // market expiration (ISO)
   // Graduation watch (PLAN.md PR 1-0)
   filedAt?: string;            // filing or disclosure date of an insider/congress trade (ISO or YYYY-MM-DD)
+  tradeDate?: string;          // SEC_INSIDER: transaction date (YYYY-MM-DD)
+  insiderClass?: "routine" | "opportunistic" | "unclassified"; // SEC_INSIDER: PLAN.md 2a, log only
+  insiderPriorYears?: number;  // SEC_INSIDER: prior calendar years (of 3) with a Form 4 at this issuer
   filingKey?: string;          // stable id of the underlying filing, used to de-duplicate watch rows
   reportingGapDays?: number;   // congress: days between trade and disclosure
   graduationSource?: string;   // GRADUATION: INSIDER | POLITICIAN | ACTIVIST | NEW_INSIDER

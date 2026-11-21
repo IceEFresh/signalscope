@@ -27,6 +27,8 @@ export interface WatchEntry {
   actorRole: string | null;
   value: number | null;
   reportingGapDays: number | null;
+  /** PLAN.md 2a, insiders only. */
+  insiderClass?: string | null;
 }
 
 /** The fields of a stored watch row that merge logic reads and writes. */
@@ -41,6 +43,18 @@ export interface WatchRowState {
   isCluster: boolean;
   reportingGapDays: number | null;
   expiresAt: Date;
+  /** PLAN.md 2a: opportunistic if any filing on the row is, else routine, else unclassified. */
+  insiderClass?: string | null;
+}
+
+const INSIDER_CLASS_RANK: Record<string, number> = { unclassified: 1, routine: 2, opportunistic: 3 };
+
+/** The stronger of two insider classes (opportunistic > routine > unclassified). */
+export function strongerInsiderClass(a: string | null | undefined, b: string | null | undefined): string | null {
+  const ra = a ? INSIDER_CLASS_RANK[a] ?? 0 : 0;
+  const rb = b ? INSIDER_CLASS_RANK[b] ?? 0 : 0;
+  if (ra === 0 && rb === 0) return null;
+  return ra >= rb ? a! : b!;
 }
 
 /** Row shape the harvester receives from GET /api/harvest/universe. */
@@ -80,6 +94,7 @@ export function watchEntriesFromSignals(
         actorRole: s.insiderTitle ?? null,
         value: s.purchaseValue ?? null,
         reportingGapDays: null,
+        insiderClass: s.insiderClass ?? null,
       });
     } else if (s.source === "CONGRESS") {
       if ((s.purchaseValue ?? 0) < MIN_POLITICIAN_VALUE) continue;
@@ -137,6 +152,7 @@ export function mergeWatchEntry(existing: WatchRowState | null, entry: WatchEntr
     isCluster: entry.source === "INSIDER" ? actorNames.length >= 2 : base.isCluster,
     reportingGapDays: entry.reportingGapDays ?? base.reportingGapDays,
     expiresAt: new Date(lastFiledAt.getTime() + WATCH_DAYS * DAY_MS),
+    insiderClass: entry.source === "INSIDER" ? strongerInsiderClass(base.insiderClass, entry.insiderClass) : base.insiderClass ?? null,
   };
 }
 
