@@ -50,6 +50,12 @@ function isCsuiteOrDirector(title: string): boolean {
   return false;
 }
 
+
+/** Remove tags, then any leftover "<" or ">", so a nested "<<script>script>" can't leave a partial tag. */
+export function stripTags(html: string): string {
+  return html.replace(/<[^>]*>/g, "").replace(/[<>]/g, "");
+}
+
 function extractTicker(cellHtml: string): string {
   // Ticker cells contain JS tooltip junk like onmouseout="UnTip()" etc.
   // Try all anchors, pick the first that looks like a valid ticker (not blacklisted)
@@ -59,7 +65,7 @@ function extractTicker(cellHtml: string): string {
     if (candidate.length >= 1 && !BLACKLIST.has(candidate)) return candidate;
   }
   // Fallback: strip tags, find uppercase word anchored to start
-  const stripped = cellHtml.replace(/<[^>]*>/g, "").trim();
+  const stripped = stripTags(cellHtml).trim();
   const tickerMatch = stripped.match(/^([A-Z]{1,5})\b/);
   return tickerMatch ? tickerMatch[1] : stripped;
 }
@@ -86,7 +92,7 @@ export function parseOpenInsiderHtml(html: string): InsiderRow[] {
     while ((cellMatch = cellRegex.exec(rowHtml)) !== null) {
       cellsHtml.push(cellMatch[1]);
       // Strip HTML tags and trim
-      cellsRaw.push(cellMatch[1].replace(/<[^>]*>/g, "").trim());
+      cellsRaw.push(stripTags(cellMatch[1]).trim());
     }
 
     // OpenInsider tinytable has 17 columns:

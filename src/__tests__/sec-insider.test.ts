@@ -4,9 +4,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-const { fetchSecInsiderSignals, parseOpenInsiderHtml, OPENINSIDER_SCREENER_URL } = await import(
+const { fetchSecInsiderSignals, parseOpenInsiderHtml, stripTags, OPENINSIDER_SCREENER_URL } = await import(
   "@/lib/harvester/sources/sec-insider"
 );
+
+/** Exact host check (CodeQL js/incomplete-url-substring-sanitization). */
+function isOpenInsider(url: string): boolean {
+  try {
+    return new URL(url).hostname === "openinsider.com";
+  } catch {
+    return false;
+  }
+}
+
+describe("stripTags", () => {
+  it("leaves no partial tag from nested markup", () => {
+    expect(stripTags("<<script>script>alert(1)<</script>/script>")).toBe("scriptalert(1)/script");
+    expect(stripTags("<a href=x>NVDA</a>")).toBe("NVDA");
+    expect(stripTags("x > 1")).toBe("x  1");
+  });
+});
 
 // Minimal OpenInsider HTML with the real 17-column tinytable structure
 function makeOpenInsiderHtml(rows: string[]): string {
@@ -75,7 +92,7 @@ describe("fetchSecInsiderSignals", () => {
 
     // OpenInsider returns valid HTML
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("openinsider.com")) {
+      if (isOpenInsider(url)) {
         return { ok: true, text: async () => html };
       }
       return { ok: false, status: 404 };
@@ -105,7 +122,7 @@ describe("fetchSecInsiderSignals", () => {
     ]);
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("openinsider.com"))
+      if (isOpenInsider(url))
         return { ok: true, text: async () => html };
       return { ok: false, status: 404 };
     });
@@ -130,7 +147,7 @@ describe("fetchSecInsiderSignals", () => {
     ]);
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("openinsider.com"))
+      if (isOpenInsider(url))
         return { ok: true, text: async () => html };
       return { ok: false, status: 404 };
     });
@@ -155,7 +172,7 @@ describe("fetchSecInsiderSignals", () => {
     ]);
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("openinsider.com"))
+      if (isOpenInsider(url))
         return { ok: true, text: async () => html };
       return { ok: false, status: 404 };
     });
@@ -168,7 +185,7 @@ describe("fetchSecInsiderSignals", () => {
 
   it("returns empty array when OpenInsider connection fails (regression: HTTPS broke it)", async () => {
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("openinsider.com"))
+      if (isOpenInsider(url))
         throw new Error("Connection refused");
       return { ok: false, status: 404 };
     });
@@ -181,7 +198,7 @@ describe("fetchSecInsiderSignals", () => {
 
   it("handles OpenInsider returning non-200 gracefully", async () => {
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("openinsider.com"))
+      if (isOpenInsider(url))
         return { ok: false, status: 403 };
       return { ok: false, status: 404 };
     });
@@ -215,7 +232,7 @@ describe("fetchSecInsiderSignals", () => {
     ]);
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("openinsider.com"))
+      if (isOpenInsider(url))
         return { ok: true, text: async () => html };
       return { ok: false, status: 404 };
     });
@@ -239,7 +256,7 @@ describe("fetchSecInsiderSignals", () => {
     const html = makeOpenInsiderHtml([row]);
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("openinsider.com"))
+      if (isOpenInsider(url))
         return { ok: true, text: async () => html };
       return { ok: false, status: 404 };
     });
@@ -259,7 +276,7 @@ describe("$5 share-price floor", () => {
       makeRow({ ticker: "FIVE", name: "B", title: "CFO", tradeType: "P - Purchase", price: "$5.00", qty: "+20,000", value: "+$100,000" }),
     ]);
     mockFetch.mockImplementation(async (url: string) =>
-      url.includes("openinsider.com") ? { ok: true, text: async () => html } : { ok: false, status: 404 },
+      isOpenInsider(url) ? { ok: true, text: async () => html } : { ok: false, status: 404 },
     );
     const symbols = (await fetchSecInsiderSignals()).map((s) => s.symbol);
     expect(symbols).toEqual(["FIVE"]);

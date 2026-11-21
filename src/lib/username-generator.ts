@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 const ADJECTIVES = [
   "swift", "keen", "bold", "sharp", "bright",
   "quick", "steady", "eagle", "iron", "silver",
@@ -11,8 +12,8 @@ const NOUNS = [
 ];
 
 export function generateUsername(): string {
-  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-  const num = Math.floor(Math.random() * 900) + 100; // 100–999
+  const adj = ADJECTIVES[randomInt(ADJECTIVES.length)];
+  const noun = NOUNS[randomInt(NOUNS.length)];
+  const num = randomInt(100, 1000); // 100–999
   return `${adj}_${noun}_${num}`;
 }

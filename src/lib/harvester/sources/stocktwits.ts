@@ -67,6 +67,13 @@ interface TrendingTicker {
   dayGainPct: number | null;
 }
 
+const HTML_ENTITIES: Record<string, string> = { "&quot;": '"', "&amp;": "&", "&#39;": "'", "&lt;": "<", "&gt;": ">" };
+
+/** Decode the five basic HTML entities in one pass, so "&amp;lt;" becomes "&lt;", not "<". */
+export function decodeHtmlEntities(s: string): string {
+  return s.replace(/&(?:quot|amp|#39|lt|gt);/g, (e) => HTML_ENTITIES[e]);
+}
+
 function parseTrendingTickers(html: string): TrendingTicker[] {
   const results: TrendingTicker[] = [];
   const seen = new Set<string>();
@@ -79,12 +86,7 @@ function parseTrendingTickers(html: string): TrendingTicker[] {
   while ((m = xdataRegex.exec(html)) !== null) {
     try {
       // Decode HTML entities (&quot; → ", &amp; → &, etc.)
-      const jsonStr = m[1]
-        .replace(/&quot;/g, '"')
-        .replace(/&amp;/g, "&")
-        .replace(/&#39;/g, "'")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">");
+      const jsonStr = decodeHtmlEntities(m[1]);
 
       const data = JSON.parse(jsonStr) as {
         symbol?: string;
