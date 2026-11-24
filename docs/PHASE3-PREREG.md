@@ -84,5 +84,16 @@ Every logged key below is tested once, on its own. That is **94 comparisons**.
 - **Regime values repeat.** The regime keys take one value per scan. Their buckets are really buckets of days, so expect fewer effective observations than n.
 - **Sector features (P3-0d)** use each member's sector and industry from the weekly universe build. The sector values change only weekly, and a member without a stored profile has null sector features. `industry_ticker_count` here counts universe members in the industry, not signal tickers as in the signals dataset, so the two aren't comparable. As in the signals dataset, `industry_etf` (about 33 categories) will come out INSUFFICIENT under the more-than-12 rule.
 
+## Backfill dataset (P3-0g): 26 comparisons, reported separately
+`scripts/validate-features.ts --dataset backfill` runs the same rules on the `UniverseSnapshot` rows that `scripts/backfill-snapshot.ts` rebuilt from about 2 years of daily bars (`features.backfill = true`). It's never pooled with the signals or universe datasets, and it gets its own report and experiment-log row.
+- **Survivorship bias:** only today's universe members were rebuilt. Names that were delisted, acquired or dropped out over the 2 years are missing, so results are optimistic. Every backfill report states this in its header, and its log row says so.
+- **Rows:** one per member per session, built from the bars dated on or before that session only, cut to the same 3-month window a live run fetches. Each session has its own synthetic scan (`backfill-v1-YYYY-MM-DD`), so the time split and folds work on sessions.
+- **Outcomes and benchmark:** as in the universe dataset (1st, 3rd and 7th session after the row's, on the SPY calendar), using the backfill's own SPY rows.
+- **Look-ahead:** the backfill script refuses any session whose newest bar isn't dated that session; the harness keeps the universe dataset's two refusals.
+- **Keys tested:** the 22 bar keys and 4 STP-state keys of the universe dataset, listed above. Sector and regime are not rebuilt, and `backfill`, `backfill_version` and `snapshot_version` are bookkeeping, not features.
+
+**26 comparisons.** At a nominal 5%, about 1 KEEP could come from chance before the fold rule.
+- **More rows, same overlap problem.** About 1,500 tickers over about 500 sessions, so n will be large; the 7-day windows overlap heavily, and distinct tickers and the fold rule matter more than n.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

@@ -34,13 +34,20 @@ function splitTable(title: string, s: SplitResult): string[] {
   return [...lines, ""];
 }
 
-export type DatasetName = "signals" | "universe";
+export type DatasetName = "signals" | "universe" | "backfill";
+
+/** P3-0g: stated at the top of every backfill report. */
+export const SURVIVORSHIP_NOTE =
+  "**Survivorship bias:** this dataset was rebuilt from price history for today's universe members only. " +
+  "Names that were delisted, acquired or dropped out of the universe over the period are missing, so these results are optimistic. " +
+  "They are never pooled with the live datasets.";
 
 export function markdownReport(results: readonly FeatureResult[], meta: { date: string; commit: string; rows: number; scans: number; dataset: DatasetName }): string {
   const count = (v: string) => results.filter((r) => r.verdict === v).length;
   const out = [
     `# Phase 3 feature validation: ${meta.dataset} dataset, ${meta.date} (${meta.commit})`,
     "",
+    ...(meta.dataset === "backfill" ? [SURVIVORSHIP_NOTE, ""] : []),
     `${meta.rows} eligible rows from ${meta.scans} scans. ${results.length} features tested (= ${results.length} comparisons): ` +
       `${count("KEEP")} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT. Primary metric: ${PRIMARY_HORIZON} excess return vs SPY.`,
     "",
@@ -68,6 +75,6 @@ export function experimentSummaryRow(
   const count = (v: string) => results.filter((r) => r.verdict === v).length;
   const desc =
     `PHASE 3 VALIDATION (P3-0b), ${meta.dataset} dataset: ${results.length} features / comparisons on ${meta.rows} rows from ${meta.scans} scans. ` +
-    `${keep.length} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT. A KEEP is a reason for a rule-change PR, not the change. Report: ${meta.reportPath}.`;
+    `${keep.length} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT. ${meta.dataset === "backfill" ? "Survivorship-biased (current members only). " : ""}A KEEP is a reason for a rule-change PR, not the change. Report: ${meta.reportPath}.`;
   return `| ${meta.number} | ${meta.date} | ${meta.commit} | n/a | n/a | n/a | ${results.length} | quintile buckets (prereg) | ${keep.length ? "keep" : "discard"} | ${cell(keep.map((r) => r.key).join(" ") || "none")} | n/a | n/a | n/a | ${cell(desc)} |`;
 }
