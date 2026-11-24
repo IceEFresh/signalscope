@@ -11,6 +11,7 @@ import {
   computeStpExtras,
   computeRegimeExtras,
   computeSectorExtras,
+  computeMacroExtras,
   computeOptionsExtras,
   httpPrepDeps,
   prepareHarvest,
@@ -114,6 +115,9 @@ async function main() {
   // 1e. Sector and industry rotation (PLAN.md 1f, log only)
   const sectorRotation = await computeSectorExtras();
 
+  // 1e*. Macro context (P3-0f, log only): after sectors, so GLD and DBB come from the chart cache
+  const macro = await computeMacroExtras();
+
   // 1e'. Universe-wide snapshot rows from the chart cache, STP states and the weekly sector profiles
   // (P3-0c / P3-0d, log only, no new requests)
   const snapshot = await computeSnapshotRows(prep.scanSymbols, stp, undefined, { profiles: prep.profiles, rotation: sectorRotation });
@@ -166,6 +170,7 @@ async function main() {
     barFeatures: extras.barFeatures as unknown as HarvestIngestPayload["barFeatures"],
     stp,
     regime: regime as unknown as HarvestIngestPayload["regime"],
+    macro: macro as unknown as HarvestIngestPayload["macro"],
     sectorRotation,
     optionsFeatures: optionsFeatures as unknown as HarvestIngestPayload["optionsFeatures"],
     watchChecks: extras.watchChecks,

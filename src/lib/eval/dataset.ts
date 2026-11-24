@@ -11,6 +11,7 @@
  * Eligible rows: in the scan's liquid universe (PR 1-0) and no corporate action detected.
  * Everything in `attrs` was known at scan time; returns live only in `ret` / `excess`.
  */
+import { scanAttrs } from "./scan-attrs";
 import { etParts } from "@/lib/harvester/universe/bar-metrics";
 import { HORIZONS, type EvalRow, type Horizon } from "./rules";
 
@@ -100,7 +101,7 @@ export function buildEvalRows(rows: readonly StoredTickerRow[], spy: readonly Sp
       const bench = end ? spyReturn(spy, r.scanStartedAt, end) : null;
       excess[h] = raw != null && bench != null ? raw - bench : null;
     }
-    const regime = Object.fromEntries(Object.entries(r.regimeFeatures ?? {}).map(([k, v]) => [`regime.${k}`, v]));
+    const regime = scanAttrs(r.regimeFeatures, { regime: true });
     out.push({
       scanId: r.scanId,
       scanStart: r.scanStartedAt,

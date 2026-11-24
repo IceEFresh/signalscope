@@ -108,5 +108,10 @@ Every logged key below is tested once, on its own. That is **94 comparisons**.
 - **Correlated rows.** Most tokens move with BTC, so rows within a session are far from independent even after subtracting BTC.
 - **Weekday bars only in the calendar,** but the bar features themselves use all 7 daily bars (SMA20 covers 20 calendar days, not 4 weeks of sessions). `hv20` on crypto rows annualizes with √365 (crypto trades every day; Chris, PR #45), in both the feature and the universe filter. Stock rows keep √252. The datasets are never pooled, so the two scales are never compared.
 
+## Macro context (P3-0f): conditioning columns, not candidates
+Each scan stores macro fields under `Scan.regimeFeatures.macro`: the dollar index, HYG/LQD, the 10-year and 3-month yields and the curve between them (in percentage points), copper/gold (DBB/GLD) and BTC. The harness exposes them on every dataset's rows as `macro.<key>`, as conditioning columns only. `candidateKeys` skips `macro.*`, so they add no comparisons to any count above. A later pre-registration update adds them as candidates once there are 6+ months of scans.
+
+The stock regime (`regime.*`) is not attached to crypto rows. The regime is stock-only, which matches the crypto dataset's 26 comparisons.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

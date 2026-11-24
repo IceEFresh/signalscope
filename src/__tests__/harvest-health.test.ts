@@ -33,7 +33,7 @@ function scan(id: string, day: number, tickers: Record<string, unknown>[], over:
     scanId: id,
     startedAt: new Date(Date.UTC(2027, 0, day, 13, 30)),
     universeSize: 820,
-    regimeFeatures: { regime_version: 1, spy_close: 600 },
+    regimeFeatures: { regime_version: 1, spy_close: 600, macro: { macro_version: 1, macro_bar_date: "2026-11-20", dxy_source: "DX-Y.NYB", dxy_close: 104, yield_10y: 4.9 } },
     sectorRotation: { version: 1, sectors: [] },
     stpRows: 800,
     tickers,
@@ -111,6 +111,7 @@ describe("flags", () => {
         "family regime missing (Scan.regimeFeatures empty)",
         "family sectorRotation missing (Scan.sectorRotation empty)",
         "family stp missing (no StpSignal rows)",
+        "macro context missing (Scan.regimeFeatures.macro empty)",
       ]),
     );
     expect(flagsFor([analyzeScan(scan("s6", 11, [ticker(0)], { universeSize: null }))]).map((f) => f.message)).toContain(

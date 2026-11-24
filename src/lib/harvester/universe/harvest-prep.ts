@@ -13,6 +13,8 @@ import { fetchBarMetricsMany, parseChartBars, type BarMetrics } from "./bar-metr
 import { computeBarFeatures, type BarFeatures } from "./bar-features";
 import { computeStp, type StpResult } from "./stp";
 import { computeRegime, REGIME_SYMBOLS, type RegimeFeatures } from "./regime";
+import { computeMacro, missingMacroSeries, MACRO_SYMBOLS, type MacroFeatures, type MacroInput } from "./macro";
+import { parseCryptoBars } from "../crypto/universe";
 import { computeSectorRotation, ROTATION_ETFS, type SectorRotation } from "./sector-rotation";
 import { etParts } from "./bar-metrics";
 import { fetchOptionsRaw, normalizeChain, type NormalizedChain } from "../options-chain";
@@ -288,6 +290,40 @@ export async function computeRegimeExtras(getChart: typeof fetchDailyChart = fet
   const r = computeRegime(spy, vix, tlt);
   console.log(`[regime] SPY vs SMA20 ${r.spy_close_vs_sma20?.toFixed(4) ?? "null"}, distribution days ${r.spy_distribution_days_25 ?? "null"}, VIX ${r.vix_close ?? "null"}`);
   return r;
+}
+
+/**
+ * Macro context for this scan (P3-0f, log only). One cached 3-month chart per macro
+ * series; GLD and DBB come from the sector-rotation fetch when it ran first, BTC-USD
+ * from the crypto snapshot. A missing series gives null fields and a warning.
+ */
+export async function computeMacroExtras(getChart: typeof fetchDailyChart = fetchDailyChart, now: Date = new Date()): Promise<MacroFeatures> {
+  const load = async (sym: string, crypto = false) => {
+    try {
+      const res = await getChart(sym);
+      return res.ok ? (crypto ? parseCryptoBars(res.json, now) : parseChartBars(res.json, now)) : null;
+    } catch {
+      return null;
+    }
+  };
+  const s = MACRO_SYMBOLS;
+  const dxy = await load(s.dxy);
+  const input: MacroInput = {
+    dxy,
+    uup: dxy && dxy.length > 0 ? null : await load(s.dxyFallback),
+    hyg: await load(s.hyg),
+    lqd: await load(s.lqd),
+    tnx: await load(s.tnx),
+    irx: await load(s.irx),
+    gld: await load(s.gld),
+    dbb: await load(s.dbb),
+    btc: await load(s.btc, true),
+  };
+  const missing = missingMacroSeries(input);
+  if (missing.length) console.warn(`[macro] missing series: ${missing.join(", ")}; their fields are null`);
+  const m = computeMacro(input);
+  console.log(`[macro] ${m.macro_bar_date ?? "no date"}: dxy ${m.dxy_close ?? "null"}, 10y ${m.yield_10y ?? "null"}%, curve ${m.curve_10y_3m?.toFixed(2) ?? "null"} pp, HYG/LQD ${m.credit_ratio?.toFixed(4) ?? "null"}`);
+  return m;
 }
 
 /**

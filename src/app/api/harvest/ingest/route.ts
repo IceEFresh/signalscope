@@ -98,6 +98,8 @@ const ingestPayloadSchema = z.object({
     .optional(),
   // PLAN.md 1c market regime fields (log only)
   regime: z.record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.null()])).optional(),
+  // P3-0f macro context (log only); stored under regimeFeatures.macro
+  macro: z.record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.null()])).optional(),
   // PLAN.md 1f sector rotation (log only); shape built by sector-rotation.ts on the harvester
   sectorRotation: z
     .object({
@@ -147,6 +149,7 @@ export async function POST(req: NextRequest) {
       barFeatures: parsed.barFeatures ?? {},
       stp: parsed.stp ?? {},
       regime: parsed.regime,
+      macro: parsed.macro,
       sectorRotation: (parsed.sectorRotation ?? undefined) as ProcessContext["sectorRotation"],
       optionsFeatures: parsed.optionsFeatures ?? {},
       watchChecks: parsed.watchChecks ?? [],
