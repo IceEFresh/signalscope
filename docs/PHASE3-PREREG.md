@@ -106,7 +106,7 @@ Every logged key below is tested once, on its own. That is **94 comparisons**.
 **26 comparisons.** At a nominal 5%, about 1 KEEP could come from chance before the fold rule.
 - **Small universe.** About 40 members on the first dry run (95 CoinGecko coins clear $500M, and about 25 of those are stablecoins, wrapped, staked, gold or fund tokens), so expect INSUFFICIENT for months: 100 held-out rows in one bucket needs about 500 held-out rows.
 - **Correlated rows.** Most tokens move with BTC, so rows within a session are far from independent even after subtracting BTC.
-- **Weekday bars only in the calendar,** but the bar features themselves use all 7 daily bars (SMA20 covers 20 calendar days, not 4 weeks of sessions). `hv20` keeps the stock formula's √252, so it understates crypto's annualized volatility by about √(365/252) ≈ 1.2×; it's used only for ranking and the universe filter.
+- **Weekday bars only in the calendar,** but the bar features themselves use all 7 daily bars (SMA20 covers 20 calendar days, not 4 weeks of sessions). `hv20` on crypto rows annualizes with √365 (crypto trades every day; Chris, PR #45), in both the feature and the universe filter. Stock rows keep √252. The datasets are never pooled, so the two scales are never compared.
 
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

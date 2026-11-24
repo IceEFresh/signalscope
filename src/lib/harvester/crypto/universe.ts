@@ -29,6 +29,11 @@ export const CRYPTO_RULE = {
 } as const;
 
 export const BTC_SYMBOL = "BTC-USD";
+/**
+ * Crypto trades every day, so its HV20 annualizes with √365 (Chris, PR #45). The shared
+ * stock code uses √252; crypto rows rescale it by √(365/252). Stocks are unchanged.
+ */
+export const CRYPTO_HV_SCALE = Math.sqrt(365 / 252);
 const DAY_S = 86_400;
 
 /** First-choice Yahoo symbol for a CoinGecko coin; see searchAlternatives for Yahoo's numbered tickers. */
@@ -101,13 +106,14 @@ export function evaluateCryptoCandidate(coin: CoinMarket, chart: unknown | null,
     return { kind: "dropped", reason: `price mismatch: Yahoo ${sym} ${yPrice} vs CoinGecko ${coin.id} ${coin.current_price} (${(gap * 100).toFixed(1)}%), likely a different asset` };
   }
   const m = computeBarMetrics(bars);
+  const hv20 = m.hv20 == null ? null : m.hv20 * CRYPTO_HV_SCALE;
   const dv = medianDollarVolume20d(bars);
   if (dv == null || dv < r.minMedianDollarVolume20d) return { kind: "filtered", reason: "20-day median dollar volume under $25M" };
-  const volOk = (m.atrPct != null && m.atrPct >= r.minAtrPct) || (m.hv20 != null && m.hv20 >= r.minHv20);
+  const volOk = (m.atrPct != null && m.atrPct >= r.minAtrPct) || (hv20 != null && hv20 >= r.minHv20);
   if (!volOk) return { kind: "filtered", reason: "ATR% under 3% and HV20 under 40%" };
   return {
     kind: "member",
-    member: { symbol: sym, coingeckoId: coin.id, price: yPrice, marketCap: coin.market_cap, dollarVolume20d: dv, atrPct: m.atrPct, hv20: m.hv20 },
+    member: { symbol: sym, coingeckoId: coin.id, price: yPrice, marketCap: coin.market_cap, dollarVolume20d: dv, atrPct: m.atrPct, hv20 },
   };
 }
 
@@ -202,6 +208,7 @@ export function cryptoSnapshotRow(symbol: string, bars: readonly DailyBar[], btc
   const last = bars.at(-1);
   if (last?.time == null || row.sessionDate !== utcDate(last.time)) return null; // dating guard: must be the bar's UTC day
   const features = Object.fromEntries(Object.entries(row.features).map(([k, v]) => [CRYPTO_KEY_RENAMES[k] ?? k, v]));
+  if (typeof features.hv20 === "number") features.hv20 *= CRYPTO_HV_SCALE;
   return { ...row, features, assetClass: "crypto" };
 }
 

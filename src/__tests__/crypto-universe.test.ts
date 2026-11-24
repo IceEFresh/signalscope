@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { exclusionReason, fetchCoinGeckoMarkets, parseMarkets, type CoinMarket } from "@/lib/harvester/crypto/coingecko";
 import {
   BTC_SYMBOL,
+  CRYPTO_HV_SCALE,
   CRYPTO_RULE,
   buildCryptoUniverse,
   computeCryptoSnapshotRows,
@@ -185,6 +186,18 @@ describe("crypto snapshot rows and the BTC benchmark", () => {
     expect(ethRow.features.rs_vs_btc_20d).toBeCloseTo((ethRow.features.return_20d as number) - (btcRow.features.return_20d as number), 12);
     expect(ethRow.features).not.toHaveProperty("sector_etf");
     expect(typeof ethRow.features.stp_ma_state).toBe("number");
+  });
+
+  it("HV20 annualizes with √365 on crypto rows and in the filter; stocks keep √252", () => {
+    const closes = btc.map((b) => b.close);
+    const rets = closes.slice(-21).slice(1).map((c, i) => Math.log(c / closes.slice(-21)[i]));
+    const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
+    const sd = Math.sqrt(rets.reduce((s, r) => s + (r - mean) ** 2, 0) / (rets.length - 1));
+    expect(btcRow.features.hv20).toBeCloseTo(sd * Math.sqrt(365), 12);
+    expect(computeBarFeatures(btc).hv20).toBeCloseTo(sd * Math.sqrt(252), 12); // shared stock code unchanged
+    const r = evaluateCryptoCandidate(coin("bitcoin"), btcChart, NOW);
+    expect(r.kind === "member" && r.member.hv20).toBeCloseTo(sd * Math.sqrt(365), 12);
+    expect(CRYPTO_HV_SCALE).toBeCloseTo(Math.sqrt(365 / 252), 15);
   });
 
   it("computeCryptoSnapshotRows always includes BTC, and nothing at all without a crypto universe", async () => {
