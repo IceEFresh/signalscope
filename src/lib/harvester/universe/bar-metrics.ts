@@ -59,9 +59,20 @@ const ET_PARTS = new Intl.DateTimeFormat("en-US", {
   hourCycle: "h23",
 });
 
+// Intl formatting dominates the P3-0g backfill (every bar re-dated for every session), so
+// results are memoized per minute. Bounded so a long-running web process can't grow it.
+const ET_MEMO = new Map<number, { date: string; minutes: number }>();
+const ET_MEMO_MAX = 100_000;
+
 export function etParts(d: Date): { date: string; minutes: number } {
+  const key = Math.floor(d.getTime() / 60_000);
+  const hit = ET_MEMO.get(key);
+  if (hit) return { ...hit };
   const p = Object.fromEntries(ET_PARTS.formatToParts(d).map((x) => [x.type, x.value]));
-  return { date: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute) };
+  const out = { date: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute) };
+  if (ET_MEMO.size >= ET_MEMO_MAX) ET_MEMO.clear();
+  ET_MEMO.set(key, out);
+  return { ...out };
 }
 
 /**

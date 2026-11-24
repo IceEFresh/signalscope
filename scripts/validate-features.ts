@@ -5,6 +5,7 @@
 // Run (needs DATABASE_URL; fetches SPY daily closes from Yahoo):
 //   npx tsx scripts/validate-features.ts                       # signal tickers: report + one experiment-log row
 //   npx tsx scripts/validate-features.ts --dataset universe    # P3-0c universe snapshots (reported separately)
+//   npx tsx scripts/validate-features.ts --dataset backfill    # P3-0g backfilled snapshots (separate; SPY from its own rows)
 //   npx tsx scripts/validate-features.ts --dry-run             # print the summary only, write nothing
 
 import "dotenv/config";
@@ -17,6 +18,8 @@ import { buildEvalRows, type SpyClose, type StoredTickerRow } from "@/lib/eval/d
 import { candidateKeys, evaluateFeature } from "@/lib/eval/features";
 import { experimentSummaryRow, lastExperimentNumber, markdownReport, type DatasetName } from "@/lib/eval/report";
 import { buildUniverseRows, type StoredSnapshotRow } from "@/lib/eval/universe-dataset";
+import { BENCHMARK_SYMBOL } from "@/lib/harvester/universe/snapshot";
+import { BACKFILL_SCAN_PREFIX } from "@/lib/harvester/universe/backfill";
 import type { EvalRow } from "@/lib/eval/rules";
 
 const LOG_PATH = "scripts/backtesting-experiments.md";
@@ -62,8 +65,12 @@ async function loadRows(): Promise<StoredTickerRow[]> {
   }));
 }
 
-async function loadSnapshots(): Promise<StoredSnapshotRow[]> {
+async function loadSnapshots(backfill: boolean): Promise<StoredSnapshotRow[]> {
+  // Backfill rows sit under synthetic scans marked in Scan.error; the builder also filters on features.backfill.
   const snaps = await prisma.universeSnapshot.findMany({
+    where: backfill
+      ? { scan: { error: { startsWith: BACKFILL_SCAN_PREFIX } } }
+      : { scan: { OR: [{ error: null }, { NOT: { error: { startsWith: BACKFILL_SCAN_PREFIX } } }] } },
     select: { scanId: true, symbol: true, sessionDate: true, close: true, features: true, scan: { select: { startedAt: true, regimeFeatures: true } } },
   });
   return snaps.map((s) => ({
@@ -80,10 +87,19 @@ async function loadSnapshots(): Promise<StoredSnapshotRow[]> {
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const di = process.argv.indexOf("--dataset");
-  const dataset: DatasetName = di >= 0 && process.argv[di + 1] === "universe" ? "universe" : "signals";
-  const spy = await loadSpy();
-  // Both builders throw on look-ahead
-  const rows: EvalRow[] = dataset === "universe" ? buildUniverseRows(await loadSnapshots(), spy) : buildEvalRows(await loadRows(), spy);
+  const arg = di >= 0 ? process.argv[di + 1] : undefined;
+  const dataset: DatasetName = arg === "universe" || arg === "backfill" ? arg : "signals";
+  // All builders throw on look-ahead
+  let rows: EvalRow[];
+  if (dataset === "signals") rows = buildEvalRows(await loadRows(), await loadSpy());
+  else {
+    const snaps = await loadSnapshots(dataset === "backfill");
+    // The backfill covers ~2 years, longer than loadSpy's range: use the backfill's own SPY rows.
+    const spy = dataset === "backfill"
+      ? snaps.filter((s) => s.symbol === BENCHMARK_SYMBOL).map((s) => ({ date: s.sessionDate, close: s.close }))
+      : await loadSpy();
+    rows = buildUniverseRows(snaps, spy, { backfill: dataset === "backfill" });
+  }
   const scans = new Set(rows.map((r) => r.scanId)).size;
   const results = candidateKeys(rows).map((k) => evaluateFeature(rows, k));
   const date = new Date().toISOString().slice(0, 10);

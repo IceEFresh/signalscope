@@ -10,8 +10,13 @@
  * Look-ahead: a row's features must describe a session no later than its scan date,
  * and every outcome session must be strictly after the row's. Either violation
  * stops the run (LookAheadError).
+ *
+ * P3-0g: backfilled rows (features.backfill = true) form their own dataset and are
+ * never pooled with live rows. `backfill: false` (the universe dataset) drops them;
+ * `backfill: true` keeps only them.
  */
 import { etParts } from "@/lib/harvester/universe/bar-metrics";
+import { isBackfillFeatures } from "@/lib/harvester/universe/backfill";
 import { BENCHMARK_SYMBOL } from "@/lib/harvester/universe/snapshot";
 import { LookAheadError, type SpyClose } from "./dataset";
 import { HORIZONS, type EvalRow, type Horizon } from "./rules";
@@ -28,7 +33,8 @@ export interface StoredSnapshotRow {
 
 const OFFSET: Record<Horizon, number> = { "1d": 1, "3d": 3, "7d": 7 };
 
-export function buildUniverseRows(rows: readonly StoredSnapshotRow[], spy: readonly SpyClose[]): EvalRow[] {
+export function buildUniverseRows(rowsIn: readonly StoredSnapshotRow[], spy: readonly SpyClose[], opts: { backfill: boolean } = { backfill: false }): EvalRow[] {
+  const rows = rowsIn.filter((r) => isBackfillFeatures(r.features) === opts.backfill);
   const calendar = [...new Set(spy.map((c) => c.date))].sort();
   const pos = new Map(calendar.map((d, i) => [d, i]));
   const spyClose = new Map(spy.map((c) => [c.date, c.close]));
