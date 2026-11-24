@@ -29,6 +29,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 16. **S2: source resilience for Capitol Trades and StockTwits** (spec: docs/PHASE3-PREP.md). Retries merged (#36); the Financial Datasets fallback is on hold.
 17. **P3-0d: sector features for the universe snapshot** (spec: docs/PHASE3-PREP.md). Has a migration, so Chris merges.
 
+18. **S3: typecheck `scripts/` in CI.** `tsconfig.json` excludes `scripts/`, so a duplicate `const` in `run-harvest-remote.ts` passed CI on #37 and would have crashed the harvester. Add `tsconfig.scripts.json`, which extends the base config and includes `scripts/**/*.ts`, and run `npx tsc --noEmit -p tsconfig.scripts.json` in `ci.yml`. Fix whatever it finds. No runtime change.
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.
