@@ -4,13 +4,23 @@
  * One row per universe member (plus SPY, the benchmark) from data this run already
  * has: the per-run chart cache (volume spike and STP fetched every universe chart)
  * and the STP states. Never makes a network request: a symbol whose chart isn't
- * cached is left out. Sector features (1f) are not included: they need each ticker's
- * Yahoo sector and industry, which the harvester only has for signal tickers.
+ * cached is left out. Sector features (1f, P3-0d) use each member's sector and
+ * industry from the weekly universe build plus this run's sector rotation; a member
+ * with no stored profile gets null sector features.
  */
 import { peekDailyChart } from "../yahoo-chart";
 import { parseChartBars, type DailyBar } from "./bar-metrics";
 import { computeBarFeatures } from "./bar-features";
 import type { StpResult } from "./stp";
+import { normalizeIndustry, tickerSectorFeatures, type SectorRotation } from "./sector-rotation";
+
+export interface SectorContext {
+  sector: string | null;
+  industry: string | null;
+  rotation: SectorRotation | null;
+  /** Universe members with the same (normalized) industry. */
+  industryCount: number | null;
+}
 
 export const SNAPSHOT_VERSION = 1;
 export const SNAPSHOT_BATCH = 500;
@@ -24,7 +34,13 @@ export interface SnapshotRow {
 }
 
 /** One snapshot row from a symbol's completed bars and its STP states (pure). Null without a dated last bar. */
-export function snapshotRow(symbol: string, bars: readonly DailyBar[], spyBars: readonly DailyBar[] | null, stp: StpResult | undefined): SnapshotRow | null {
+export function snapshotRow(
+  symbol: string,
+  bars: readonly DailyBar[],
+  spyBars: readonly DailyBar[] | null,
+  stp: StpResult | undefined,
+  sector?: SectorContext,
+): SnapshotRow | null {
   if (bars.length === 0) return null;
   const f = computeBarFeatures(bars, spyBars) as unknown as Record<string, unknown>;
   const sessionDate = typeof f.bar_date === "string" ? f.bar_date : null;
@@ -41,6 +57,10 @@ export function snapshotRow(symbol: string, bars: readonly DailyBar[], spyBars: 
       stp_ma_state: stp && stp.barDate === sessionDate ? stp.maState : null,
       stp_well_bid: stp && stp.barDate === sessionDate ? stp.wellBid : null,
       stp_size_factor: stp && stp.barDate === sessionDate ? stp.sizeFactor : null,
+      // Sector features (1f) from the weekly profile; all null when the member has none
+      ...(sector
+        ? tickerSectorFeatures(sector.sector, sector.industry, f.return_20d as number | null | undefined, sector.rotation, sector.industryCount)
+        : {}),
     },
   };
 }
@@ -50,7 +70,25 @@ export async function computeSnapshotRows(
   symbols: readonly string[],
   stp: Record<string, StpResult>,
   peek: (s: string) => ReturnType<typeof peekDailyChart> = peekDailyChart,
+  sectorInput?: { profiles: Record<string, { sector: string | null; industry: string | null }>; rotation: SectorRotation | null },
 ): Promise<{ rows: SnapshotRow[]; missing: number }> {
+  const industryCounts = new Map<string, number>();
+  for (const p of Object.values(sectorInput?.profiles ?? {})) {
+    if (p.industry) {
+      const k = normalizeIndustry(p.industry);
+      industryCounts.set(k, (industryCounts.get(k) ?? 0) + 1);
+    }
+  }
+  const sectorFor = (s: string): SectorContext | undefined => {
+    if (!sectorInput || s === BENCHMARK_SYMBOL) return undefined;
+    const p = sectorInput.profiles[s];
+    return {
+      sector: p?.sector ?? null,
+      industry: p?.industry ?? null,
+      rotation: sectorInput.rotation,
+      industryCount: p?.industry ? industryCounts.get(normalizeIndustry(p.industry)) ?? null : null,
+    };
+  };
   const load = async (s: string): Promise<DailyBar[] | null> => {
     const p = peek(s);
     if (!p) return null;
@@ -66,7 +104,7 @@ export async function computeSnapshotRows(
   let missing = 0;
   for (const s of [...new Set([...symbols, BENCHMARK_SYMBOL])]) {
     const bars = s === BENCHMARK_SYMBOL ? spyBars : await load(s);
-    const row = bars ? snapshotRow(s, bars, spyBars, stp[s]) : null;
+    const row = bars ? snapshotRow(s, bars, spyBars, stp[s], sectorFor(s)) : null;
     if (row) rows.push(row);
     else missing++;
   }

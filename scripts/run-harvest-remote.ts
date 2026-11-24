@@ -106,15 +106,18 @@ async function main() {
   // 1c. STP daily states and triggers for the universe plus signal symbols (PLAN.md 1g, log only)
   const stp = await computeStpExtras([...prep.scanSymbols, ...Object.keys(extras.barMetrics)]);
 
-  // 1c'. Universe-wide snapshot rows from the chart cache and STP states (P3-0c, log only, no new requests)
-  const snapshot = await computeSnapshotRows(prep.scanSymbols, stp);
-  console.log(`[snapshot] ${snapshot.rows.length} rows built, ${snapshot.missing} symbols without a cached chart`);
-
   // 1d. Market regime fields for this scan (PLAN.md 1c, log only)
   const regime = await computeRegimeExtras();
 
   // 1e. Sector and industry rotation (PLAN.md 1f, log only)
   const sectorRotation = await computeSectorExtras();
+
+  // 1e'. Universe-wide snapshot rows from the chart cache, STP states and the weekly sector profiles
+  // (P3-0c / P3-0d, log only, no new requests)
+  const snapshot = await computeSnapshotRows(prep.scanSymbols, stp, undefined, { profiles: prep.profiles, rotation: sectorRotation });
+  console.log(
+    `[snapshot] ${snapshot.rows.length} rows built, ${snapshot.missing} symbols without a cached chart, ${Object.keys(prep.profiles).length} members with a sector profile`,
+  );
 
   // 1f. Option-chain features for signal symbols (PLAN.md 1h, log only)
   const optionSymbols = Object.keys(extras.barMetrics).filter((s) => signals.some((sig) => sig.symbol === s));

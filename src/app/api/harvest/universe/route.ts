@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { checkHarvestKey } from "@/lib/harvest-auth";
 import { handleApiError } from "@/lib/api-error";
-import { getActiveWatch, loadUniverse, saveUniverse } from "@/lib/harvester/universe/store";
+import { getActiveWatch, loadUniverse, loadUniverseProfiles, saveUniverse } from "@/lib/harvester/universe/store";
 import { UNIVERSE_RULE } from "@/lib/harvester/universe/rule";
 
 /** Current universe and active graduation watch, for the harvester (PLAN.md PR 1-0). */
@@ -12,9 +12,11 @@ export async function GET(req: NextRequest) {
     if (denied) return denied;
 
     const [universe, watch] = await Promise.all([loadUniverse(), getActiveWatch()]);
+    // P3-0d: sector and industry per member, for the universe snapshot's sector features
+    const profiles = universe ? await loadUniverseProfiles(universe.id) : {};
     return NextResponse.json({
       universe: universe
-        ? { id: universe.id, refreshedAt: universe.refreshedAt.toISOString(), symbols: [...universe.symbols].sort() }
+        ? { id: universe.id, refreshedAt: universe.refreshedAt.toISOString(), symbols: [...universe.symbols].sort(), profiles }
         : null,
       watch,
     });
@@ -36,6 +38,9 @@ const buildSchema = z.object({
       atrPct: n,
       hv20: n,
       hasOptions: z.boolean(),
+      // P3-0d: weekly profile; older harvesters omit these
+      sector: z.string().max(100).nullable().optional(),
+      industry: z.string().max(100).nullable().optional(),
     }),
   ),
 });

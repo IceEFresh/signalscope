@@ -39,6 +39,34 @@ async function fetchQuoteSummaryData(
   return result;
 }
 
+/**
+ * P3-0d: Yahoo sector and industry only (assetProfile), for the weekly universe build.
+ * Five at a time with the shared retry; a failure leaves that symbol out.
+ */
+export async function fetchSectorIndustry(symbols: string[]): Promise<Map<string, { sector: string | null; industry: string | null }>> {
+  const out = new Map<string, { sector: string | null; industry: string | null }>();
+  const CONCURRENCY = 5;
+  for (let i = 0; i < symbols.length; i += CONCURRENCY) {
+    await Promise.all(
+      symbols.slice(i, i + CONCURRENCY).map(async (sym) => {
+        try {
+          const summary = await withYahooRetry(() => withYahooTimeout(yahooFinance.quoteSummary(sym, { modules: ["assetProfile"] })), {
+            label: "profile",
+          });
+          const p = summary.assetProfile as Record<string, unknown> | null | undefined;
+          out.set(sym, {
+            sector: typeof p?.sector === "string" ? p.sector : null,
+            industry: typeof p?.industry === "string" ? p.industry : null,
+          });
+        } catch {
+          // non-fatal: sector and industry stay null for this member
+        }
+      }),
+    );
+  }
+  return out;
+}
+
 export async function fetchFundamentals(
   symbols: string[]
 ): Promise<Map<string, FundamentalData>> {

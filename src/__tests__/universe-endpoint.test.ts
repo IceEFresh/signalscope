@@ -5,8 +5,10 @@ vi.stubEnv("HARVEST_API_KEY", "k");
 const mockLoad = vi.fn();
 const mockWatch = vi.fn();
 const mockSave = vi.fn();
+const mockProfiles = vi.fn();
 vi.mock("@/lib/harvester/universe/store", () => ({
   loadUniverse: (...a: unknown[]) => mockLoad(...a),
+  loadUniverseProfiles: (...a: unknown[]) => mockProfiles(...a),
   getActiveWatch: (...a: unknown[]) => mockWatch(...a),
   saveUniverse: (...a: unknown[]) => mockSave(...a),
 }));
@@ -25,6 +27,7 @@ const member = { symbol: "AAA", price: 10, marketCap: 1e9, dollarVolume20d: 3e7,
 beforeEach(() => {
   vi.clearAllMocks();
   mockWatch.mockResolvedValue([]);
+  mockProfiles.mockResolvedValue({});
 });
 
 describe("GET /api/harvest/universe", () => {
@@ -43,8 +46,16 @@ describe("GET /api/harvest/universe", () => {
     mockLoad.mockResolvedValue({ id: "u1", refreshedAt: new Date("2026-11-20T00:00:00Z"), symbols: new Set(["BBB", "AAA"]) });
     mockWatch.mockResolvedValue([{ id: "w1", symbol: "SMOL" }]);
     const json = await (await GET(req("GET"))).json();
-    expect(json.universe).toEqual({ id: "u1", refreshedAt: "2026-11-20T00:00:00.000Z", symbols: ["AAA", "BBB"] });
+    expect(json.universe).toEqual({ id: "u1", refreshedAt: "2026-11-20T00:00:00.000Z", symbols: ["AAA", "BBB"], profiles: {} });
     expect(json.watch).toHaveLength(1);
+  });
+
+  it("returns each member's weekly sector profile (P3-0d)", async () => {
+    mockLoad.mockResolvedValue({ id: "u1", refreshedAt: new Date("2026-11-20T00:00:00Z"), symbols: new Set(["AAA"]) });
+    mockProfiles.mockResolvedValue({ AAA: { sector: "Technology", industry: "Semiconductors" } });
+    const json = await (await GET(req("GET"))).json();
+    expect(mockProfiles).toHaveBeenCalledWith("u1");
+    expect(json.universe.profiles).toEqual({ AAA: { sector: "Technology", industry: "Semiconductors" } });
   });
 });
 
@@ -54,6 +65,15 @@ describe("POST /api/harvest/universe", () => {
     const res = await POST(req("POST", { directoryCount: 100, prefilterCount: 10, members: [member] }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: "u9", memberCount: 1 });
+  });
+
+  it("accepts members with or without a sector profile", async () => {
+    mockSave.mockResolvedValue("u9");
+    const withProfile = { ...member, symbol: "BBB", sector: "Technology", industry: "Semiconductors" };
+    const res = await POST(req("POST", { directoryCount: 100, prefilterCount: 10, members: [member, withProfile, { ...member, symbol: "CCC", sector: null, industry: null }] }));
+    expect(res.status).toBe(200);
+    const saved = mockSave.mock.calls[0][0] as { members: Array<{ symbol: string; sector?: string | null }> };
+    expect(saved.members.find((m) => m.symbol === "BBB")?.sector).toBe("Technology");
   });
 
   it("returns 400 for a malformed build", async () => {

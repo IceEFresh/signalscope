@@ -192,8 +192,8 @@ export function renderText(reports: readonly ScanReport[], flags: readonly Flag[
   }
   if (latest.snapshot) {
     const sn = latest.snapshot;
-    out.push("", `[universe snapshot] ${sn.rows} rows; coverage bar ${pct(sn.families.bar.coverage)}, stp ${pct(sn.families.stp.coverage)}`);
-    for (const f of ["bar", "stp"] as const)
+    out.push("", `[universe snapshot] ${sn.rows} rows; coverage bar ${pct(sn.families.bar.coverage)}, stp ${pct(sn.families.stp.coverage)}, sector ${pct(sn.families.sector.coverage)}`);
+    for (const f of ["bar", "stp", "sector"] as const)
       for (const [k, st] of Object.entries(sn.families[f].keys).sort(([a], [b]) => a.localeCompare(b)))
         out.push(`  ${k.padEnd(34)} null ${pct(st.nullRate).padStart(4)}  min ${fmt(st.min)}  med ${fmt(st.median)}  max ${fmt(st.max)}`);
   }

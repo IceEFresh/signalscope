@@ -28,6 +28,17 @@ export async function loadUniverse(id?: string | null): Promise<LoadedUniverse |
   return { id: u.id, refreshedAt: u.refreshedAt, symbols: new Set(u.members.map((m) => m.symbol)) };
 }
 
+export type UniverseProfiles = Record<string, { sector: string | null; industry: string | null }>;
+
+/** P3-0d: sector and industry for each member that has a profile. */
+export async function loadUniverseProfiles(universeId: string): Promise<UniverseProfiles> {
+  const rows = await prisma.universeMember.findMany({
+    where: { universeId, OR: [{ sector: { not: null } }, { industry: { not: null } }] },
+    select: { symbol: true, sector: true, industry: true },
+  });
+  return Object.fromEntries(rows.map((r) => [r.symbol, { sector: r.sector, industry: r.industry }]));
+}
+
 export async function saveUniverse(build: UniverseBuildResult): Promise<string> {
   if (build.members.length < MIN_UNIVERSE_SIZE) {
     throw new Error(`Universe build has ${build.members.length} members (< ${MIN_UNIVERSE_SIZE}); not stored`);

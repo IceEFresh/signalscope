@@ -52,7 +52,7 @@ describe("isStale", () => {
 describe("prepareHarvest", () => {
   it("uses a fresh universe without rebuilding", async () => {
     const d = deps();
-    expect(await prepareHarvest(d)).toEqual({ universeId: "u1", scanSymbols: ["AAA", "BBB"], watch: [] });
+    expect(await prepareHarvest(d)).toEqual({ universeId: "u1", scanSymbols: ["AAA", "BBB"], profiles: {}, watch: [] });
     expect(d.build).not.toHaveBeenCalled();
   });
 
@@ -72,7 +72,7 @@ describe("prepareHarvest", () => {
   it("falls back to static SCAN_SYMBOLS and skips the rebuild when the web app is unreachable", async () => {
     const d = deps({ getState: async () => { throw new Error("503"); } });
     const prep = await prepareHarvest(d);
-    expect(prep).toEqual({ universeId: null, scanSymbols: SCAN_SYMBOLS, watch: [] });
+    expect(prep).toEqual({ universeId: null, scanSymbols: SCAN_SYMBOLS, profiles: {}, watch: [] });
     expect(d.build).not.toHaveBeenCalled();
     expect(d.postBuild).not.toHaveBeenCalled();
   });
@@ -81,7 +81,7 @@ describe("prepareHarvest", () => {
     const prep = await prepareHarvest(
       deps({ getState: async () => ({ universe: null, watch: [] }), postBuild: async () => { throw new Error("503"); } }),
     );
-    expect(prep).toEqual({ universeId: null, scanSymbols: SCAN_SYMBOLS, watch: [] });
+    expect(prep).toEqual({ universeId: null, scanSymbols: SCAN_SYMBOLS, profiles: {}, watch: [] });
   });
 });
 

@@ -105,6 +105,13 @@ Branch `plan/s2-source-resilience`.
 
 No migration, and no change to score, stage or label.
 
+## P3-0d: sector features for the universe snapshot (Chris, 2026-11-24)
+
+Chris approved storing each universe member's Yahoo sector and industry at the weekly build. That's one company-profile call per member, about 1,485 a week. It goes in two nullable `UniverseMember` columns, and the daily snapshot then adds the 1f sector features at no daily cost. Branch `plan/p3-0d-universe-sector`, stacked on P3-0c. It has a migration.
+
+## S2 status
+Parts 1, 3 and 5 (the retries) are merged in #36. The Financial Datasets House fallback (part 2) is **on hold (Chris, 2026-11-24)**: the account has no credits, and no real response has been saved yet.
+
 ## Not in scope
 - Changing any rule or score. That's Phase 3 proper, one PR per rule, after the harness runs on real data.
 - 2d (paid options flow). It's decided by the harness results.
