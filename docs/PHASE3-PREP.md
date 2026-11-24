@@ -163,6 +163,32 @@ Branch `plan/p3-0e-crypto-universe`.
 
 Log only: no score, stage, label or recommendation reads crypto rows, and crypto never enters `ValidatedTicker`. No new dependencies.
 
+## P3-0f: macro context fields, log only (Chris, 2026-11-24)
+
+Scan-level fields, stored in `Scan.regimeFeatures` under a `macro` key, so no migration is needed. That makes them one value per day: they're for conditioning other features in Phase 3+, and they can't be tested alone before about 6–12 months of data.
+
+Branch `plan/p3-0f-macro-context`.
+
+1. **New Yahoo daily charts**, through the existing chart cache and retry. Verify each symbol on the NAS and save fixtures first.
+   - `DX-Y.NYB`, the US dollar index. Fall back to `UUP` if that returns no data.
+   - `HYG` and `LQD`, high-yield and investment-grade corporate bonds.
+   - `^TNX` and `^IRX`, the 10-year and 13-week Treasury yields. Note the scale Yahoo quotes them in, and document it.
+   - `BTC-USD`, if P3-0e hasn't already loaded it.
+   - GLD and DBB are already fetched for sector rotation. Reuse those bars.
+2. **Fields**, all computed on completed bars only:
+   - `dxy_close`, `dxy_return_20d`, `dxy_vs_sma50`
+   - `credit_ratio` (HYG/LQD close) and `credit_ratio_change_20d`. A rising ratio means spreads are tightening, a risk-on sign.
+   - `yield_10y`, `yield_3m`, `curve_10y_3m` (in percentage points) and `curve_change_20d`
+   - `copper_gold_ratio` (DBB/GLD) and `copper_gold_change_20d`
+   - `btc_return_20d` and `btc_vs_sma50`
+   - `macro_bar_date`, the latest common completed session
+3. **Missing data:** a failed series gives null fields and a warning. It never fails the harvest.
+4. **Health report:** add the `macro` keys to the scan-level section.
+5. **Harness:** expose the `macro.*` keys to the universe and crypto datasets as **conditioning columns only**. Don't add them to the pre-registered candidate list now; a later pre-registration update adds them once there are 6+ months of scans.
+6. **Tests:** real fixtures for each symbol, exact values on synthetic bars, a missing series gives null, and the yield-scale handling.
+
+Log only. No score, stage or label changes. No new dependencies.
+
 ## Not in scope
 - Changing any rule or score. That's Phase 3 proper, one PR per rule, after the harness runs on real data.
 - 2d (paid options flow). It's decided by the harness results.
