@@ -1,7 +1,9 @@
 /**
- * Yahoo fetch resilience, PLAN.md PR 1e: retry transient failures with
- * exponential backoff, and count calls / retries / failures per label for one
- * harvest run so the log shows which source is degrading.
+ * Fetch resilience, PLAN.md PR 1e (Yahoo) and S2 (Capitol Trades, StockTwits):
+ * retry transient failures with exponential backoff, honour a 429's Retry-After
+ * (up to 60 s), and count calls / retries / failures per label for one harvest
+ * run so the log shows which source is degrading. `withYahooRetry` is kept as an
+ * alias of `withRetry` so the 1e call sites are unchanged.
  *
  * Retryable: HTTP 429 and 5xx, timeouts and network resets. Not retryable:
  * 4xx other than 429 (unknown symbol, bad request) and parse/validation errors,
@@ -20,6 +22,33 @@ export interface RetryOptions {
 export const DEFAULT_RETRIES = 2;
 /** Override with YAHOO_RETRY_BASE_MS (the test config sets 0 so mocked failures don't sleep). */
 export const DEFAULT_BASE_DELAY_MS = 2_000;
+
+/** Longest Retry-After wait honoured (S2). */
+export const MAX_RETRY_AFTER_MS = 60_000;
+
+/** An HTTP failure carrying its status and any Retry-After, for fetch-based sources. */
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs: number | null = null,
+  ) {
+    super(`HTTP ${status}`);
+  }
+}
+
+/** Retry-After as milliseconds (delta-seconds or an HTTP date), capped at 60 s; null if absent or invalid. */
+export function parseRetryAfter(value: string | null | undefined, now: number = Date.now()): number | null {
+  if (!value) return null;
+  const v = value.trim();
+  const secs = /^\d+$/.test(v) ? Number(v) * 1000 : Date.parse(v) - now;
+  if (!Number.isFinite(secs) || secs < 0) return null;
+  return Math.min(secs, MAX_RETRY_AFTER_MS);
+}
+
+/** Throws an HttpError for a retryable response (429 / 5xx), with its Retry-After. */
+export function throwIfRetryable(res: { status: number; headers: { get(name: string): string | null } }): void {
+  if (isRetryableStatus(res.status)) throw new HttpError(res.status, parseRetryAfter(res.headers.get("retry-after")));
+}
 
 /** Status code from an HTTP error thrown by fetch wrappers or yahoo-finance2, if any. */
 function statusOf(err: unknown): number | null {
@@ -86,7 +115,7 @@ function defaultBaseDelayMs(): number {
  * Run `fn`, retrying transient Yahoo failures. Rethrows the last error once
  * retries are exhausted, or immediately for a non-retryable error.
  */
-export async function withYahooRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
   const { retries = DEFAULT_RETRIES, baseDelayMs = defaultBaseDelayMs(), label = "other" } = opts;
   bump(label, "calls");
   for (let attempt = 0; ; attempt++) {
@@ -98,7 +127,12 @@ export async function withYahooRetry<T>(fn: () => Promise<T>, opts: RetryOptions
         throw err;
       }
       bump(label, "retried");
-      if (baseDelayMs > 0) await sleep(backoffMs(attempt, baseDelayMs));
+      const retryAfter = err instanceof HttpError ? err.retryAfterMs : null;
+      const wait = Math.min(MAX_RETRY_AFTER_MS, Math.max(baseDelayMs > 0 ? backoffMs(attempt, baseDelayMs) : 0, retryAfter ?? 0));
+      if (wait > 0) await sleep(wait);
     }
   }
 }
+
+/** 1e name, kept so existing Yahoo call sites don't change. */
+export const withYahooRetry = withRetry;

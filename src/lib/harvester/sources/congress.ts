@@ -1,4 +1,5 @@
 import type { RawSignal } from "../types";
+import { throwIfRetryable, withRetry } from "@/lib/yahoo-retry";
 import { BLACKLIST } from "./ticker-utils";
 
 const CAPITOL_TRADES_URL = "https://www.capitoltrades.com/trades";
@@ -86,13 +87,21 @@ export async function fetchCongressSignals(): Promise<RawSignal[]> {
   console.log("Congress: fetching recent trades from Capitol Trades...");
 
   try {
-    const res = await fetch(CAPITOL_TRADES_URL, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    // S2: retry 429 / 5xx / network errors with backoff (Retry-After honoured, up to 60 s)
+    const res = await withRetry(
+      async () => {
+        const r = await fetch(CAPITOL_TRADES_URL, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+          },
+          signal: AbortSignal.timeout(15000),
+        });
+        throwIfRetryable(r);
+        return r;
       },
-      signal: AbortSignal.timeout(15000),
-    });
+      { label: "capitoltrades" },
+    );
 
     if (!res.ok) {
       console.warn(`Congress: Capitol Trades returned ${res.status}`);
