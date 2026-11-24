@@ -238,7 +238,7 @@ describe("SPY benchmark", () => {
 describe("report output", () => {
   const results = ["rs_vs_spy_20d", "rsi14", "politician_only_catalyst"].map((k) => evaluateFeature(fixture(), k));
   it("writes a markdown report with the comparison count and per-bucket tables", () => {
-    const md = markdownReport(results, { date: "2027-03-01", commit: "abc1234", rows: 2000, scans: 40 });
+    const md = markdownReport(results, { date: "2027-03-01", commit: "abc1234", rows: 2000, scans: 40, dataset: "signals" });
     expect(md).toContain("3 features tested (= 3 comparisons)");
     expect(md).toContain("## rs_vs_spy_20d: KEEP");
     expect(md).toMatch(/\| q5 ← \| \d+ \|/);
@@ -248,7 +248,7 @@ describe("report output", () => {
   it("appends one summary row in the experiment log's column layout", () => {
     const log = readFileSync(join(__dirname, "../../scripts/backtesting-experiments.md"), "utf8");
     const cols = log.split("\n").find((l) => l.startsWith("| # |"))!.split("|").length;
-    const row = experimentSummaryRow(results, { number: lastExperimentNumber(log) + 1, date: "2027-03-01", commit: "abc1234", rows: 2000, scans: 40, reportPath: "scripts/output/x.md" });
+    const row = experimentSummaryRow(results, { number: lastExperimentNumber(log) + 1, date: "2027-03-01", commit: "abc1234", rows: 2000, scans: 40, reportPath: "scripts/output/x.md", dataset: "signals" });
     expect(row.split("|").length).toBe(cols);
     expect(row).toContain(`| ${lastExperimentNumber(log) + 1} | 2027-03-01 | abc1234 |`);
     expect(row).toContain("| keep | rs_vs_spy_20d |");

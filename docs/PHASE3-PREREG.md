@@ -64,5 +64,24 @@ Every logged key below is tested once, on its own. That is **94 comparisons**.
 - STP triggers. They live in the `StpSignal` table, not in `features`, so they need their own pre-registered entry before they're tested.
 - The current Buy and Strong Buy labels. `scripts/calibrate-recommendation.ts` evaluates those.
 
+## Universe dataset (P3-0c): 36 comparisons, reported separately
+`scripts/validate-features.ts --dataset universe` runs the same rules on `UniverseSnapshot`: one row per universe member per session, about 1,485 a day. The two datasets are never pooled. Each gets its own report and its own experiment-log row.
+- **Outcomes:** the 1-, 3- and 7-day returns use the symbol's own snapshot closes at the 1st, 3rd and 7th trading session after the row's session, on the SPY trading calendar. SPY over the same sessions is the benchmark.
+- **Missing outcomes:** a session with no snapshot for that symbol leaves the outcome null. That covers a missed run or a symbol that dropped out. Nothing is interpolated.
+- **Look-ahead:** a row's session must be on or before its scan's date, and every outcome session must be strictly after the row's session. Either violation stops the run.
+- **Duplicates:** if two scans recorded the same session for a symbol, the earliest scan's row is kept.
+- **Keys tested** (other keys aren't in the snapshot):
+
+| Dataset family | n | Keys |
+|---|---|---|
+| universe: bar (1a) | 22 | atr14_pct, close_location, close_vs_month_open, close_vs_sma20, close_vs_sma50, close_vs_week_open, consecutive_up_days, hv20, nr4, nr7, pct_above_high_20d, pct_above_high_60d, range_vs_avg10, return_20d, rs_vs_spy_20d, rsi14, rsi14_max_20d, rsi14_min_20d, sma20_slope_5d, sma20_vs_sma50, spy_return_20d, volume_ratio_50d |
+| universe: stp states (1g) | 4 | stp_htf_opens, stp_ma_state, stp_well_bid, stp_size_factor |
+| universe: regime (1c, scan-level) | 10 | regime.spy_close_vs_sma20, regime.spy_above_sma20, regime.spy_sma20_slope_5d, regime.spy_distribution_days_25, regime.vix_close, regime.vix_vs_sma20, regime.vix_change_5d, regime.tlt_close_vs_sma20, regime.tlt_sma20_slope_5d, regime.tlt_above_sma20 |
+
+**36 comparisons.** At a nominal 5%, about 2 KEEPs could come from chance before the fold rule.
+- **Overlap is worse here.** The same about 1,485 tickers recur every session, so rows overlap more than in the signals dataset, and distinct tickers per bucket matter more.
+- **Regime values repeat.** The regime keys take one value per scan. Their buckets are really buckets of days, so expect fewer effective observations than n.
+- **Not in the snapshot:** the sector features (1f). They need each ticker's sector and industry, which the harvester has only for signal tickers.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

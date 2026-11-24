@@ -3,8 +3,9 @@
 // Refuses to run if any outcome is not strictly after its scan (look-ahead).
 //
 // Run (needs DATABASE_URL; fetches SPY daily closes from Yahoo):
-//   npx tsx scripts/validate-features.ts             # report + one experiment-log row
-//   npx tsx scripts/validate-features.ts --dry-run   # print the summary only, write nothing
+//   npx tsx scripts/validate-features.ts                       # signal tickers: report + one experiment-log row
+//   npx tsx scripts/validate-features.ts --dataset universe    # P3-0c universe snapshots (reported separately)
+//   npx tsx scripts/validate-features.ts --dry-run             # print the summary only, write nothing
 
 import "dotenv/config";
 import { execFileSync } from "node:child_process";
@@ -14,7 +15,9 @@ import { fetchYahooChart } from "@/lib/harvester/yahoo-chart";
 import { etParts, parseChartBars } from "@/lib/harvester/universe/bar-metrics";
 import { buildEvalRows, type SpyClose, type StoredTickerRow } from "@/lib/eval/dataset";
 import { candidateKeys, evaluateFeature } from "@/lib/eval/features";
-import { experimentSummaryRow, lastExperimentNumber, markdownReport } from "@/lib/eval/report";
+import { experimentSummaryRow, lastExperimentNumber, markdownReport, type DatasetName } from "@/lib/eval/report";
+import { buildUniverseRows, type StoredSnapshotRow } from "@/lib/eval/universe-dataset";
+import type { EvalRow } from "@/lib/eval/rules";
 
 const LOG_PATH = "scripts/backtesting-experiments.md";
 
@@ -59,23 +62,41 @@ async function loadRows(): Promise<StoredTickerRow[]> {
   }));
 }
 
+async function loadSnapshots(): Promise<StoredSnapshotRow[]> {
+  const snaps = await prisma.universeSnapshot.findMany({
+    select: { scanId: true, symbol: true, sessionDate: true, close: true, features: true, scan: { select: { startedAt: true, regimeFeatures: true } } },
+  });
+  return snaps.map((s) => ({
+    scanId: s.scanId,
+    scanStartedAt: s.scan.startedAt,
+    symbol: s.symbol,
+    sessionDate: s.sessionDate,
+    close: s.close,
+    features: (s.features as Record<string, unknown> | null) ?? null,
+    regimeFeatures: (s.scan.regimeFeatures as Record<string, unknown> | null) ?? null,
+  }));
+}
+
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
-  const [stored, spy] = await Promise.all([loadRows(), loadSpy()]);
-  const rows = buildEvalRows(stored, spy); // throws on look-ahead
+  const di = process.argv.indexOf("--dataset");
+  const dataset: DatasetName = di >= 0 && process.argv[di + 1] === "universe" ? "universe" : "signals";
+  const spy = await loadSpy();
+  // Both builders throw on look-ahead
+  const rows: EvalRow[] = dataset === "universe" ? buildUniverseRows(await loadSnapshots(), spy) : buildEvalRows(await loadRows(), spy);
   const scans = new Set(rows.map((r) => r.scanId)).size;
   const results = candidateKeys(rows).map((k) => evaluateFeature(rows, k));
   const date = new Date().toISOString().slice(0, 10);
   const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"]).toString().trim();
   const count = (v: string) => results.filter((r) => r.verdict === v).length;
-  console.log(`Phase 3: ${rows.length} rows, ${scans} scans, ${results.length} features: ${count("KEEP")} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT`);
+  console.log(`Phase 3 (${dataset} dataset): ${rows.length} rows, ${scans} scans, ${results.length} features: ${count("KEEP")} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT`);
   for (const r of results.filter((x) => x.verdict === "KEEP")) console.log(`  KEEP ${r.key}: ${r.reason}`);
   if (!dryRun) {
-    const reportPath = `scripts/output/phase3-validation-${date}.md`;
+    const reportPath = `scripts/output/phase3-validation-${dataset}-${date}.md`;
     mkdirSync("scripts/output", { recursive: true });
-    writeFileSync(reportPath, markdownReport(results, { date, commit, rows: rows.length, scans }));
+    writeFileSync(reportPath, markdownReport(results, { date, commit, rows: rows.length, scans, dataset }));
     const md = readFileSync(LOG_PATH, "utf8");
-    const row = experimentSummaryRow(results, { number: lastExperimentNumber(md) + 1, date, commit, rows: rows.length, scans, reportPath });
+    const row = experimentSummaryRow(results, { number: lastExperimentNumber(md) + 1, date, commit, rows: rows.length, scans, reportPath, dataset });
     appendFileSync(LOG_PATH, (md.endsWith("\n") ? "" : "\n") + row + "\n");
     console.log(`Report: ${reportPath}\nAppended experiment row to ${LOG_PATH}`);
   }

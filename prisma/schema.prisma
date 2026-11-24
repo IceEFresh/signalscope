@@ -48,6 +48,7 @@ model Scan {
   signals          Signal[]
   validatedTickers ValidatedTicker[]
   stpSignals       StpSignal[]
+  universeSnapshots UniverseSnapshot[]
 
   @@index([startedAt])
   @@index([status])
@@ -563,4 +564,21 @@ model StpSignal {
   @@unique([scanId, symbol])
   @@index([symbol])
   @@index([trigger])
+}
+
+/// P3-0c (docs/PHASE3-PREP.md): one row per universe member per scan, from data the harvester
+/// already computed (bar features 1a + STP states 1g). Log only: nothing reads it for a score,
+/// stage or label. Outcomes come from later snapshots of the same symbol.
+model UniverseSnapshot {
+  id          String   @id @default(cuid())
+  scanId      String
+  scan        Scan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  symbol      String
+  sessionDate String   // ET date (YYYY-MM-DD) of the completed bar the features describe
+  close       Float    // that bar's close
+  features    Json?
+  createdAt   DateTime @default(now())
+
+  @@unique([scanId, symbol])
+  @@index([symbol, sessionDate])
 }

@@ -94,6 +94,14 @@ export function fetchDailyChart(symbol: string, opts: ChartFetchOptions = {}): P
   return p;
 }
 
+/**
+ * The cached chart for `symbol` if this run already fetched it, else undefined.
+ * Never makes a request (P3-0c snapshots must add no network calls).
+ */
+export function peekDailyChart(symbol: string): Promise<ChartFetchResult> | undefined {
+  return chartCache.get(symbol);
+}
+
 export function clearChartCache(): void {
   chartCache.clear();
 }
