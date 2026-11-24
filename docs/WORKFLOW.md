@@ -32,6 +32,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 18. **S3: typecheck `scripts/` in CI.** `tsconfig.json` excludes `scripts/`, so a duplicate `const` in `run-harvest-remote.ts` passed CI on #37 and would have crashed the harvester. Add `tsconfig.scripts.json`, which extends the base config and includes `scripts/**/*.ts`, and run `npx tsc --noEmit -p tsconfig.scripts.json` in `ci.yml`. Fix whatever it finds. No runtime change.
 18b. **P3-0g: price-history backfill, runs before P3-0e and P3-0f** (spec: docs/PHASE3-PREP.md). No migration.
 19. **P3-0e: liquid crypto universe, log only** (spec: docs/PHASE3-PREP.md). Has a migration, so Chris merges.
+19b. **P3-0e2: CoinMarketCap as the second crypto-universe provider** (spec: P3-0e step 1b in docs/PHASE3-PREP.md). No migration.
 20. **P3-0f: macro context fields, log only** (spec: docs/PHASE3-PREP.md). No migration: they go in `Scan.regimeFeatures`.
 ## Builder loop, for each item
 
