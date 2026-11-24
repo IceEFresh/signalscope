@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { exclusionReason, fetchCoinGeckoMarkets, parseMarkets, type CoinMarket } from "@/lib/harvester/crypto/coingecko";
+import { fetchCoinGeckoMarkets, parseMarkets } from "@/lib/harvester/crypto/coingecko";
+import { exclusionReason, type CryptoListing } from "@/lib/harvester/crypto/listing";
 import {
   BTC_SYMBOL,
   CRYPTO_HV_SCALE,
@@ -23,7 +24,7 @@ import { markdownReport } from "@/lib/eval/report";
 import { analyzeScan, flagsFor, renderText } from "@/lib/health/harvest-health";
 
 const fx = (f: string) => JSON.parse(readFileSync(join(__dirname, "fixtures", f), "utf8")) as unknown;
-const coins: CoinMarket[] = [1, 2].flatMap((p) => parseMarkets(fx(`coingecko/markets-page${p}.json`)));
+const coins: CryptoListing[] = [1, 2].flatMap((p) => parseMarkets(fx(`coingecko/markets-page${p}.json`)));
 const coin = (id: string) => coins.find((c) => c.id === id)!;
 const btcChart = fx("crypto/chart-BTC-USD-3mo.json");
 const ethChart = fx("crypto/chart-ETH-USD-3mo.json");
@@ -70,7 +71,7 @@ describe("exclusion list", () => {
   });
 
   it("every $500M+ coin in the fixture priced within 2% of $1 is excluded (stablecoin catch-all)", () => {
-    const pegged = coins.filter((c) => (c.market_cap ?? 0) >= CRYPTO_RULE.minMarketCap && c.current_price != null && Math.abs(c.current_price - 1) < 0.02);
+    const pegged = coins.filter((c) => (c.marketCap ?? 0) >= CRYPTO_RULE.minMarketCap && c.price != null && Math.abs(c.price - 1) < 0.02);
     expect(pegged.length).toBeGreaterThan(10);
     expect(pegged.filter((c) => exclusionReason(c) == null).map((c) => c.id)).toEqual([]);
   });
@@ -137,7 +138,7 @@ describe("CoinGecko → Yahoo mapping", () => {
     const uni = { ...coin("uniswap") };
     const charts: Record<string, unknown> = { "BTC-USD": btcChart, "ETH-USD": ethChart, "UNI7083-USD": structuredClone(btcChart) };
     // UNI7083-USD stands in with BTC's bars at UNI's price
-    (charts["UNI7083-USD"] as { chart: { result: Array<{ meta: { regularMarketPrice: number } }> } }).chart.result[0].meta.regularMarketPrice = uni.current_price!;
+    (charts["UNI7083-USD"] as { chart: { result: Array<{ meta: { regularMarketPrice: number } }> } }).chart.result[0].meta.regularMarketPrice = uni.price!;
     const res = await buildCryptoUniverse({
       fetchMarkets: async () => [coin("bitcoin"), coin("ethereum"), coin("tether"), uni],
       fetchChart: async (s) => charts[s] ?? null,
@@ -170,7 +171,7 @@ describe("liquidity filters on fixture bars", () => {
     for (const k of ["open", "high", "low", "close"]) f[k] = f[k].map((v, i) => (v == null ? v : 60_000 * (1 + 0.0005 * (i % 2))));
     expect(evaluateCryptoCandidate(coin("bitcoin"), flat, NOW)).toMatchObject({ kind: "filtered", reason: expect.stringMatching(/ATR/) });
 
-    expect(evaluateCryptoCandidate({ ...coin("bitcoin"), market_cap: 4e8 }, btcChart, NOW)).toMatchObject({ kind: "filtered" });
+    expect(evaluateCryptoCandidate({ ...coin("bitcoin"), marketCap: 4e8 }, btcChart, NOW)).toMatchObject({ kind: "filtered" });
   });
 });
 
