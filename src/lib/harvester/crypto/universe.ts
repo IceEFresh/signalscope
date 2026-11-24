@@ -2,7 +2,7 @@
  * Weekly liquid-crypto universe (docs/PHASE3-PREP.md P3-0e). LOG ONLY: no score,
  * stage, label or recommendation reads crypto, and crypto never enters ValidatedTicker.
  *
- * CoinGecko top 500 → exclusions (stablecoins, wrapped, staked, IOUs, tokenized
+ * CoinGecko or CoinMarketCap top 500 (provider.ts) → exclusions (stablecoins, wrapped, staked, IOUs, tokenized
  * gold/funds) → Yahoo `<SYMBOL>-USD` chart → drop missing, stale or wrong-asset
  * charts → the stock rule's market cap, dollar-volume and volatility bars. No price
  * floor and no options rule.
@@ -14,7 +14,7 @@
 import { computeBarMetrics, parseChartBars, type DailyBar } from "../universe/bar-metrics";
 import { computeStp } from "../universe/stp";
 import { snapshotRow, type SnapshotRow } from "../universe/snapshot";
-import { exclusionReason, type CoinMarket } from "./coingecko";
+import { exclusionReason, type CryptoListing } from "./listing";
 
 export const CRYPTO_RULE = {
   minMarketCap: 500_000_000,
@@ -24,7 +24,7 @@ export const CRYPTO_RULE = {
   minHv20: 0.4,
   /** The last complete bar must be at most this many UTC days old. */
   maxStaleDays: 2,
-  /** Yahoo price within ±5% of CoinGecko's, else it's a different asset. */
+  /** Yahoo price within ±5% of the provider's, else it's a different asset. */
   maxPriceMismatch: 0.05,
 } as const;
 
@@ -36,8 +36,8 @@ export const BTC_SYMBOL = "BTC-USD";
 export const CRYPTO_HV_SCALE = Math.sqrt(365 / 252);
 const DAY_S = 86_400;
 
-/** First-choice Yahoo symbol for a CoinGecko coin; see searchAlternatives for Yahoo's numbered tickers. */
-export function yahooSymbolFor(c: Pick<CoinMarket, "symbol">): string {
+/** First-choice Yahoo symbol for a listing; see searchAlternatives for Yahoo's numbered tickers. */
+export function yahooSymbolFor(c: Pick<CryptoListing, "symbol">): string {
   return `${c.symbol.toUpperCase()}-USD`;
 }
 
@@ -85,12 +85,12 @@ function regularMarketPrice(json: unknown): number | null {
   return typeof p === "number" && Number.isFinite(p) && p > 0 ? p : null;
 }
 
-/** Decide one candidate from its CoinGecko row and Yahoo chart (null = chart missing). Pure. */
-export function evaluateCryptoCandidate(coin: CoinMarket, chart: unknown | null, now: Date, yahooSymbol = yahooSymbolFor(coin)): CryptoOutcome {
+/** Decide one candidate from its provider listing and Yahoo chart (null = chart missing). Pure. */
+export function evaluateCryptoCandidate(coin: CryptoListing, chart: unknown | null, now: Date, yahooSymbol = yahooSymbolFor(coin)): CryptoOutcome {
   const why = exclusionReason(coin);
   if (why) return { kind: "excluded", reason: why };
   const r = CRYPTO_RULE;
-  if (coin.market_cap == null || coin.market_cap < r.minMarketCap) return { kind: "filtered", reason: "market cap under $500M" };
+  if (coin.marketCap == null || coin.marketCap < r.minMarketCap) return { kind: "filtered", reason: "market cap under $500M" };
   const sym = yahooSymbol;
   if (chart == null) return { kind: "dropped", reason: `no Yahoo chart for ${sym}` };
   const bars = parseCryptoBars(chart, now);
@@ -100,10 +100,10 @@ export function evaluateCryptoCandidate(coin: CoinMarket, chart: unknown | null,
   const ageDays = Math.floor(now.getTime() / 1000 / DAY_S) - Math.floor(last.time / DAY_S);
   if (ageDays > r.maxStaleDays) return { kind: "dropped", reason: `Yahoo chart for ${sym} is stale (last bar ${utcDate(last.time)})` };
   const yPrice = regularMarketPrice(chart) ?? last.close;
-  if (coin.current_price == null || coin.current_price <= 0) return { kind: "dropped", reason: "no CoinGecko price to match against" };
-  const gap = Math.abs(yPrice / coin.current_price - 1);
+  if (coin.price == null || coin.price <= 0) return { kind: "dropped", reason: "no provider price to match against" };
+  const gap = Math.abs(yPrice / coin.price - 1);
   if (gap > r.maxPriceMismatch) {
-    return { kind: "dropped", reason: `price mismatch: Yahoo ${sym} ${yPrice} vs CoinGecko ${coin.id} ${coin.current_price} (${(gap * 100).toFixed(1)}%), likely a different asset` };
+    return { kind: "dropped", reason: `price mismatch: Yahoo ${sym} ${yPrice} vs ${coin.id} ${coin.price} (${(gap * 100).toFixed(1)}%), likely a different asset` };
   }
   const m = computeBarMetrics(bars);
   const hv20 = m.hv20 == null ? null : m.hv20 * CRYPTO_HV_SCALE;
@@ -113,7 +113,7 @@ export function evaluateCryptoCandidate(coin: CoinMarket, chart: unknown | null,
   if (!volOk) return { kind: "filtered", reason: "ATR% under 3% and HV20 under 40%" };
   return {
     kind: "member",
-    member: { symbol: sym, coingeckoId: coin.id, price: yPrice, marketCap: coin.market_cap, dollarVolume20d: dv, atrPct: m.atrPct, hv20 },
+    member: { symbol: sym, coingeckoId: coin.id, price: yPrice, marketCap: coin.marketCap, dollarVolume20d: dv, atrPct: m.atrPct, hv20 },
   };
 }
 
@@ -122,7 +122,7 @@ export function evaluateCryptoCandidate(coin: CoinMarket, chart: unknown | null,
  * From a Yahoo search response, the CRYPTOCURRENCY quotes `<SYMBOL><digits>-USD` for
  * this coin's own symbol. Each one still has to pass the price check.
  */
-export function searchAlternatives(coin: Pick<CoinMarket, "symbol">, searchJson: unknown): string[] {
+export function searchAlternatives(coin: Pick<CryptoListing, "symbol">, searchJson: unknown): string[] {
   const quotes = (searchJson as { quotes?: Array<{ symbol?: unknown; quoteType?: unknown }> } | null)?.quotes ?? [];
   const sym = coin.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const re = new RegExp(`^${sym}\\d+-USD$`);
@@ -132,7 +132,7 @@ export function searchAlternatives(coin: Pick<CoinMarket, "symbol">, searchJson:
 }
 
 export interface CryptoBuildDeps {
-  fetchMarkets: () => Promise<CoinMarket[]>;
+  fetchMarkets: () => Promise<CryptoListing[]>;
   /** Yahoo chart JSON for a symbol, or null when it's missing. */
   fetchChart: (symbol: string) => Promise<unknown | null>;
   /** Yahoo search JSON for a coin name; used only when `<SYMBOL>-USD` fails. */
@@ -156,7 +156,7 @@ export async function buildCryptoUniverse(deps: CryptoBuildDeps): Promise<Crypto
   const seen = new Set<string>();
   for (const c of coins) {
     // Charts only for coins that pass the cheap checks first.
-    const cheapFail = exclusionReason(c) != null || c.market_cap == null || c.market_cap < CRYPTO_RULE.minMarketCap;
+    const cheapFail = exclusionReason(c) != null || c.marketCap == null || c.marketCap < CRYPTO_RULE.minMarketCap;
     let res = cheapFail ? evaluateCryptoCandidate(c, null, now) : null;
     if (!res) {
       const sym = yahooSymbolFor(c);

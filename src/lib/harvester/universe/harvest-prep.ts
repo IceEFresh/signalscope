@@ -18,7 +18,7 @@ import { etParts } from "./bar-metrics";
 import { fetchOptionsRaw, normalizeChain, type NormalizedChain } from "../options-chain";
 import { computeOptionsFeatures, daysToExpiry, MIN_NEAR_DAYS, pickExpiry, type OptionsFeatures } from "./options-features";
 import { fetchDailyChart, fetchYahooChart } from "../yahoo-chart";
-import { fetchCoinGeckoMarkets } from "../crypto/coingecko";
+import { fetchCryptoListings } from "../crypto/provider";
 import { buildCryptoUniverse } from "../crypto/universe";
 import { buildUniverse, defaultDeps, evaluateSymbols, type UniverseBuildResult } from "./build";
 import { applyWatchResults, type ActiveWatchRow } from "./watch";
@@ -198,7 +198,7 @@ export function httpPrepDeps(universeUrl: string, apiKey: string): HarvestPrepDe
       // P3-0e: the crypto build never blocks the stock universe
       try {
         const crypto = await buildCryptoUniverse({
-          fetchMarkets: () => fetchCoinGeckoMarkets(),
+          fetchMarkets: async () => (await fetchCryptoListings()).listings,
           fetchChart: async (s) => {
             const r = await fetchDailyChart(s);
             return r.ok ? r.json : null;
