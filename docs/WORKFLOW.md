@@ -23,6 +23,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 10. Phase 2 item 2a (finish the open review)
 11. **S1: security fixes** (spec: docs/SECURITY-S1.md). Do this before 2b.
 12. Phase 2 items 2b to 2e
+13. Phase 3 item 3a: evaluation harness (Chris, 2026-11-24). Phase 3 runs start once about 4 weeks of post-1-0 scans exist.
 
 ## Builder loop, for each item
 

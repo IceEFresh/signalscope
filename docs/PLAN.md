@@ -111,6 +111,8 @@ Write the testing rules down before looking at results. With 17+ candidate featu
 
 Only then: promote winning features into `RECOMMENDATION_RULE_PATHS` or the opportunity score, one PR per rule change.
 
+**3a: evaluation harness (built 2026-11-24, before any results).** The rules above are code in `src/lib/eval/rules.ts`, the candidates are pre-registered in `src/lib/eval/candidates.ts` (one per log-only feature from Phases 1–2, plus the current Buy/Strong Buy labels as the reference), and `npx tsx scripts/phase3-evaluate.ts [--log]` runs them on liquid-universe rows only. Return vs SPY uses SPY's close before detection to its close before each return snapshot. "Beats the baseline" means higher mean excess return *and* higher hit rate than all eligible rows in the same window. [Assumption] A walk-forward fold with fewer than 30 test rows counts as a failed fold. Changing a rule constant or a candidate threshold after seeing results needs its own PR and experiment-log entry.
+
 ## Phase 4: Execution (after Phase 3)
 
 Add arms to paper trading, each a separate strategy on the same signals:
