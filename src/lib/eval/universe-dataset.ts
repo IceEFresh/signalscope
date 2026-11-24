@@ -14,6 +14,10 @@
  * P3-0g: backfilled rows (features.backfill = true) form their own dataset and are
  * never pooled with live rows. `backfill: false` (the universe dataset) drops them;
  * `backfill: true` keeps only them.
+ *
+ * P3-0e: crypto rows (assetClass "crypto") are a third dataset, never pooled. Their
+ * calendar is the BTC row's sessions (UTC dates seen by the weekday harvest), so the
+ * 1/3/7-day horizons count snapshot sessions, and BTC is the benchmark.
  */
 import { etParts } from "@/lib/harvester/universe/bar-metrics";
 import { isBackfillFeatures } from "@/lib/harvester/universe/backfill";
@@ -29,12 +33,24 @@ export interface StoredSnapshotRow {
   close: number;
   features: Record<string, unknown> | null;
   regimeFeatures: Record<string, unknown> | null;
+  /** P3-0e: "crypto" for crypto rows; null/undefined/"stock" = stock. */
+  assetClass?: string | null;
+}
+
+export interface UniverseDatasetOptions {
+  /** P3-0g: backfilled rows only (true) or live rows only (false, default). */
+  backfill?: boolean;
+  /** P3-0e: crypto rows only (true) or stock rows only (false, default). */
+  crypto?: boolean;
+  /** Benchmark symbol, left out of the rows and used for excess returns. Default SPY. */
+  benchmark?: string;
 }
 
 const OFFSET: Record<Horizon, number> = { "1d": 1, "3d": 3, "7d": 7 };
 
-export function buildUniverseRows(rowsIn: readonly StoredSnapshotRow[], spy: readonly SpyClose[], opts: { backfill: boolean } = { backfill: false }): EvalRow[] {
-  const rows = rowsIn.filter((r) => isBackfillFeatures(r.features) === opts.backfill);
+export function buildUniverseRows(rowsIn: readonly StoredSnapshotRow[], spy: readonly SpyClose[], opts: UniverseDatasetOptions = {}): EvalRow[] {
+  const benchmark = opts.benchmark ?? BENCHMARK_SYMBOL;
+  const rows = rowsIn.filter((r) => isBackfillFeatures(r.features) === !!opts.backfill && (r.assetClass === "crypto") === !!opts.crypto);
   const calendar = [...new Set(spy.map((c) => c.date))].sort();
   const pos = new Map(calendar.map((d, i) => [d, i]));
   const spyClose = new Map(spy.map((c) => [c.date, c.close]));
@@ -59,7 +75,7 @@ export function buildUniverseRows(rowsIn: readonly StoredSnapshotRow[], spy: rea
 
   const out: EvalRow[] = [];
   for (const r of unique) {
-    if (r.symbol === BENCHMARK_SYMBOL) continue;
+    if (r.symbol === benchmark) continue;
     const i = pos.get(r.sessionDate);
     const ret: Partial<Record<Horizon, number | null>> = {};
     const excess: Partial<Record<Horizon, number | null>> = {};

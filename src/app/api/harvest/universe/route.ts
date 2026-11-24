@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     const profiles = universe ? await loadUniverseProfiles(universe.id) : {};
     return NextResponse.json({
       universe: universe
-        ? { id: universe.id, refreshedAt: universe.refreshedAt.toISOString(), symbols: [...universe.symbols].sort(), profiles }
+        ? { id: universe.id, refreshedAt: universe.refreshedAt.toISOString(), symbols: [...universe.symbols].sort(), profiles, crypto: universe.crypto }
         : null,
       watch,
     });
@@ -43,6 +43,20 @@ const buildSchema = z.object({
       industry: z.string().max(100).nullable().optional(),
     }),
   ),
+  // P3-0e: crypto members built alongside; older harvesters omit this
+  crypto: z
+    .array(
+      z.object({
+        symbol: z.string().min(1).max(20),
+        coingeckoId: z.string().min(1).max(100),
+        price: n,
+        marketCap: n,
+        dollarVolume20d: n,
+        atrPct: n,
+        hv20: n,
+      }),
+    )
+    .optional(),
 });
 
 /** Store a weekly universe build computed by the harvester. */
@@ -53,7 +67,7 @@ export async function POST(req: NextRequest) {
 
     const parsed = buildSchema.parse(await req.json());
     const id = await saveUniverse({ ...parsed, rule: UNIVERSE_RULE });
-    console.log(`[harvest/universe] Stored universe ${id} with ${parsed.members.length} members`);
+    console.log(`[harvest/universe] Stored universe ${id} with ${parsed.members.length} members, ${parsed.crypto?.length ?? 0} crypto`);
     return NextResponse.json({ id, memberCount: parsed.members.length });
   } catch (err) {
     return handleApiError(err, "harvest/universe POST");

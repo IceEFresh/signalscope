@@ -26,9 +26,12 @@ export type TickerFamily = (typeof TICKER_FAMILIES)[number];
 /** Families written only for some tickers. */
 export const CONDITIONAL_FAMILIES: ReadonlySet<TickerFamily> = new Set(["opt", "alp", "politician", "reddit", "insider"]);
 
+/** P3-0e: crypto rows carry the SPY-comparison bar keys under BTC names. */
+const CRYPTO_BAR_KEYS = new Set(["btc_return_20d", "rs_vs_btc_20d"]);
+
 export function familyOf(key: string): TickerFamily | null {
   if (key.startsWith("stp_")) return "stp";
-  if (BAR_KEYS.has(key)) return "bar";
+  if (BAR_KEYS.has(key) || CRYPTO_BAR_KEYS.has(key)) return "bar";
   if (EARNINGS_KEYS.has(key)) return "earnings";
   if (SECTOR_KEYS.has(key)) return "sector";
   for (const p of ["opt", "alp", "politician", "reddit", "insider", "shadow_ai"] as const) if (key.startsWith(`${p}_`)) return p;
@@ -45,6 +48,9 @@ export interface ScanInput {
   tickers: Array<Record<string, unknown> | null>; // ValidatedTicker.features per ticker
   /** P3-0c UniverseSnapshot features for this scan (loaded for the latest scan only). */
   snapshot?: Array<Record<string, unknown> | null>;
+  /** P3-0e: crypto snapshot features for this scan and the universe's crypto member count (latest scan only). */
+  cryptoSnapshot?: Array<Record<string, unknown> | null>;
+  cryptoMembers?: number | null;
 }
 
 export interface KeyStats {
@@ -69,6 +75,8 @@ export interface ScanReport {
   families: Record<TickerFamily, FamilyStats>;
   /** P3-0c: snapshot row count and per-family stats, when loaded. */
   snapshot?: { rows: number; families: Record<TickerFamily, FamilyStats> };
+  /** P3-0e: crypto members, rows in this snapshot, and per-family stats. */
+  crypto?: { members: number | null; rows: number; families: Record<TickerFamily, FamilyStats> };
 }
 
 const isNull = (v: unknown) => v === null || v === undefined || (typeof v === "number" && !Number.isFinite(v));
@@ -125,6 +133,9 @@ export function analyzeScan(scan: ScanInput): ScanReport {
     },
     families,
     ...(scan.snapshot ? { snapshot: { rows: scan.snapshot.length, families: familyStats(scan.snapshot) } } : {}),
+    ...(scan.cryptoSnapshot
+      ? { crypto: { members: scan.cryptoMembers ?? null, rows: scan.cryptoSnapshot.length, families: familyStats(scan.cryptoSnapshot) } }
+      : {}),
   };
 }
 
@@ -152,6 +163,14 @@ export function flagsFor(reports: readonly ScanReport[]): Flag[] {
     for (const f of ["bar", "stp"] as const)
       for (const [k, st] of Object.entries(latest.snapshot.families[f].keys))
         if (st.nullRate >= 1) flags.push({ level: "warn", message: `snapshot ${f}.${k} is 100% null in the latest scan` });
+  }
+  if (latest.crypto) {
+    const c = latest.crypto;
+    if (c.members != null && c.members > 0 && c.rows === 0) flags.push({ level: "warn", message: `crypto snapshot missing (${c.members} crypto members, no rows)` });
+    else if (c.members === 0) flags.push({ level: "info", message: "crypto universe empty (no crypto members stored with this universe)" });
+    for (const f of ["bar", "stp"] as const)
+      for (const [k, st] of Object.entries(c.families[f].keys))
+        if (c.rows > 0 && st.nullRate >= 1) flags.push({ level: "warn", message: `crypto ${f}.${k} is 100% null in the latest scan` });
   }
   for (const f of TICKER_FAMILIES) {
     const fam = latest.families[f];
@@ -195,6 +214,13 @@ export function renderText(reports: readonly ScanReport[], flags: readonly Flag[
     out.push("", `[universe snapshot] ${sn.rows} rows; coverage bar ${pct(sn.families.bar.coverage)}, stp ${pct(sn.families.stp.coverage)}, sector ${pct(sn.families.sector.coverage)}`);
     for (const f of ["bar", "stp", "sector"] as const)
       for (const [k, st] of Object.entries(sn.families[f].keys).sort(([a], [b]) => a.localeCompare(b)))
+        out.push(`  ${k.padEnd(34)} null ${pct(st.nullRate).padStart(4)}  min ${fmt(st.min)}  med ${fmt(st.median)}  max ${fmt(st.max)}`);
+  }
+  if (latest.crypto) {
+    const c = latest.crypto;
+    out.push("", `[crypto] ${c.members ?? "?"} members, ${c.rows} snapshot rows; coverage bar ${pct(c.families.bar.coverage)}, stp ${pct(c.families.stp.coverage)}`);
+    for (const f of ["bar", "stp"] as const)
+      for (const [k, st] of Object.entries(c.families[f].keys).sort(([a], [b]) => a.localeCompare(b)))
         out.push(`  ${k.padEnd(34)} null ${pct(st.nullRate).padStart(4)}  min ${fmt(st.min)}  med ${fmt(st.median)}  max ${fmt(st.max)}`);
   }
   out.push("", flags.length ? "Flags:" : "Flags: none");

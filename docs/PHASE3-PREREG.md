@@ -95,5 +95,18 @@ Every logged key below is tested once, on its own. That is **94 comparisons**.
 **26 comparisons.** At a nominal 5%, about 1 KEEP could come from chance before the fold rule.
 - **More rows, same overlap problem.** About 1,500 tickers over about 500 sessions, so n will be large; the 7-day windows overlap heavily, and distinct tickers and the fold rule matter more than n.
 
+## Crypto dataset (P3-0e): 26 comparisons, reported separately
+`scripts/validate-features.ts --dataset crypto` runs the same rules on the `UniverseSnapshot` rows with `assetClass = "crypto"`: one row per crypto universe member per harvest. It's never pooled with the signals, universe or backfill datasets, and it gets its own report and experiment-log row.
+- **Sessions:** a crypto row's `sessionDate` is the UTC date of the last complete daily bar (00:00–24:00 UTC). The harvest runs on weekdays at 8:30 AM ET, so Monday's row describes Sunday's bar, Tuesday's describes Monday's, and so on to Friday's, which describes Thursday's. Friday's and Saturday's bars are never stored.
+- **Calendar and horizons:** the calendar is the BTC row's sessions. The 1-, 3- and 7-day horizons count snapshot sessions (5 per week), not calendar days: a 7-day outcome is the 7th later stored session, about 9–10 calendar days.
+- **Outcomes and benchmark:** the token's own close at that later session. BTC over the same sessions is the benchmark, from the BTC row; BTC itself is not a test row.
+- **Missing outcomes, look-ahead, duplicates:** as in the universe dataset. A row's session must be on or before its scan's ET date, and every outcome session must be strictly after it.
+- **Keys tested:** the 22 bar keys of the universe dataset, with `spy_return_20d` and `rs_vs_spy_20d` replaced by `btc_return_20d` and `rs_vs_btc_20d`, plus the 4 STP-state keys. There are no sector, regime, insider, Congress, earnings or options features for crypto.
+
+**26 comparisons.** At a nominal 5%, about 1 KEEP could come from chance before the fold rule.
+- **Small universe.** About 40 members on the first dry run (95 CoinGecko coins clear $500M, and about 25 of those are stablecoins, wrapped, staked, gold or fund tokens), so expect INSUFFICIENT for months: 100 held-out rows in one bucket needs about 500 held-out rows.
+- **Correlated rows.** Most tokens move with BTC, so rows within a session are far from independent even after subtracting BTC.
+- **Weekday bars only in the calendar,** but the bar features themselves use all 7 daily bars (SMA20 covers 20 calendar days, not 4 weeks of sessions). `hv20` on crypto rows annualizes with √365 (crypto trades every day; Chris, PR #45), in both the feature and the universe filter. Stock rows keep √252. The datasets are never pooled, so the two scales are never compared.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

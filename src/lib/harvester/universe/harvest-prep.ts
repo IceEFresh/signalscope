@@ -17,7 +17,9 @@ import { computeSectorRotation, ROTATION_ETFS, type SectorRotation } from "./sec
 import { etParts } from "./bar-metrics";
 import { fetchOptionsRaw, normalizeChain, type NormalizedChain } from "../options-chain";
 import { computeOptionsFeatures, daysToExpiry, MIN_NEAR_DAYS, pickExpiry, type OptionsFeatures } from "./options-features";
-import { fetchDailyChart } from "../yahoo-chart";
+import { fetchDailyChart, fetchYahooChart } from "../yahoo-chart";
+import { fetchCoinGeckoMarkets } from "../crypto/coingecko";
+import { buildCryptoUniverse } from "../crypto/universe";
 import { buildUniverse, defaultDeps, evaluateSymbols, type UniverseBuildResult } from "./build";
 import { applyWatchResults, type ActiveWatchRow } from "./watch";
 
@@ -26,7 +28,7 @@ export const UNIVERSE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export type MemberProfiles = Record<string, { sector: string | null; industry: string | null }>;
 
 export interface UniverseState {
-  universe: { id: string; refreshedAt: string; symbols: string[]; profiles?: MemberProfiles } | null;
+  universe: { id: string; refreshedAt: string; symbols: string[]; profiles?: MemberProfiles; crypto?: string[] } | null;
   watch: ActiveWatchRow[];
 }
 
@@ -35,6 +37,8 @@ export interface HarvestPrep {
   scanSymbols: readonly string[];
   /** P3-0d: sector and industry per universe member (empty with the static fallback or an old universe). */
   profiles: MemberProfiles;
+  /** P3-0e: crypto members for the snapshot (log only, never scanned). */
+  cryptoSymbols: string[];
   watch: ActiveWatchRow[];
 }
 
@@ -84,6 +88,7 @@ export async function prepareHarvest(deps: HarvestPrepDeps): Promise<HarvestPrep
         profiles: Object.fromEntries(
           build.members.filter((m) => m.sector || m.industry).map((m) => [m.symbol, { sector: m.sector ?? null, industry: m.industry ?? null }]),
         ),
+        crypto: build.crypto?.map((c) => c.symbol) ?? [],
       };
     } catch (err) {
       console.warn("[universe] rebuild failed, keeping the previous universe:", err instanceof Error ? err.message : err);
@@ -92,9 +97,9 @@ export async function prepareHarvest(deps: HarvestPrepDeps): Promise<HarvestPrep
 
   if (!universe || universe.symbols.length === 0) {
     console.warn(`[universe] none available, falling back to static SCAN_SYMBOLS (${SCAN_SYMBOLS.length})`);
-    return { universeId: null, scanSymbols: SCAN_SYMBOLS, profiles: {}, watch: state.watch };
+    return { universeId: null, scanSymbols: SCAN_SYMBOLS, profiles: {}, cryptoSymbols: universe?.crypto ?? [], watch: state.watch };
   }
-  return { universeId: universe.id, scanSymbols: universe.symbols, profiles: universe.profiles ?? {}, watch: state.watch };
+  return { universeId: universe.id, scanSymbols: universe.symbols, profiles: universe.profiles ?? {}, cryptoSymbols: universe.crypto ?? [], watch: state.watch };
 }
 
 export interface IngestExtras {
@@ -188,7 +193,27 @@ export function httpPrepDeps(universeUrl: string, apiKey: string): HarvestPrepDe
       if (!res.ok) throw new Error(`GET ${universeUrl} returned ${res.status}`);
       return (await res.json()) as UniverseState;
     },
-    build: () => buildUniverse(),
+    build: async () => {
+      const stock = await buildUniverse();
+      // P3-0e: the crypto build never blocks the stock universe
+      try {
+        const crypto = await buildCryptoUniverse({
+          fetchMarkets: () => fetchCoinGeckoMarkets(),
+          fetchChart: async (s) => {
+            const r = await fetchDailyChart(s);
+            return r.ok ? r.json : null;
+          },
+          searchYahoo: async (q) => {
+            const r = await fetchYahooChart(`https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`);
+            return r.ok ? r.json : null;
+          },
+        });
+        return { ...stock, crypto: crypto.members };
+      } catch (err) {
+        console.warn("[crypto-universe] build failed, stock universe stored without crypto:", err instanceof Error ? err.message : err);
+        return stock;
+      }
+    },
     postBuild: async (build) => {
       const res = await fetch(universeUrl, {
         method: "POST",
@@ -197,6 +222,7 @@ export function httpPrepDeps(universeUrl: string, apiKey: string): HarvestPrepDe
           directoryCount: build.directoryCount,
           prefilterCount: build.prefilterCount,
           members: build.members,
+          crypto: build.crypto,
         }),
         signal: AbortSignal.timeout(60_000),
       });

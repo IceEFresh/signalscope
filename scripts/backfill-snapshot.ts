@@ -123,6 +123,7 @@ async function main() {
           sessionDate: r.sessionDate,
           close: r.close,
           features: r.features as Prisma.InputJsonValue,
+          assetClass: "stock",
         })),
         skipDuplicates: true, // never overwrite: a (scanId, symbol) conflict is skipped
       });

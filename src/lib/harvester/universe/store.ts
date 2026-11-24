@@ -17,15 +17,27 @@ export const MIN_UNIVERSE_SIZE = 50;
 export interface LoadedUniverse {
   id: string;
   refreshedAt: Date;
+  /** Stock members only: these are what a scan covers. */
   symbols: Set<string>;
+  /** P3-0e: crypto members (Yahoo symbols), snapshot only; never scanned. */
+  crypto: string[];
 }
 
+/** P3-0e: a member is a stock unless marked crypto (null = stock, rows before P3-0e). */
+export const STOCK_MEMBER = { OR: [{ assetClass: null }, { assetClass: "stock" }] };
+
 export async function loadUniverse(id?: string | null): Promise<LoadedUniverse | null> {
+  const include = { members: { select: { symbol: true, assetClass: true } } };
   const u = id
-    ? await prisma.universe.findUnique({ where: { id }, include: { members: { select: { symbol: true } } } })
-    : await prisma.universe.findFirst({ orderBy: { refreshedAt: "desc" }, include: { members: { select: { symbol: true } } } });
+    ? await prisma.universe.findUnique({ where: { id }, include })
+    : await prisma.universe.findFirst({ orderBy: { refreshedAt: "desc" }, include });
   if (!u) return null;
-  return { id: u.id, refreshedAt: u.refreshedAt, symbols: new Set(u.members.map((m) => m.symbol)) };
+  return {
+    id: u.id,
+    refreshedAt: u.refreshedAt,
+    symbols: new Set(u.members.filter((m) => m.assetClass !== "crypto").map((m) => m.symbol)),
+    crypto: u.members.filter((m) => m.assetClass === "crypto").map((m) => m.symbol).sort(),
+  };
 }
 
 export type UniverseProfiles = Record<string, { sector: string | null; industry: string | null }>;
@@ -33,7 +45,7 @@ export type UniverseProfiles = Record<string, { sector: string | null; industry:
 /** P3-0d: sector and industry for each member that has a profile. */
 export async function loadUniverseProfiles(universeId: string): Promise<UniverseProfiles> {
   const rows = await prisma.universeMember.findMany({
-    where: { universeId, OR: [{ sector: { not: null } }, { industry: { not: null } }] },
+    where: { universeId, AND: [STOCK_MEMBER, { OR: [{ sector: { not: null } }, { industry: { not: null } }] }] },
     select: { symbol: true, sector: true, industry: true },
   });
   return Object.fromEntries(rows.map((r) => [r.symbol, { sector: r.sector, industry: r.industry }]));
@@ -48,8 +60,15 @@ export async function saveUniverse(build: UniverseBuildResult): Promise<string> 
       rule: build.rule as unknown as Prisma.InputJsonValue,
       directoryCount: build.directoryCount,
       prefilterCount: build.prefilterCount,
-      memberCount: build.members.length,
-      members: { createMany: { data: build.members } },
+      memberCount: build.members.length, // stock members; crypto members are counted by assetClass
+      members: {
+        createMany: {
+          data: [
+            ...build.members.map((m) => ({ ...m, assetClass: "stock" })),
+            ...(build.crypto ?? []).map((c) => ({ ...c, hasOptions: false, assetClass: "crypto" })),
+          ],
+        },
+      },
     },
   });
   return u.id;

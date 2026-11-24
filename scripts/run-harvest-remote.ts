@@ -4,6 +4,8 @@ import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
 import { yahooHealthSummary } from "../src/lib/yahoo-retry.js";
 import { computeAlpacaOptionsExtras } from "../src/lib/harvester/alpaca-options.js";
 import { chunk, computeSnapshotRows, type SnapshotRow } from "../src/lib/harvester/universe/snapshot.js";
+import { computeCryptoSnapshotRows } from "../src/lib/harvester/crypto/universe.js";
+import { fetchDailyChart } from "../src/lib/harvester/yahoo-chart.js";
 import {
   computeIngestExtras,
   computeStpExtras,
@@ -119,6 +121,14 @@ async function main() {
     `[snapshot] ${snapshot.rows.length} rows built, ${snapshot.missing} symbols without a cached chart, ${Object.keys(prep.profiles).length} members with a sector profile`,
   );
 
+  // 1e''. Crypto snapshot rows for the weekly crypto universe (P3-0e, log only): one 3-month chart each,
+  // complete UTC days only, BTC as the benchmark. Never enters the signal payload or ValidatedTicker.
+  const cryptoSnapshot = await computeCryptoSnapshotRows(prep.cryptoSymbols, async (s) => {
+    const r = await fetchDailyChart(s);
+    return r.ok ? r.json : null;
+  });
+  if (prep.cryptoSymbols.length) console.log(`[snapshot] crypto: ${cryptoSnapshot.rows.length} rows built, ${cryptoSnapshot.missing} without a chart`);
+
   // 1f. Option-chain features for signal symbols (PLAN.md 1h, log only)
   const optionSymbols = Object.keys(extras.barMetrics).filter((s) => signals.some((sig) => sig.symbol === s));
   const optionsFeatures = await computeOptionsExtras(
@@ -165,7 +175,7 @@ async function main() {
   try {
     const result = await postSignals(payload);
     console.log(`Scan completed remotely: ${result.scanId}`);
-    await postSnapshot(result.scanId, snapshot.rows);
+    await postSnapshot(result.scanId, [...snapshot.rows, ...cryptoSnapshot.rows]);
   } catch (err) {
     console.warn(`First attempt failed: ${err instanceof Error ? err.message : err}`);
     console.log("Retrying in 5 seconds...");
@@ -174,7 +184,7 @@ async function main() {
     try {
       const result = await postSignals(payload);
       console.log(`Scan completed remotely (retry): ${result.scanId}`);
-      await postSnapshot(result.scanId, snapshot.rows);
+      await postSnapshot(result.scanId, [...snapshot.rows, ...cryptoSnapshot.rows]);
     } catch (retryErr) {
       console.error(`Retry failed: ${retryErr instanceof Error ? retryErr.message : retryErr}`);
 

@@ -15,7 +15,7 @@ export async function writeSnapshotRows(
   let inserted = 0;
   for (const part of chunk(rows, SNAPSHOT_BATCH)) {
     const res = await db.createMany({
-      data: part.map((r) => ({ scanId, symbol: r.symbol, sessionDate: r.sessionDate, close: r.close, features: r.features as Prisma.InputJsonValue })),
+      data: part.map((r) => ({ scanId, symbol: r.symbol, sessionDate: r.sessionDate, close: r.close, features: r.features as Prisma.InputJsonValue, assetClass: r.assetClass ?? "stock" })),
       skipDuplicates: true,
     });
     inserted += res.count;
