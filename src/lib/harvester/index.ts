@@ -18,6 +18,7 @@ import { assessScanRegime } from "./regime-filter";
 import { computeOpportunityScore } from "./opportunity-score";
 import { computeEarningsFeatures } from "./earnings-features";
 import { annotateInsiderClasses, insiderClassFeatures } from "./insider-class";
+import { featureCoverageLine } from "@/lib/health/harvest-health";
 import { redditPostTypeFeatures } from "./reddit-post-type";
 import { politicianFeatures } from "./politician-features";
 import { tickerSectorFeatures, unmappedIndustries, type SectorRotation } from "./universe/sector-rotation";
@@ -1067,6 +1068,12 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
 
       await tx.validatedTicker.createMany({ data: tickerDataList, skipDuplicates: true });
       await tx.scan.update({ where: { id: scan.id }, data: scanUpdateData });
+      // P3-0a: one line per ingest showing which log-only feature families were written
+      try {
+        console.log(featureCoverageLine(tickerDataList.map((t) => (t as { features?: Record<string, unknown> | null }).features ?? null)));
+      } catch {
+        // a report line must never fail an ingest
+      }
     },
       { timeout: 30000 }
     );
