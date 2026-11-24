@@ -2,6 +2,7 @@ import "dotenv/config";
 import { fetchSignals } from "../src/lib/harvester/index.js";
 import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
 import { yahooHealthSummary } from "../src/lib/yahoo-retry.js";
+import { computeAlpacaOptionsExtras } from "../src/lib/harvester/alpaca-options.js";
 import {
   computeIngestExtras,
   computeStpExtras,
@@ -80,10 +81,21 @@ async function main() {
   const sectorRotation = await computeSectorExtras();
 
   // 1f. Option-chain features for signal symbols (PLAN.md 1h, log only)
+  const optionSymbols = Object.keys(extras.barMetrics).filter((s) => signals.some((sig) => sig.symbol === s));
   const optionsFeatures = await computeOptionsExtras(
-    Object.keys(extras.barMetrics).filter((s) => signals.some((sig) => sig.symbol === s)),
+    optionSymbols,
     Object.fromEntries(Object.entries(extras.barMetrics).map(([s, m]) => [s, m.hv20])),
   );
+
+  // 1g. Alpaca option snapshots and large prints for the same symbols (PLAN.md 2e, log only),
+  // for the last completed session; merged into the 1h option features
+  const alpacaOptions = await computeAlpacaOptionsExtras(optionSymbols, regime.spy_bar_date);
+  for (const [s, f] of Object.entries(alpacaOptions)) {
+    (optionsFeatures as Record<string, Record<string, number | null>>)[s] = {
+      ...((optionsFeatures as Record<string, Record<string, number | null>>)[s] ?? {}),
+      ...f,
+    };
+  }
   const fetchElapsed = ((Date.now() - fetchStart) / 1000).toFixed(1);
   console.log(`[trace] Fetch completed in ${fetchElapsed}s — ${signals.length} signals`);
 
