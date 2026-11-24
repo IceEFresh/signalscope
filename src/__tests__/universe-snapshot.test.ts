@@ -125,8 +125,8 @@ describe("universe dataset outcomes", () => {
     const md = readFileSync(join(__dirname, "../../docs/PHASE3-PREREG.md"), "utf8");
     const uni = [...md.matchAll(/^\| universe: [^|]+\| (\d+) \| ([^|]+) \|$/gm)];
     const keys = uni.flatMap((m) => m[2].split(",").map((k) => k.trim()));
-    expect(uni.reduce((s, m) => s + Number(m[1]), 0)).toBe(36);
-    expect(md).toContain("**36 comparisons.**");
+    expect(uni.reduce((s, m) => s + Number(m[1]), 0)).toBe(43);
+    expect(md).toContain("**43 comparisons.**");
     const row: EvalRow = { scanId: "s", scanStart: new Date(), symbol: "X", ret: {}, excess: {}, attrs: Object.fromEntries(keys.map((k) => [k, 1])) };
     expect(candidateKeys([row]).sort()).toEqual([...keys].sort());
   });
@@ -143,7 +143,7 @@ describe("health report: universe snapshot section", () => {
     const r = analyzeScan(base({ snapshot: Array.from({ length: 950 }, () => feats) }));
     expect(r.snapshot!.rows).toBe(950);
     const text = renderText([r], flagsFor([r]));
-    expect(text).toMatch(/\[universe snapshot\] 950 rows; coverage bar 100%, stp 100%/);
+    expect(text).toMatch(/\[universe snapshot\] 950 rows; coverage bar 100%, stp 100%, sector 0%/);
   });
 
   it("flags a missing or short snapshot", () => {
@@ -153,5 +153,80 @@ describe("health report: universe snapshot section", () => {
     expect(flagsFor([analyzeScan(base({ snapshot: Array.from({ length: 500 }, () => feats) }))]).map((f) => f.message)).toContain(
       "universe snapshot has 500 rows for a universe of 1000 (under 90%)",
     );
+  });
+});
+
+// ── P3-0d: sector features from the weekly profile ────────────────────────────
+import { buildUniverse } from "@/lib/harvester/universe/build";
+import { prepareHarvest } from "@/lib/harvester/universe/harvest-prep";
+import type { SectorRotation } from "@/lib/harvester/universe/sector-rotation";
+
+describe("P3-0d sector features", () => {
+  const rotation: SectorRotation = {
+    version: 1,
+    bar_date: "2026-11-20",
+    sectors: [{ sector: "Technology", etf: "XLK", stats: {} as never, rank_20d: 2, rank_20d_4w_ago: 5, rank_change_4w: 3, rank_wtd: 1 }],
+    etfs: {
+      XLK: { return_20d: 0.01, return_60d: null, rs_vs_spy_20d: null, rs_vs_spy_60d: null, rs_vs_spy_20d_4w_ago: null, wtd: null, mtd: null, day: null },
+      SMH: { return_20d: 0.03, return_60d: null, rs_vs_spy_20d: null, rs_vs_spy_60d: null, rs_vs_spy_20d_4w_ago: null, wtd: null, mtd: null, day: null },
+    },
+  };
+  const cache: Record<string, unknown> = { AMD: raw("chart-AMD-3mo.json"), SPY: raw("chart-SPY-3mo.json") };
+  const peek = (s: string) => (cache[s] ? Promise.resolve({ ok: true as const, json: cache[s] }) : undefined);
+
+  it("adds the 1f keys from the member's profile and this run's rotation, with the universe industry count", async () => {
+    const profiles = {
+      AMD: { sector: "Technology", industry: "Semiconductors" },
+      NVDA: { sector: "Technology", industry: "Semiconductors" },
+      KO: { sector: "Consumer Defensive", industry: "Beverages—Non-Alcoholic" },
+    };
+    const { rows } = await computeSnapshotRows(["AMD"], {}, peek, { profiles, rotation });
+    const amd = rows.find((r) => r.symbol === "AMD")!;
+    const r20 = amd.features.return_20d as number;
+    expect(amd.features).toMatchObject({
+      sector_etf: "XLK",
+      industry_etf: "SMH",
+      sector_rank_20d: 2,
+      sector_rank_change_4w: 3,
+      industry_ticker_count: 2,
+    });
+    expect(amd.features.rs_vs_sector_20d).toBeCloseTo(r20 - 0.01, 12);
+    expect(amd.features.rs_vs_industry_20d).toBeCloseTo(r20 - 0.03, 12);
+    // SPY, the benchmark, carries no sector keys
+    expect(rows.find((r) => r.symbol === "SPY")!.features).not.toHaveProperty("sector_etf");
+  });
+
+  it("leaves sector keys null for a member with no stored profile", async () => {
+    const { rows } = await computeSnapshotRows(["AMD"], {}, peek, { profiles: {}, rotation });
+    expect(rows.find((r) => r.symbol === "AMD")!.features).toMatchObject({ sector_etf: null, industry_etf: null, rs_vs_sector_20d: null, industry_ticker_count: null });
+  });
+
+  it("the weekly build fetches profiles for the final members only, and a failure leaves them null", async () => {
+    const quote = { quoteType: "EQUITY", price: 50, marketCap: 5e9, avgVolume3m: 5e6 };
+    const metric = { dollarVolume20d: 5e8, atrPct: 0.05, hv20: 0.6 } as never;
+    const base = {
+      fetchDirectory: async () => ["AAA", "BBB", "PENNY"],
+      fetchQuotes: async () => new Map([["AAA", quote], ["BBB", quote], ["PENNY", { ...quote, price: 1 }]]),
+      fetchMetrics: async (s: string[]) => new Map(s.map((x) => [x, metric])),
+      hasListedOptions: async () => true,
+    };
+    const fetchProfiles = vi.fn(async (s: string[]) => new Map(s.map((x) => [x, { sector: "Technology", industry: `Ind-${x}` }])));
+    const built = await buildUniverse({ ...base, fetchProfiles });
+    expect(fetchProfiles).toHaveBeenCalledWith(["AAA", "BBB"]);
+    expect(built.members.map((m) => [m.symbol, m.sector, m.industry])).toEqual([["AAA", "Technology", "Ind-AAA"], ["BBB", "Technology", "Ind-BBB"]]);
+    const failed = await buildUniverse({ ...base, fetchProfiles: async () => { throw new Error("yahoo 503"); } });
+    expect(failed.members.every((m) => m.sector === null && m.industry === null)).toBe(true);
+  });
+
+  it("harvest prep passes the stored profiles through to the harvester", async () => {
+    const prep = await prepareHarvest({
+      getState: async () => ({
+        universe: { id: "u1", refreshedAt: new Date().toISOString(), symbols: ["AAA"], profiles: { AAA: { sector: "Technology", industry: "Semiconductors" } } },
+        watch: [],
+      }),
+      build: async () => { throw new Error("not called"); },
+      postBuild: async () => "x",
+    });
+    expect(prep.profiles).toEqual({ AAA: { sector: "Technology", industry: "Semiconductors" } });
   });
 });

@@ -23,14 +23,18 @@ import { applyWatchResults, type ActiveWatchRow } from "./watch";
 
 export const UNIVERSE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+export type MemberProfiles = Record<string, { sector: string | null; industry: string | null }>;
+
 export interface UniverseState {
-  universe: { id: string; refreshedAt: string; symbols: string[] } | null;
+  universe: { id: string; refreshedAt: string; symbols: string[]; profiles?: MemberProfiles } | null;
   watch: ActiveWatchRow[];
 }
 
 export interface HarvestPrep {
   universeId: string | null;
   scanSymbols: readonly string[];
+  /** P3-0d: sector and industry per universe member (empty with the static fallback or an old universe). */
+  profiles: MemberProfiles;
   watch: ActiveWatchRow[];
 }
 
@@ -73,7 +77,14 @@ export async function prepareHarvest(deps: HarvestPrepDeps): Promise<HarvestPrep
     try {
       const build = await deps.build();
       const id = await deps.postBuild(build);
-      universe = { id, refreshedAt: now.toISOString(), symbols: build.members.map((m) => m.symbol) };
+      universe = {
+        id,
+        refreshedAt: now.toISOString(),
+        symbols: build.members.map((m) => m.symbol),
+        profiles: Object.fromEntries(
+          build.members.filter((m) => m.sector || m.industry).map((m) => [m.symbol, { sector: m.sector ?? null, industry: m.industry ?? null }]),
+        ),
+      };
     } catch (err) {
       console.warn("[universe] rebuild failed, keeping the previous universe:", err instanceof Error ? err.message : err);
     }
@@ -81,9 +92,9 @@ export async function prepareHarvest(deps: HarvestPrepDeps): Promise<HarvestPrep
 
   if (!universe || universe.symbols.length === 0) {
     console.warn(`[universe] none available, falling back to static SCAN_SYMBOLS (${SCAN_SYMBOLS.length})`);
-    return { universeId: null, scanSymbols: SCAN_SYMBOLS, watch: state.watch };
+    return { universeId: null, scanSymbols: SCAN_SYMBOLS, profiles: {}, watch: state.watch };
   }
-  return { universeId: universe.id, scanSymbols: universe.symbols, watch: state.watch };
+  return { universeId: universe.id, scanSymbols: universe.symbols, profiles: universe.profiles ?? {}, watch: state.watch };
 }
 
 export interface IngestExtras {

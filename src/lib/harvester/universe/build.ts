@@ -10,6 +10,7 @@ import { yahooFinance, withYahooTimeout } from "@/lib/yahoo-finance";
 import { withYahooRetry } from "@/lib/yahoo-retry";
 import { toUnixSeconds } from "../yahoo-time";
 import { fetchSymbolDirectory } from "./symbol-directory";
+import { fetchSectorIndustry } from "../fundamentals";
 import { fetchBarMetricsMany, type BarMetrics } from "./bar-metrics";
 import { evaluateUniverseRule, UNIVERSE_RULE, type UniverseRuleResult } from "./rule";
 
@@ -33,6 +34,9 @@ export interface UniverseMemberData {
   atrPct: number | null;
   hv20: number | null;
   hasOptions: boolean;
+  /** P3-0d: Yahoo sector and industry, null when the profile fetch failed. */
+  sector?: string | null;
+  industry?: string | null;
 }
 
 export interface UniverseBuildResult {
@@ -47,6 +51,8 @@ export interface UniverseBuildDeps {
   fetchQuotes: (symbols: string[]) => Promise<Map<string, QuoteInfo>>;
   fetchMetrics: (symbols: string[]) => Promise<Map<string, BarMetrics>>;
   hasListedOptions: (symbol: string) => Promise<boolean | null>;
+  /** P3-0d: sector and industry for the final members (one profile call each, weekly). */
+  fetchProfiles?: (symbols: string[]) => Promise<Map<string, { sector: string | null; industry: string | null }>>;
 }
 
 /** Loose pre-filter on quote data, so bars are fetched only for plausible names. */
@@ -91,8 +97,23 @@ export async function buildUniverse(deps: UniverseBuildDeps = defaultDeps()): Pr
         atrPct: m.atrPct,
         hv20: m.hv20,
         hasOptions: true,
+        sector: null,
+        industry: null,
       });
     });
+  }
+  if (deps.fetchProfiles && members.length > 0) {
+    try {
+      const profiles = await deps.fetchProfiles(members.map((m) => m.symbol));
+      for (const m of members) {
+        const p = profiles.get(m.symbol);
+        m.sector = p?.sector ?? null;
+        m.industry = p?.industry ?? null;
+      }
+      console.log(`[universe] profiles for ${profiles.size}/${members.length} members`);
+    } catch (err) {
+      console.warn("[universe] profile fetch failed, sector/industry left null:", err instanceof Error ? err.message : err);
+    }
   }
   console.log(`[universe] members=${members.length}`);
   return { rule: UNIVERSE_RULE, directoryCount: directory.length, prefilterCount: pre.length, members };
@@ -165,5 +186,6 @@ export function defaultDeps(): UniverseBuildDeps {
     fetchQuotes: fetchQuotesYahoo,
     fetchMetrics: (symbols) => fetchBarMetricsMany(symbols, { label: "universe bars" }),
     hasListedOptions: hasListedOptionsYahoo,
+    fetchProfiles: fetchSectorIndustry,
   };
 }

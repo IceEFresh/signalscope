@@ -498,6 +498,8 @@ model UniverseMember {
   atrPct          Float?
   hv20            Float?
   hasOptions      Boolean
+  sector          String?  // P3-0d: Yahoo assetProfile.sector, fetched once a week at the build
+  industry        String?  // P3-0d: Yahoo assetProfile.industry
 
   @@unique([universeId, symbol])
   @@index([symbol])
