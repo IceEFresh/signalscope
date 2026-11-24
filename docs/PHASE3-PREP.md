@@ -48,6 +48,63 @@ Branch `plan/p3-0b-validation-harness`.
    - one row whose outcome date is before its scan, which must make the harness refuse to run
 4. No new dependencies; plain TypeScript statistics. Ask first if you need a library.
 
+## P3-0c: universe-wide daily snapshot (Chris, 2026-11-24)
+
+**Why:** the first NAS scan had 45 signal tickers. At that rate, 6 weeks gives about 400 held-out rows, roughly 80 per quintile, under the 100-row minimum. Almost every feature would come out INSUFFICIENT. The bar, STP, sector and regime features already exist for every universe member (about 1,485) on every run, so recording them for the whole universe gives those features about 30 times more rows.
+
+Branch `plan/p3-0c-universe-snapshot`.
+
+1. **Additive migration:** a new table, `UniverseSnapshot`.
+   - Columns: `id`, `scanId` (FK to Scan), `symbol`, `sessionDate` (the bar date the features describe), `close` (Float), `features` (JSONB, nullable).
+   - `@@unique([scanId, symbol])`, `@@index([symbol, sessionDate])`.
+   - Show the SQL in the PR body.
+2. **What gets written each run:** one row per universe member (plus watch symbols, if they're already in the bar set).
+   - **The features:**
+     - the bar features (1a);
+     - the STP state for that symbol (states only, the same fields `StpSignal` stores);
+     - the sector features (1f, `tickerSectorFeatures`).
+   - Regime stays on `Scan`, so it isn't duplicated per row.
+   - Use data the harvester already computed this run. **No new network requests.**
+   - Send it to the web side in the existing ingest payload, in batches if the payload limit needs it, and write it with `createMany` in chunks of about 500.
+   - Measure the payload size and the DB time on the fixture, and report both in the PR.
+3. **Outcomes come from later snapshots; no new fetches.** For a row at session D, the 1-day, 3-day and 7-day returns are the closes from the snapshots whose `sessionDate` is the 1st, 3rd and 7th trading session after D. SPY's close is taken the same way, either from the SPY row (add SPY to the snapshot) or from the regime bar. Holidays and missed runs leave the outcome null; never interpolate.
+4. **Harness (P3-0b).**
+   - Add a second dataset, `--dataset universe`, that builds `EvalRow`s from `UniverseSnapshot` with these outcomes.
+   - The same split, folds, verdict rules and look-ahead assertion apply: the outcome's `sessionDate` must be later than the row's.
+   - Report the two datasets separately, never pooled.
+   - Add the universe dataset's candidate keys to the pre-registration *before* the first real run.
+5. **Storage estimate:** about 1,500 rows × about 2 KB per weekday is roughly 3 MB a day, under 1 GB a year. That's fine on the NAS. Add the table to the health report: row count, plus feature null rates for the latest snapshot.
+6. **Tests:**
+   - outcome alignment across a weekend and a holiday;
+   - a missed run leaves the outcome null;
+   - the look-ahead refusal;
+   - batched writes;
+   - the health-report coverage line.
+
+Log only: nothing reads the snapshot for a score, stage or label.
+
+## S2: source resilience for Capitol Trades and StockTwits (Chris, 2026-11-24)
+
+On the first NAS run, Capitol Trades returned 429 and the StockTwits TrendSpider mirror returned 502. Each source made one attempt and then logged 0 for the whole day.
+
+Branch `plan/s2-source-resilience`.
+
+1. **Retries:** wrap both fetches in the shared retry helper.
+   - Rename `withYahooRetry` to `withRetry` and keep `withYahooRetry` as an alias, so the 1e call sites don't change.
+   - Use labels `capitoltrades` and `stocktwits`.
+   - On a 429, honour `Retry-After` when it's present, up to 60 s.
+2. **Congress fallback:** when Capitol Trades still fails after retries, fetch House trades from Financial Datasets.
+   - `FINANCIAL_DATASETS_API_KEY` is already in the NAS `.env`.
+   - Its politician-trades data covers the House only, not the Senate.
+   - Map each trade to the same `CONGRESS` signal shape, with `office: "house"`, and tag `source_detail: "financialdatasets"` in the metadata.
+   - **First** save a real response from the NAS as a fixture, and confirm the endpoint, the auth header and the field names from it. Don't guess them.
+   - Skip quietly when the key is missing.
+3. **StockTwits:** no fallback source. Retry only.
+4. **Logging:** the `[sources]` line marks a fallback, for example `congress=12 (fallback: financialdatasets)`.
+5. **Tests:** fixture tests covering 429-then-200, 502-then-200, retries used up, the fallback path, a missing key, and the log line.
+
+No migration, and no change to score, stage or label.
+
 ## Not in scope
 - Changing any rule or score. That's Phase 3 proper, one PR per rule, after the harness runs on real data.
 - 2d (paid options flow). It's decided by the harness results.
