@@ -2,7 +2,8 @@
 // docs/PHASE3-PREREG.md. Read-only on the database; changes no rule, score or label.
 // Refuses to run if any outcome is not strictly after its scan (look-ahead).
 //
-// Run (needs DATABASE_URL; fetches SPY daily closes from Yahoo):
+// Run (needs DATABASE_URL; fetches SPY daily closes from Yahoo). In the harvester container,
+// which has no git, pass the commit: -e GIT_COMMIT=$(git rev-parse --short HEAD)
 //   npx tsx scripts/validate-features.ts                       # signal tickers: report + one experiment-log row
 //   npx tsx scripts/validate-features.ts --dataset universe    # P3-0c universe snapshots (reported separately)
 //   npx tsx scripts/validate-features.ts --dataset backfill    # P3-0g backfilled snapshots (separate; SPY from its own rows)
@@ -93,6 +94,21 @@ async function loadSnapshots(dataset: "universe" | "backfill" | "crypto"): Promi
   }));
 }
 
+/**
+ * Short commit for the report and log row. The harvester image has no git, so on the NAS pass
+ * GIT_COMMIT (see the run command at the top); otherwise ask git; "unknown" rather than failing
+ * a run after the work is done.
+ */
+function commitId(): string {
+  const env = process.env.GIT_COMMIT?.trim();
+  if (env) return env.slice(0, 12);
+  try {
+    return execFileSync("git", ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return "unknown";
+  }
+}
+
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const di = process.argv.indexOf("--dataset");
@@ -116,7 +132,7 @@ async function main() {
   const scans = new Set(rows.map((r) => r.scanId)).size;
   const results = candidateKeys(rows).map((k) => evaluateFeature(rows, k));
   const date = new Date().toISOString().slice(0, 10);
-  const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"]).toString().trim();
+  const commit = commitId();
   const count = (v: string) => results.filter((r) => r.verdict === v).length;
   console.log(`Phase 3 (${dataset} dataset): ${rows.length} rows, ${scans} scans, ${results.length} features: ${count("KEEP")} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT`);
   for (const r of results.filter((x) => x.verdict === "KEEP")) console.log(`  KEEP ${r.key}: ${r.reason}`);
