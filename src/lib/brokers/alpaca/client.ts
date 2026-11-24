@@ -13,11 +13,18 @@ export interface AlpacaCredentials {
   paper: boolean;
 }
 
-function getDefaultCredentials(): AlpacaCredentials {
+/** Alpaca credentials from ALPACA_API_KEY / ALPACA_SECRET_KEY / ALPACA_PAPER, or null when unset. */
+export function alpacaCredentialsFromEnv(): AlpacaCredentials | null {
   const apiKey = process.env.ALPACA_API_KEY;
   const apiSecret = process.env.ALPACA_SECRET_KEY;
-  if (!apiKey || !apiSecret) throw new Error("ALPACA_API_KEY and ALPACA_SECRET_KEY must be set");
+  if (!apiKey || !apiSecret) return null;
   return { apiKey, apiSecret, paper: process.env.ALPACA_PAPER !== "false" };
+}
+
+function getDefaultCredentials(): AlpacaCredentials {
+  const creds = alpacaCredentialsFromEnv();
+  if (!creds) throw new Error("ALPACA_API_KEY and ALPACA_SECRET_KEY must be set");
+  return creds;
 }
 
 export class AlpacaClient implements BrokerClient {
