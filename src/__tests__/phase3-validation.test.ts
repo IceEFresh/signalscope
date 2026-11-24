@@ -11,7 +11,7 @@ import {
   type SpyClose,
   type StoredTickerRow,
 } from "@/lib/eval/dataset";
-import { candidateKeys, evaluateFeature, quintileCuts, bucketOf, featureKind, EXCLUDED_KEYS, MISSING } from "@/lib/eval/features";
+import { candidateKeys, evaluateFeature, quintileCuts, bucketOf, featureKind, testSplit, EXCLUDED_KEYS, MISSING } from "@/lib/eval/features";
 import { experimentSummaryRow, lastExperimentNumber, markdownReport } from "@/lib/eval/report";
 import { etParts, parseChartBars } from "@/lib/harvester/universe/bar-metrics";
 
@@ -102,6 +102,45 @@ describe("known-answer fixture", () => {
     expect(r.heldOut.selected).not.toBe("q5");
     expect(r.verdict).toBe("DROP");
     expect(r.folds.filter((f) => f.passed).length).toBeLessThan(2);
+  });
+});
+
+describe("folds test the held-out bucket, not their own best (review of #33)", () => {
+  const rows = fixture();
+
+  it("every fold tests exactly the bucket chosen on the held-out split", () => {
+    for (const k of ["rs_vs_spy_20d", "rsi14"]) {
+      const r = evaluateFeature(rows, k);
+      expect(r.folds.map((f) => f.selected)).toEqual([r.heldOut.selected, r.heldOut.selected, r.heldOut.selected]);
+    }
+  });
+
+  it("does not KEEP a feature whose winning bucket flips between periods", () => {
+    // 4 blocks of 10 scans: q5 wins in blocks 0 and 2, q1 wins in blocks 1 and 3.
+    // Per-fold selection would find a winner in every fold; a fixed bucket can't.
+    const flipping = rows.map((row) => {
+      const block = Math.floor(Number(row.scanId.slice(4)) / 10);
+      const v = row.attrs.rs_vs_spy_20d as number;
+      const q5 = v > 0.8;
+      const q1 = v <= 0.2;
+      const winner = block % 2 === 0 ? q5 : q1;
+      const x = winner ? 0.03 : -0.005;
+      return { ...row, excess: { "1d": x, "3d": x, "7d": x } };
+    });
+    const r = evaluateFeature(flipping, "rs_vs_spy_20d");
+    expect(r.verdict).not.toBe("KEEP");
+    expect(r.folds.filter((f) => f.passed).length).toBeLessThan(2);
+    // Each fold, left to pick its own best bucket, would have found a winner every time
+    const ownBest = walkForwardFolds(flipping).map((f) => testSplit(f.train, f.test, "rs_vs_spy_20d", "numeric", 30).selected);
+    expect(new Set(ownBest).size).toBeGreaterThan(1);
+  });
+
+  it("reports distinct tickers beside n for each test bucket", () => {
+    const r = evaluateFeature(rows, "rs_vs_spy_20d");
+    const b = r.heldOut.buckets.find((x) => x.bucket === r.heldOut.selected)!;
+    expect(b.testTickers).toBeGreaterThan(0);
+    expect(b.testTickers).toBeLessThanOrEqual(50);
+    expect(b.testTickers).toBeLessThanOrEqual(b.test.n);
   });
 });
 
@@ -202,7 +241,8 @@ describe("report output", () => {
     const md = markdownReport(results, { date: "2027-03-01", commit: "abc1234", rows: 2000, scans: 40 });
     expect(md).toContain("3 features tested (= 3 comparisons)");
     expect(md).toContain("## rs_vs_spy_20d: KEEP");
-    expect(md).toContain("| q5 ← |");
+    expect(md).toMatch(/\| q5 ← \| \d+ \|/);
+    expect(md).toContain("held-out n (distinct tickers)");
     expect(md).toContain("**Fold 3 of 3**");
   });
   it("appends one summary row in the experiment log's column layout", () => {

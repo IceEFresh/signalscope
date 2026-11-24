@@ -24,11 +24,13 @@
    - **Bucket choice:** the bucket tested is the one with the highest training mean excess return among buckets with at least 30 training rows. It's chosen without looking at test rows.
 5. **"Beats the baseline"** means higher mean excess return **and** higher hit rate than all eligible test rows in the same window.
 6. **KEEP** only if the chosen bucket beats the baseline on the held-out set **and** in at least 2 of the 3 folds.
+   - **Each fold tests that same bucket. A fold never picks its own best bucket.** For a categorical feature, that's the same category. For a numeric feature, it's the same quintile rank (for example q5), with the cut points recomputed from that fold's own training rows. "Holds in 2 of 3 folds" therefore means the same effect held in at least 2 later periods. It doesn't count a feature that won with q5 in one period and q1 in another.
    - **INSUFFICIENT** if the chosen bucket has fewer than **100** held-out rows. No verdict and no rule change.
    - [Assumption] A fold whose chosen bucket has fewer than 30 test rows counts as a failed fold.
    - **DROP** otherwise.
-7. **Log every run, kept or not,** in `scripts/backtesting-experiments.md`. Each run appends one summary row and writes a full per-bucket report to `scripts/output/phase3-validation-<date>.md`.
-8. **A KEEP is a reason to open a rule-change PR, not the change itself.** Each rule change is its own PR with its own experiment entry, as `CLAUDE.md` requires.
+7. **Overlapping windows.** Daily scans with 7-day returns overlap: the same ticker on consecutive scans shares about 6 days of outcome. So 100 held-out rows are not 100 independent observations. The rule stays as written. The report shows the number of distinct tickers beside n for every bucket and for the chosen held-out bucket. Read a KEEP whose rows come from a few tickers as weaker evidence.
+8. **Log every run, kept or not,** in `scripts/backtesting-experiments.md`. Each run appends one summary row and writes a full per-bucket report to `scripts/output/phase3-validation-<date>.md`.
+9. **A KEEP is a reason to open a rule-change PR, not the change itself.** Each rule change is its own PR with its own experiment entry, as `CLAUDE.md` requires.
 
 ## Candidate features: 94 comparisons
 Every logged key below is tested once, on its own. That is **94 comparisons**.

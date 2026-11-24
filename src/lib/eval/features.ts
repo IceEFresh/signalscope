@@ -10,7 +10,9 @@
  *     at least MIN_FOLD_ROWS training rows), chosen without looking at the test rows.
  *   - Held out (newest 30% of scans): that bucket must beat the baseline (all test rows)
  *     on 7-day mean excess AND hit rate, with at least MIN_HELDOUT_ROWS rows.
- *   - Walk-forward (3 folds): the same procedure on each fold; at least 2 must pass.
+ *   - Walk-forward (3 folds): each fold tests THAT SAME bucket (same category, or the same
+ *     quintile rank under the fold's own training cut points) against the fold's baseline;
+ *     at least 2 must pass. A fold never chooses its own bucket.
  * Verdict: KEEP, DROP, or INSUFFICIENT (too few rows to judge).
  */
 import { familyOf } from "@/lib/health/harvest-health";
@@ -89,6 +91,8 @@ export interface BucketStats {
   bucket: string;
   train: Metrics;
   test: Metrics;
+  /** Distinct tickers among the test rows: overlapping 7-day windows mean n overstates independent observations. */
+  testTickers: number;
 }
 
 export interface SplitResult {
@@ -98,8 +102,21 @@ export interface SplitResult {
   passed: boolean;
 }
 
-/** Bucket on `train` (cuts from train only), pick the best training bucket, test it on `test`. */
-export function testSplit(train: readonly EvalRow[], test: readonly EvalRow[], key: string, kind: FeatureKind, minTest: number): SplitResult {
+/**
+ * Bucket `train` and `test` with cut points from `train` only, then test one bucket on
+ * `test`. Without `fixed`, the bucket is the best training bucket (the held-out split).
+ * With `fixed`, that bucket is tested as given (walk-forward folds): the same category,
+ * or the same quintile rank under this fold's own training cut points. A fold never
+ * picks its own best bucket, so "holds in 2 of 3 folds" means the same effect held.
+ */
+export function testSplit(
+  train: readonly EvalRow[],
+  test: readonly EvalRow[],
+  key: string,
+  kind: FeatureKind,
+  minTest: number,
+  fixed?: string | null,
+): SplitResult {
   const cuts = kind === "numeric" ? quintileCuts(train.map((r) => r.attrs[key]).filter(isNum)) : [];
   const group = (rows: readonly EvalRow[]) => {
     const m = new Map<string, EvalRow[]>();
@@ -113,18 +130,27 @@ export function testSplit(train: readonly EvalRow[], test: readonly EvalRow[], k
   const tr = group(train);
   const te = group(test);
   const names = [...new Set([...tr.keys(), ...te.keys()])].sort();
-  const buckets = names.map((b) => ({ bucket: b, train: metrics(tr.get(b) ?? [], PRIMARY_HORIZON), test: metrics(te.get(b) ?? [], PRIMARY_HORIZON) }));
+  const buckets = names.map((b) => ({
+    bucket: b,
+    train: metrics(tr.get(b) ?? [], PRIMARY_HORIZON),
+    test: metrics(te.get(b) ?? [], PRIMARY_HORIZON),
+    testTickers: new Set((te.get(b) ?? []).map((r) => r.symbol)).size,
+  }));
   let selected: string | null = null;
-  let best = -Infinity;
-  for (const b of buckets) {
-    if (b.bucket === MISSING || b.train.n < MIN_FOLD_ROWS || b.train.meanExcess == null) continue;
-    if (b.train.meanExcess > best) {
-      best = b.train.meanExcess;
-      selected = b.bucket;
+  if (fixed !== undefined) {
+    selected = fixed;
+  } else {
+    let best = -Infinity;
+    for (const b of buckets) {
+      if (b.bucket === MISSING || b.train.n < MIN_FOLD_ROWS || b.train.meanExcess == null) continue;
+      if (b.train.meanExcess > best) {
+        best = b.train.meanExcess;
+        selected = b.bucket;
+      }
     }
   }
   const baseline = metrics(test, PRIMARY_HORIZON);
-  const sel = buckets.find((b) => b.bucket === selected)?.test;
+  const sel = selected == null ? undefined : buckets.find((b) => b.bucket === selected)?.test;
   return { selected, buckets, baseline, passed: !!sel && sel.n >= minTest && beats(sel, baseline) };
 }
 
@@ -143,7 +169,8 @@ export function evaluateFeature(rows: readonly EvalRow[], key: string): FeatureR
   const kind = featureKind(rows, key);
   const { train, test } = timeSplit(rows);
   const heldOut = testSplit(train, test, key, kind, MIN_HELDOUT_ROWS);
-  const folds = walkForwardFolds(rows).map((f) => testSplit(f.train, f.test, key, kind, MIN_FOLD_ROWS));
+  // Each fold tests the bucket chosen on the held-out split's training rows, not its own best.
+  const folds = walkForwardFolds(rows).map((f) => testSplit(f.train, f.test, key, kind, MIN_FOLD_ROWS, heldOut.selected));
   const passed = folds.filter((f) => f.passed).length;
   const sel = heldOut.buckets.find((b) => b.bucket === heldOut.selected)?.test;
   let verdict: FeatureVerdict;

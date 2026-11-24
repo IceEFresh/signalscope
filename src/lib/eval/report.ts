@@ -22,14 +22,14 @@ export function lastExperimentNumber(markdown: string): number {
 
 function splitTable(title: string, s: SplitResult): string[] {
   const lines = [
-    `**${title}** (selected on training: ${s.selected ?? "none"}; baseline ${summarizeMetrics(s.baseline)}; ${s.passed ? "pass" : "fail"})`,
+    `**${title}** (bucket tested: ${s.selected ?? "none"}; baseline ${summarizeMetrics(s.baseline)}; ${s.passed ? "pass" : "fail"})`,
     "",
-    "| bucket | train n | train hit | train excess | test n | test hit | test excess |",
-    "|---|---|---|---|---|---|---|",
+    "| bucket | train n | train hit | train excess | test n | test tickers | test hit | test excess |",
+    "|---|---|---|---|---|---|---|---|",
   ];
   for (const b of s.buckets) {
     const mark = b.bucket === s.selected ? " ←" : "";
-    lines.push(`| ${b.bucket}${mark} | ${b.train.n} | ${pct(b.train.hitRate)} | ${pct(b.train.meanExcess)} | ${b.test.n} | ${pct(b.test.hitRate)} | ${pct(b.test.meanExcess)} |`);
+    lines.push(`| ${b.bucket}${mark} | ${b.train.n} | ${pct(b.train.hitRate)} | ${pct(b.train.meanExcess)} | ${b.test.n} | ${b.testTickers} | ${pct(b.test.hitRate)} | ${pct(b.test.meanExcess)} |`);
   }
   return [...lines, ""];
 }
@@ -42,9 +42,12 @@ export function markdownReport(results: readonly FeatureResult[], meta: { date: 
     `${meta.rows} eligible rows from ${meta.scans} scans. ${results.length} features tested (= ${results.length} comparisons): ` +
       `${count("KEEP")} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT. Primary metric: ${PRIMARY_HORIZON} excess return vs SPY.`,
     "",
-    "| feature | kind | verdict | reason |",
-    "|---|---|---|---|",
-    ...results.map((r) => `| ${r.key} | ${r.kind} | ${r.verdict} | ${cell(r.reason)} |`),
+    "| feature | kind | verdict | held-out n (distinct tickers) | reason |",
+    "|---|---|---|---|---|",
+    ...results.map((r) => {
+      const b = r.heldOut.buckets.find((x) => x.bucket === r.heldOut.selected);
+      return `| ${r.key} | ${r.kind} | ${r.verdict} | ${b ? `${b.test.n} (${b.testTickers})` : "n/a"} | ${cell(r.reason)} |`;
+    }),
     "",
   ];
   for (const r of results) {
