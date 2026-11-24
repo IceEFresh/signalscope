@@ -112,6 +112,57 @@ Chris approved storing each universe member's Yahoo sector and industry at the w
 ## S2 status
 Parts 1, 3 and 5 (the retries) are merged in #36. The Financial Datasets House fallback (part 2) is **on hold (Chris, 2026-11-24)**: the account has no credits, and no real response has been saved yet.
 
+## P3-0e: liquid crypto universe, log only (Chris, 2026-11-24)
+
+**Goal:** test whether bar features and STP carry over to liquid crypto, as a separate dataset. Insider, Congress, earnings, sector and options features don't exist for crypto, and none are faked.
+
+Branch `plan/p3-0e-crypto-universe`.
+
+1. **Weekly crypto universe**, rebuilt alongside the stock universe.
+   - **Source:** CoinGecko's free `/coins/markets` (vs_currency=usd, order=market_cap_desc, per_page=250, pages 1–2), giving the top 500 candidates.
+     - Respect the free rate limit: pace about 3 s between pages, plus retry.
+     - An optional `COINGECKO_API_KEY` (demo key) is sent as `x-cg-demo-api-key` when it's set.
+     - Save a real response from the NAS as a fixture before writing the parser.
+   - **Exclude:** stablecoins, wrapped tokens, staked or liquid-staking tokens, and exchange IOUs. Use CoinGecko categories where the response has them, plus a short explicit denylist in code (USDT, USDC, DAI, FDUSD, USDe, TUSD, PYUSD, WBTC, WETH, stETH, wstETH, cbBTC, weETH and so on). Log every exclusion with its reason.
+   - **Map** each token to a Yahoo symbol (`<SYMBOL>-USD`). Drop any token whose Yahoo chart is missing, stale (last bar more than 2 days old), or for a different asset. Check the name or price against CoinGecko's price within ±5%, and log mismatches.
+   - **Filters:** reuse the stock rules where they make sense.
+     - Market cap ≥ $500M.
+     - 20-day median dollar volume ≥ $25M, from the Yahoo bars, not CoinGecko's volume.
+     - ATR% ≥ 3% or HV20 ≥ 40%.
+     - There's no price floor and no options-listed rule.
+   - **Expected size:** about 100–200 members. Print the real number.
+2. **Additive migration:**
+   - Add `assetClass` (TEXT, nullable, default null) to `UniverseMember` and `UniverseSnapshot`. Null means a stock, for older rows; new rows write `"stock"` or `"crypto"`.
+   - Add `coingeckoId` (nullable) on `UniverseMember`.
+   - Show the SQL.
+3. **Daily features:** crypto members go through the existing bar-feature and STP code on daily bars.
+   - Yahoo crypto daily bars run 00:00–24:00 UTC, 7 days a week. Treat a bar as complete only once its UTC day has ended.
+   - STP's weekly and monthly opens use the UTC Monday 00:00 bar and the first UTC day of the month.
+   - `spy_*` and `rs_vs_spy_*` become `btc_*` and `rs_vs_btc_*` for crypto rows. Don't compute a SPY comparison on crypto.
+   - The regime stays stock-only.
+4. **Snapshot:** crypto rows are written to `UniverseSnapshot` with `assetClass: "crypto"`.
+   - `sessionDate` is the UTC date.
+   - Weekend bars exist, but the harvest runs on weekdays only. Each Monday row describes Sunday's bar; Saturday's and Sunday's own bars aren't stored. Document this.
+   - Don't change the cron.
+5. **Harness:** `--dataset crypto`.
+   - Outcomes are the token's own later snapshots, keyed by `sessionDate`.
+     - The 1-, 3- and 7-day horizons count snapshot sessions, which are weekdays, so the dataset's calendar matches its rows.
+     - Write that definition into the pre-registration.
+   - The benchmark is BTC, from the BTC row.
+   - Same split, folds, verdict rules and look-ahead refusal as the stock datasets. Reported separately and never pooled.
+   - Add its candidate keys and comparison count to `docs/PHASE3-PREREG.md` before any real run.
+6. **Health report:** a crypto line with member count, rows per snapshot and feature null rates.
+7. **Tests:**
+   - the exclusion list;
+   - the CoinGecko-to-Yahoo mapping, including a mismatch;
+   - liquidity filters on fixture bars;
+   - UTC day completion;
+   - weekly and monthly opens across a weekend;
+   - the BTC benchmark;
+   - the harness look-ahead refusal on crypto rows.
+
+Log only: no score, stage, label or recommendation reads crypto rows, and crypto never enters `ValidatedTicker`. No new dependencies.
+
 ## Not in scope
 - Changing any rule or score. That's Phase 3 proper, one PR per rule, after the harness runs on real data.
 - 2d (paid options flow). It's decided by the harness results.
