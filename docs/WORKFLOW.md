@@ -22,7 +22,9 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 9. PR 1e: Yahoo fetch resilience
 10. Phase 2 item 2a (finish the open review)
 11. **S1: security fixes** (spec: docs/SECURITY-S1.md). Do this before 2b.
-12. Phase 2 items 2b to 2e
+12. Phase 2 items 2b to 2e (done 2026-11-24; 2b-2 dropped, 2d deferred to Phase 3)
+13. **P3-0a: harvest health report** (spec: docs/PHASE3-PREP.md)
+14. **P3-0b: validation harness and pre-registration** (spec: docs/PHASE3-PREP.md). Built on fixtures now; run on real data from week 6.
 
 ## Builder loop, for each item
 
