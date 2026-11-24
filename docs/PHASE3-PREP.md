@@ -112,6 +112,35 @@ Chris approved storing each universe member's Yahoo sector and industry at the w
 ## S2 status
 Parts 1, 3 and 5 (the retries) are merged in #36. The Financial Datasets House fallback (part 2) is **on hold (Chris, 2026-11-24)**: the account has no credits, and no real response has been saved yet.
 
+## P3-0g: price-history backfill (Chris, 2026-11-24; ahead of P3-0e and P3-0f)
+
+**Goal:** rebuild the price-only snapshot features for the past 2 years, so Phase 3 can test bar and STP features now. The rebuild has no look-ahead because each day uses only bars up to that day.
+
+Branch `plan/p3-0g-price-backfill`.
+
+1. **Script:** `scripts/backfill-snapshot.ts`, run by hand on the NAS (`--years 2`, `--symbols` optional).
+   - Fetch 2 years plus 120 days of warm-up daily bars per current universe member and SPY, with the existing chart code, retry and pacing.
+   - Cache the raw bars on disk under `scripts/output/backfill-bars/`, so a rerun doesn't refetch.
+   - **No new endpoint:** write the rows straight through Prisma from the harvester container.
+2. **For each trading day D:** compute the 1a bar features and the STP states using **only bars ≤ D**, by slicing the array. Never compute on the full series and shift.
+   - Assert this in code: the newest bar used for day D is dated D.
+   - Write the result as `UniverseSnapshot` rows, with `features.backfill = true` and `features.backfill_version = 1`.
+   - Leave sector and regime out (they depend on live inputs), unless rebuilding them is purely price-based and just as safe.
+3. **Linking rows to a scan:** `UniverseSnapshot.scanId` is required. Create one synthetic `Scan` row per backfill run (`source: "backfill"` or a similar marker on an existing field), and attach every backfill row to it.
+   - If `Scan` has no field that can carry the marker without a migration, stop and ask before adding one.
+   - Live scans must never be overwritten. On a `(scanId, symbol)` conflict, skip.
+4. **Harness:** `--dataset backfill`.
+   - Outcomes come from the backfill rows' own later sessions; SPY is the benchmark.
+   - Same rules as the other datasets, reported separately, and never pooled with live data.
+   - The report header states the survivorship bias in plain words: current members only, delisted names missing, so results are optimistic.
+   - The pre-registration gets the backfill dataset's candidate keys and comparison count **before** the first run.
+5. **Scale:** about 1,500 symbols × 500 days, roughly 750K rows and 1.5 GB at about 2 KB per row.
+   - Measure on 20 symbols first and report the projected size and run time.
+   - If the projection is over 3 GB, store only the candidate keys in `features`, not every key.
+6. **Tests:** prove with a planted future bar that no future bar is used for day D; check the STP state on a sliced fixture against the live computation for the same day; and test resume after a partial run.
+
+Log only. No score or label changes. No new dependencies.
+
 ## P3-0e: liquid crypto universe, log only (Chris, 2026-11-24)
 
 **Goal:** test whether bar features and STP carry over to liquid crypto, as a separate dataset. Insider, Congress, earnings, sector and options features don't exist for crypto, and none are faked.
