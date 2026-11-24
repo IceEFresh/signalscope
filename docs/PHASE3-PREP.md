@@ -160,6 +160,18 @@ Branch `plan/p3-0e-crypto-universe`.
      - ATR% ≥ 3% or HV20 ≥ 40%.
      - There's no price floor and no options-listed rule.
    - **Expected size:** about 100–200 members. Print the real number.
+1b. **Provider choice (Chris, 2026-11-24): CoinGecko or CoinMarketCap.** Both keys are in the NAS `.env`.
+   - `CRYPTO_UNIVERSE_PROVIDER` = `coingecko` or `coinmarketcap`, default `coingecko`.
+   - Keys:
+     - `COINGECKO_API_KEY`, a demo key, sent as `x-cg-demo-api-key`.
+     - `COINMARKETCAP_API_KEY`, sent as `X-CMC_PRO_API_KEY` to `/v1/cryptocurrency/listings/latest?limit=500&convert=USD`.
+     - If Chris used different variable names in `.env`, use his names and document them in `.env.example`.
+   - **Fallback:** if the chosen provider fails after retries, use the other one when its key is set, and log `[crypto-universe] provider=<x> (fallback from <y>)`.
+   - **One normalized shape** feeds the rest of the pipeline: `{ id, symbol, name, marketCap, price, tags[] }`.
+     - Tags for exclusions come from CMC `tags` (`stablecoin`, `wrapped-tokens`, and the staking or liquid-staking tags) or from CoinGecko categories, plus the explicit denylist.
+     - Store the provider's id in `coingeckoId` for CoinGecko; for CMC, store `cmc:<id>` in the same field. No extra column.
+   - Save a real response from **both** providers on the NAS as fixtures before writing either parser.
+   - **Tests:** each parser, both directions of the fallback, and exclusions working the same on both fixtures.
 2. **Additive migration:**
    - Add `assetClass` (TEXT, nullable, default null) to `UniverseMember` and `UniverseSnapshot`. Null means a stock, for older rows; new rows write `"stock"` or `"crypto"`.
    - Add `coingeckoId` (nullable) on `UniverseMember`.
