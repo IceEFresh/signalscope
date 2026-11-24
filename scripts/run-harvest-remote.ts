@@ -129,12 +129,8 @@ async function main() {
   // 1g. Alpaca option snapshots and large prints for the same symbols (PLAN.md 2e, log only),
   // for the last completed session; merged into the 1h option features
   const alpacaOptions = await computeAlpacaOptionsExtras(optionSymbols, regime.spy_bar_date);
-  for (const [s, f] of Object.entries(alpacaOptions)) {
-    (optionsFeatures as Record<string, Record<string, number | null>>)[s] = {
-      ...((optionsFeatures as Record<string, Record<string, number | null>>)[s] ?? {}),
-      ...f,
-    };
-  }
+  const mergedOptions = optionsFeatures as unknown as Record<string, Record<string, number | null>>;
+  for (const [s, f] of Object.entries(alpacaOptions)) mergedOptions[s] = { ...(mergedOptions[s] ?? {}), ...f };
   const fetchElapsed = ((Date.now() - fetchStart) / 1000).toFixed(1);
   console.log(`[trace] Fetch completed in ${fetchElapsed}s — ${signals.length} signals`);
 

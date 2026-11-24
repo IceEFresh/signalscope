@@ -29,6 +29,8 @@ jobs:
       - run: npx prisma generate
 
       - run: npx tsc --noEmit
+      # S3: tsconfig.json excludes scripts/, so type-check the harvester and other scripts too
+      - run: npx tsc --noEmit -p tsconfig.scripts.json
 
       - run: npm run lint
 

@@ -1,22 +1,21 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import "dotenv/config";
+import { prisma } from "../src/lib/prisma.js";
 
 async function main() {
-  const scan = await prisma.scan.findFirst({ orderBy: { createdAt: "desc" } });
+  const scan = await prisma.scan.findFirst({ orderBy: { startedAt: "desc" } });
   if (!scan) { console.log("No scans found"); return; }
-  console.log("Scan:", scan.id, scan.createdAt);
+  console.log("Scan:", scan.id, scan.startedAt);
 
   const validated = await prisma.validatedTicker.findMany({ where: { scanId: scan.id } });
   console.log("\n=== Validated Tickers ===");
   console.log("Total:", validated.length);
 
-  const bySentiment: Record<string, number> = {};
+  const byRecommendation: Record<string, number> = {};
   for (const t of validated) {
-    const s = t.sentiment || "unknown";
-    bySentiment[s] = (bySentiment[s] || 0) + 1;
+    const s = t.recommendation || "unknown";
+    byRecommendation[s] = (byRecommendation[s] || 0) + 1;
   }
-  console.log("By sentiment:", bySentiment);
+  console.log("By recommendation:", byRecommendation);
 
   const byStage: Record<string, number> = {};
   for (const t of validated) {
@@ -26,7 +25,7 @@ async function main() {
   console.log("By stage:", byStage);
 
   // Show avoid tickers with scores
-  const avoids = validated.filter((t) => t.sentiment === "avoid");
+  const avoids = validated.filter((t) => t.recommendation === "Avoid");
   console.log("\n=== Avoid Tickers (" + avoids.length + ") ===");
   for (const t of avoids.sort((a, b) => b.aiScore - a.aiScore)) {
     console.log(
@@ -37,11 +36,11 @@ async function main() {
   }
 
   // Show non-avoid for comparison
-  const nonAvoids = validated.filter((t) => t.sentiment !== "avoid");
+  const nonAvoids = validated.filter((t) => t.recommendation !== "Avoid");
   console.log("\n=== Non-Avoid Tickers (" + nonAvoids.length + ") ===");
   for (const t of nonAvoids.sort((a, b) => b.aiScore - a.aiScore)) {
     console.log(
-      t.symbol, "| score:", t.aiScore, "| sentiment:", t.sentiment,
+      t.symbol, "| score:", t.aiScore, "| recommendation:", t.recommendation, "| avgSentiment:", t.avgSentiment,
       "| stage:", t.stage, "| sources:", t.sourceCount, "| pndFlagged:", t.pndFlagged
     );
   }
