@@ -12,10 +12,11 @@ const schema = z.object({
   rows: z
     .array(
       z.object({
-        symbol: z.string().min(1).max(10),
+        symbol: z.string().min(1).max(20), // P3-0e: Yahoo crypto symbols such as HYPE32196-USD
         sessionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         close: z.number().finite().positive(),
         features: z.record(z.string(), z.union([z.number(), z.string(), z.boolean(), z.null()])),
+        assetClass: z.enum(["stock", "crypto"]).optional(),
       }),
     )
     .min(1)

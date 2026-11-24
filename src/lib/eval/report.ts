@@ -34,7 +34,9 @@ function splitTable(title: string, s: SplitResult): string[] {
   return [...lines, ""];
 }
 
-export type DatasetName = "signals" | "universe" | "backfill";
+export type DatasetName = "signals" | "universe" | "backfill" | "crypto";
+
+const BENCHMARK_NAME: Record<DatasetName, string> = { signals: "SPY", universe: "SPY", backfill: "SPY", crypto: "BTC" };
 
 /** P3-0g: stated at the top of every backfill report. */
 export const SURVIVORSHIP_NOTE =
@@ -49,7 +51,7 @@ export function markdownReport(results: readonly FeatureResult[], meta: { date: 
     "",
     ...(meta.dataset === "backfill" ? [SURVIVORSHIP_NOTE, ""] : []),
     `${meta.rows} eligible rows from ${meta.scans} scans. ${results.length} features tested (= ${results.length} comparisons): ` +
-      `${count("KEEP")} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT. Primary metric: ${PRIMARY_HORIZON} excess return vs SPY.`,
+      `${count("KEEP")} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT. Primary metric: ${PRIMARY_HORIZON} excess return vs ${BENCHMARK_NAME[meta.dataset]}.`,
     "",
     "| feature | kind | verdict | held-out n (distinct tickers) | reason |",
     "|---|---|---|---|---|",

@@ -500,6 +500,8 @@ model UniverseMember {
   hasOptions      Boolean
   sector          String?  // P3-0d: Yahoo assetProfile.sector, fetched once a week at the build
   industry        String?  // P3-0d: Yahoo assetProfile.industry
+  assetClass      String?  // P3-0e: "stock" or "crypto"; null = stock (rows before P3-0e)
+  coingeckoId     String?  // P3-0e: CoinGecko coin id for crypto members
 
   @@unique([universeId, symbol])
   @@index([symbol])
@@ -579,6 +581,7 @@ model UniverseSnapshot {
   sessionDate String   // ET date (YYYY-MM-DD) of the completed bar the features describe
   close       Float    // that bar's close
   features    Json?
+  assetClass  String?  // P3-0e: "stock" or "crypto"; null = stock (rows before P3-0e). Crypto sessionDate is the UTC date
   createdAt   DateTime @default(now())
 
   @@unique([scanId, symbol])

@@ -31,6 +31,8 @@ export interface SnapshotRow {
   sessionDate: string;
   close: number;
   features: Record<string, unknown>;
+  /** P3-0e: "crypto" for crypto rows; omitted = stock. */
+  assetClass?: "stock" | "crypto";
 }
 
 /** One snapshot row from a symbol's completed bars and its STP states (pure). Null without a dated last bar. */

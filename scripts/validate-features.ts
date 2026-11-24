@@ -6,6 +6,7 @@
 //   npx tsx scripts/validate-features.ts                       # signal tickers: report + one experiment-log row
 //   npx tsx scripts/validate-features.ts --dataset universe    # P3-0c universe snapshots (reported separately)
 //   npx tsx scripts/validate-features.ts --dataset backfill    # P3-0g backfilled snapshots (separate; SPY from its own rows)
+//   npx tsx scripts/validate-features.ts --dataset crypto      # P3-0e crypto snapshots (separate; BTC benchmark from its own rows)
 //   npx tsx scripts/validate-features.ts --dry-run             # print the summary only, write nothing
 
 import "dotenv/config";
@@ -20,6 +21,7 @@ import { experimentSummaryRow, lastExperimentNumber, markdownReport, type Datase
 import { buildUniverseRows, type StoredSnapshotRow } from "@/lib/eval/universe-dataset";
 import { BENCHMARK_SYMBOL } from "@/lib/harvester/universe/snapshot";
 import { BACKFILL_SCAN_PREFIX } from "@/lib/harvester/universe/backfill";
+import { BTC_SYMBOL } from "@/lib/harvester/crypto/universe";
 import type { EvalRow } from "@/lib/eval/rules";
 
 const LOG_PATH = "scripts/backtesting-experiments.md";
@@ -65,13 +67,19 @@ async function loadRows(): Promise<StoredTickerRow[]> {
   }));
 }
 
-async function loadSnapshots(backfill: boolean): Promise<StoredSnapshotRow[]> {
-  // Backfill rows sit under synthetic scans marked in Scan.error; the builder also filters on features.backfill.
-  const snaps = await prisma.universeSnapshot.findMany({
-    where: backfill
+async function loadSnapshots(dataset: "universe" | "backfill" | "crypto"): Promise<StoredSnapshotRow[]> {
+  // Backfill rows sit under synthetic scans marked in Scan.error; crypto rows carry assetClass.
+  // The builder filters on features.backfill and assetClass as well.
+  const live = { scan: { OR: [{ error: null }, { NOT: { error: { startsWith: BACKFILL_SCAN_PREFIX } } }] } };
+  const where =
+    dataset === "backfill"
       ? { scan: { error: { startsWith: BACKFILL_SCAN_PREFIX } } }
-      : { scan: { OR: [{ error: null }, { NOT: { error: { startsWith: BACKFILL_SCAN_PREFIX } } }] } },
-    select: { scanId: true, symbol: true, sessionDate: true, close: true, features: true, scan: { select: { startedAt: true, regimeFeatures: true } } },
+      : dataset === "crypto"
+        ? { ...live, assetClass: "crypto" }
+        : { ...live, OR: [{ assetClass: null }, { assetClass: "stock" }] };
+  const snaps = await prisma.universeSnapshot.findMany({
+    where,
+    select: { scanId: true, symbol: true, sessionDate: true, close: true, features: true, assetClass: true, scan: { select: { startedAt: true, regimeFeatures: true } } },
   });
   return snaps.map((s) => ({
     scanId: s.scanId,
@@ -81,6 +89,7 @@ async function loadSnapshots(backfill: boolean): Promise<StoredSnapshotRow[]> {
     close: s.close,
     features: (s.features as Record<string, unknown> | null) ?? null,
     regimeFeatures: (s.scan.regimeFeatures as Record<string, unknown> | null) ?? null,
+    assetClass: s.assetClass,
   }));
 }
 
@@ -88,17 +97,21 @@ async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const di = process.argv.indexOf("--dataset");
   const arg = di >= 0 ? process.argv[di + 1] : undefined;
-  const dataset: DatasetName = arg === "universe" || arg === "backfill" ? arg : "signals";
+  const dataset: DatasetName = arg === "universe" || arg === "backfill" || arg === "crypto" ? arg : "signals";
   // All builders throw on look-ahead
   let rows: EvalRow[];
   if (dataset === "signals") rows = buildEvalRows(await loadRows(), await loadSpy());
   else {
-    const snaps = await loadSnapshots(dataset === "backfill");
-    // The backfill covers ~2 years, longer than loadSpy's range: use the backfill's own SPY rows.
-    const spy = dataset === "backfill"
-      ? snaps.filter((s) => s.symbol === BENCHMARK_SYMBOL).map((s) => ({ date: s.sessionDate, close: s.close }))
-      : await loadSpy();
-    rows = buildUniverseRows(snaps, spy, { backfill: dataset === "backfill" });
+    const snaps = await loadSnapshots(dataset);
+    // Backfill: ~2 years, longer than loadSpy's range, so its own SPY rows. Crypto: BTC rows, whose
+    // sessions are the crypto calendar (weekday-harvest UTC dates).
+    const own = (sym: string) => snaps.filter((s) => s.symbol === sym).map((s) => ({ date: s.sessionDate, close: s.close }));
+    const bench = dataset === "backfill" ? own(BENCHMARK_SYMBOL) : dataset === "crypto" ? own(BTC_SYMBOL) : await loadSpy();
+    rows = buildUniverseRows(snaps, bench, {
+      backfill: dataset === "backfill",
+      crypto: dataset === "crypto",
+      benchmark: dataset === "crypto" ? BTC_SYMBOL : BENCHMARK_SYMBOL,
+    });
   }
   const scans = new Set(rows.map((r) => r.scanId)).size;
   const results = candidateKeys(rows).map((k) => evaluateFeature(rows, k));

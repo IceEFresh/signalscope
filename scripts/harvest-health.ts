@@ -33,14 +33,18 @@ async function load(n: number): Promise<ScanInput[]> {
       select: { id: true, memberCount: true },
     }),
   ]);
-  // P3-0c snapshot: latest scan only (about 1,500 rows), so the query stays bounded
-  const snapshot = ids[0]
-    ? (await prisma.universeSnapshot.findMany({ where: { scanId: ids[0] }, select: { features: true } })).map((r) => (r.features as Record<string, unknown> | null) ?? null)
-    : undefined;
+  // P3-0c snapshot: latest scan only (about 1,500 rows), so the query stays bounded. P3-0e: crypto rows split out.
+  const snapRows = ids[0] ? await prisma.universeSnapshot.findMany({ where: { scanId: ids[0] }, select: { features: true, assetClass: true } }) : undefined;
+  const feat = (r: { features: unknown }) => (r.features as Record<string, unknown> | null) ?? null;
+  const snapshot = snapRows?.filter((r) => r.assetClass !== "crypto").map(feat);
+  const cryptoSnapshot = snapRows?.filter((r) => r.assetClass === "crypto").map(feat);
+  const cryptoMembers = scans[0]?.universeId
+    ? await prisma.universeMember.count({ where: { universeId: scans[0].universeId, assetClass: "crypto" } })
+    : null;
   const stpBy = new Map(stp.map((g) => [g.scanId, g._count._all]));
   const uniBy = new Map(universes.map((u) => [u.id, u.memberCount]));
   return scans.map((s, i) => ({
-    ...(i === 0 && snapshot ? { snapshot } : {}),
+    ...(i === 0 && snapshot ? { snapshot, cryptoSnapshot, cryptoMembers } : {}),
     scanId: s.id,
     startedAt: s.startedAt,
     universeSize: s.universeId ? uniBy.get(s.universeId) ?? null : null,

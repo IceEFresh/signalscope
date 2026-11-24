@@ -6,6 +6,7 @@
  * listings), one chart per pre-filter survivor, one options call per final
  * survivor. Expect roughly 10 to 15 minutes, once a week.
  */
+import type { CryptoMemberData } from "../crypto/universe";
 import { yahooFinance, withYahooTimeout } from "@/lib/yahoo-finance";
 import { withYahooRetry } from "@/lib/yahoo-retry";
 import { toUnixSeconds } from "../yahoo-time";
@@ -44,6 +45,8 @@ export interface UniverseBuildResult {
   directoryCount: number;
   prefilterCount: number;
   members: UniverseMemberData[];
+  /** P3-0e: liquid crypto members, built alongside (log only). Absent if that build failed. */
+  crypto?: CryptoMemberData[];
 }
 
 export interface UniverseBuildDeps {
