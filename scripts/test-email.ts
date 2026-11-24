@@ -2,9 +2,9 @@ import "dotenv/config";
 import { sendTickerAlerts } from "../src/lib/email/index.js";
 
 const fakeTickers = [
-  { symbol: "NVDA", price: 142.5, aiScore: 82, catalyst: "Record AI chip demand; data center revenue +150% YoY", signalType: "multi_source" },
-  { symbol: "PLTR", price: 24.8, aiScore: 71, catalyst: "Major DoD contract win; AIP adoption accelerating", signalType: "insider_buy" },
-  { symbol: "SMCI", price: 38.2, aiScore: 68, catalyst: "AI server backlog growing; partnership with NVDA expanding", signalType: "volume_spike" },
+  { symbol: "NVDA", price: 142.5, aiScore: 82, catalyst: "Record AI chip demand; data center revenue +150% YoY", signalType: "multi_source", stage: "CONFIRMED" },
+  { symbol: "PLTR", price: 24.8, aiScore: 71, catalyst: "Major DoD contract win; AIP adoption accelerating", signalType: "insider_buy", stage: "CONFIRMED" },
+  { symbol: "SMCI", price: 38.2, aiScore: 68, catalyst: "AI server backlog growing; partnership with NVDA expanding", signalType: "volume_spike", stage: "CONFIRMED" },
 ];
 
 async function main() {
