@@ -43,6 +43,8 @@ export interface ScanInput {
   sectorRotation: Record<string, unknown> | null;
   stpRows: number;
   tickers: Array<Record<string, unknown> | null>; // ValidatedTicker.features per ticker
+  /** P3-0c UniverseSnapshot features for this scan (loaded for the latest scan only). */
+  snapshot?: Array<Record<string, unknown> | null>;
 }
 
 export interface KeyStats {
@@ -65,6 +67,8 @@ export interface ScanReport {
   universeSize: number | null;
   scanLevel: { regime: boolean; sectorRotation: boolean; stpRows: number };
   families: Record<TickerFamily, FamilyStats>;
+  /** P3-0c: snapshot row count and per-family stats, when loaded. */
+  snapshot?: { rows: number; families: Record<TickerFamily, FamilyStats> };
 }
 
 const isNull = (v: unknown) => v === null || v === undefined || (typeof v === "number" && !Number.isFinite(v));
@@ -74,6 +78,10 @@ function median(xs: number[]): number | null {
   const s = [...xs].sort((a, b) => a - b);
   const m = Math.floor(s.length / 2);
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function familyStats(rowsIn: ReadonlyArray<Record<string, unknown> | null>): Record<TickerFamily, FamilyStats> {
+  return analyzeScan({ scanId: "", startedAt: new Date(0), universeSize: null, regimeFeatures: null, sectorRotation: null, stpRows: 0, tickers: [...rowsIn] }).families;
 }
 
 export function analyzeScan(scan: ScanInput): ScanReport {
@@ -116,6 +124,7 @@ export function analyzeScan(scan: ScanInput): ScanReport {
       stpRows: scan.stpRows,
     },
     families,
+    ...(scan.snapshot ? { snapshot: { rows: scan.snapshot.length, families: familyStats(scan.snapshot) } } : {}),
   };
 }
 
@@ -136,6 +145,14 @@ export function flagsFor(reports: readonly ScanReport[]): Flag[] {
   if (!latest.scanLevel.regime) flags.push({ level: "warn", message: "family regime missing (Scan.regimeFeatures empty)" });
   if (!latest.scanLevel.sectorRotation) flags.push({ level: "warn", message: "family sectorRotation missing (Scan.sectorRotation empty)" });
   if (latest.scanLevel.stpRows === 0) flags.push({ level: "warn", message: "family stp missing (no StpSignal rows)" });
+  if (latest.snapshot) {
+    if (latest.snapshot.rows === 0) flags.push({ level: "warn", message: "universe snapshot missing (no UniverseSnapshot rows for the latest scan)" });
+    else if (latest.universeSize != null && latest.snapshot.rows < latest.universeSize * 0.9)
+      flags.push({ level: "warn", message: `universe snapshot has ${latest.snapshot.rows} rows for a universe of ${latest.universeSize} (under 90%)` });
+    for (const f of ["bar", "stp"] as const)
+      for (const [k, st] of Object.entries(latest.snapshot.families[f].keys))
+        if (st.nullRate >= 1) flags.push({ level: "warn", message: `snapshot ${f}.${k} is 100% null in the latest scan` });
+  }
   for (const f of TICKER_FAMILIES) {
     const fam = latest.families[f];
     if (fam.rowsWithFamily === 0) {
@@ -172,6 +189,13 @@ export function renderText(reports: readonly ScanReport[], flags: readonly Flag[
     out.push(`[${f}] coverage ${pct(fam.coverage)} (${fam.rowsWithFamily}/${latest.tickers})`);
     for (const [k, s] of Object.entries(fam.keys).sort(([a], [b]) => a.localeCompare(b)))
       out.push(`  ${k.padEnd(34)} null ${pct(s.nullRate).padStart(4)}  min ${fmt(s.min)}  med ${fmt(s.median)}  max ${fmt(s.max)}`);
+  }
+  if (latest.snapshot) {
+    const sn = latest.snapshot;
+    out.push("", `[universe snapshot] ${sn.rows} rows; coverage bar ${pct(sn.families.bar.coverage)}, stp ${pct(sn.families.stp.coverage)}`);
+    for (const f of ["bar", "stp"] as const)
+      for (const [k, st] of Object.entries(sn.families[f].keys).sort(([a], [b]) => a.localeCompare(b)))
+        out.push(`  ${k.padEnd(34)} null ${pct(st.nullRate).padStart(4)}  min ${fmt(st.min)}  med ${fmt(st.median)}  max ${fmt(st.max)}`);
   }
   out.push("", flags.length ? "Flags:" : "Flags: none");
   for (const fl of flags) out.push(`  ${fl.level.toUpperCase()} ${fl.message}`);

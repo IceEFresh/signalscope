@@ -33,9 +33,14 @@ async function load(n: number): Promise<ScanInput[]> {
       select: { id: true, memberCount: true },
     }),
   ]);
+  // P3-0c snapshot: latest scan only (about 1,500 rows), so the query stays bounded
+  const snapshot = ids[0]
+    ? (await prisma.universeSnapshot.findMany({ where: { scanId: ids[0] }, select: { features: true } })).map((r) => (r.features as Record<string, unknown> | null) ?? null)
+    : undefined;
   const stpBy = new Map(stp.map((g) => [g.scanId, g._count._all]));
   const uniBy = new Map(universes.map((u) => [u.id, u.memberCount]));
-  return scans.map((s) => ({
+  return scans.map((s, i) => ({
+    ...(i === 0 && snapshot ? { snapshot } : {}),
     scanId: s.id,
     startedAt: s.startedAt,
     universeSize: s.universeId ? uniBy.get(s.universeId) ?? null : null,

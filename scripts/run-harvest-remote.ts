@@ -3,6 +3,7 @@ import { fetchSignals } from "../src/lib/harvester/index.js";
 import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
 import { yahooHealthSummary } from "../src/lib/yahoo-retry.js";
 import { computeAlpacaOptionsExtras } from "../src/lib/harvester/alpaca-options.js";
+import { chunk, computeSnapshotRows, type SnapshotRow } from "../src/lib/harvester/universe/snapshot.js";
 import {
   computeIngestExtras,
   computeStpExtras,
@@ -18,6 +19,37 @@ import { writeFileSync } from "fs";
 const ENDPOINT_URL = process.env.HARVEST_ENDPOINT_URL;
 const API_KEY = process.env.HARVEST_API_KEY;
 const FETCH_TIMEOUT = 5 * 60 * 1000; // 5 minutes (processing takes 1-3 min)
+
+/**
+ * P3-0c: post snapshot rows in batches to /api/harvest/snapshot after the scan exists.
+ * Never throws: a lost snapshot must not fail the harvest or trigger an ingest retry.
+ */
+async function postSnapshot(scanId: string, rows: readonly SnapshotRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  const url = ENDPOINT_URL!.replace(/\/ingest\/?$/, "/snapshot");
+  const t0 = Date.now();
+  let bytes = 0;
+  let inserted = 0;
+  let failed = 0;
+  for (const part of chunk(rows)) {
+    const body = JSON.stringify({ scanId, rows: part });
+    bytes += body.length;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-harvest-key": API_KEY! },
+        body,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      inserted += ((await res.json()) as { inserted?: number }).inserted ?? 0;
+    } catch (err) {
+      failed += part.length;
+      console.warn(`[snapshot] batch failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  console.log(`[snapshot] posted ${rows.length} rows (${(bytes / 1024).toFixed(0)} KB) in ${((Date.now() - t0) / 1000).toFixed(1)}s: ${inserted} inserted, ${failed} failed`);
+}
 
 async function postSignals(payload: HarvestIngestPayload): Promise<{ status: string; scanId: string }> {
   const payloadSize = JSON.stringify(payload).length;
@@ -73,6 +105,10 @@ async function main() {
 
   // 1c. STP daily states and triggers for the universe plus signal symbols (PLAN.md 1g, log only)
   const stp = await computeStpExtras([...prep.scanSymbols, ...Object.keys(extras.barMetrics)]);
+
+  // 1c'. Universe-wide snapshot rows from the chart cache and STP states (P3-0c, log only, no new requests)
+  const snapshot = await computeSnapshotRows(prep.scanSymbols, stp);
+  console.log(`[snapshot] ${snapshot.rows.length} rows built, ${snapshot.missing} symbols without a cached chart`);
 
   // 1d. Market regime fields for this scan (PLAN.md 1c, log only)
   const regime = await computeRegimeExtras();
@@ -130,6 +166,7 @@ async function main() {
   try {
     const result = await postSignals(payload);
     console.log(`Scan completed remotely: ${result.scanId}`);
+    await postSnapshot(result.scanId, snapshot.rows);
   } catch (err) {
     console.warn(`First attempt failed: ${err instanceof Error ? err.message : err}`);
     console.log("Retrying in 5 seconds...");
@@ -138,6 +175,7 @@ async function main() {
     try {
       const result = await postSignals(payload);
       console.log(`Scan completed remotely (retry): ${result.scanId}`);
+      await postSnapshot(result.scanId, snapshot.rows);
     } catch (retryErr) {
       console.error(`Retry failed: ${retryErr instanceof Error ? retryErr.message : retryErr}`);
 

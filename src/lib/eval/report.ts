@@ -34,10 +34,12 @@ function splitTable(title: string, s: SplitResult): string[] {
   return [...lines, ""];
 }
 
-export function markdownReport(results: readonly FeatureResult[], meta: { date: string; commit: string; rows: number; scans: number }): string {
+export type DatasetName = "signals" | "universe";
+
+export function markdownReport(results: readonly FeatureResult[], meta: { date: string; commit: string; rows: number; scans: number; dataset: DatasetName }): string {
   const count = (v: string) => results.filter((r) => r.verdict === v).length;
   const out = [
-    `# Phase 3 feature validation, ${meta.date} (${meta.commit})`,
+    `# Phase 3 feature validation: ${meta.dataset} dataset, ${meta.date} (${meta.commit})`,
     "",
     `${meta.rows} eligible rows from ${meta.scans} scans. ${results.length} features tested (= ${results.length} comparisons): ` +
       `${count("KEEP")} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT. Primary metric: ${PRIMARY_HORIZON} excess return vs SPY.`,
@@ -58,11 +60,14 @@ export function markdownReport(results: readonly FeatureResult[], meta: { date: 
 }
 
 /** One summary row for the experiment log, in its 14-column layout. */
-export function experimentSummaryRow(results: readonly FeatureResult[], meta: { number: number; date: string; commit: string; rows: number; scans: number; reportPath: string }): string {
+export function experimentSummaryRow(
+  results: readonly FeatureResult[],
+  meta: { number: number; date: string; commit: string; rows: number; scans: number; reportPath: string; dataset: DatasetName },
+): string {
   const keep = results.filter((r) => r.verdict === "KEEP");
   const count = (v: string) => results.filter((r) => r.verdict === v).length;
   const desc =
-    `PHASE 3 VALIDATION (P3-0b): ${results.length} features / comparisons on ${meta.rows} rows from ${meta.scans} scans. ` +
+    `PHASE 3 VALIDATION (P3-0b), ${meta.dataset} dataset: ${results.length} features / comparisons on ${meta.rows} rows from ${meta.scans} scans. ` +
     `${keep.length} KEEP, ${count("DROP")} DROP, ${count("INSUFFICIENT")} INSUFFICIENT. A KEEP is a reason for a rule-change PR, not the change. Report: ${meta.reportPath}.`;
   return `| ${meta.number} | ${meta.date} | ${meta.commit} | n/a | n/a | n/a | ${results.length} | quintile buckets (prereg) | ${keep.length ? "keep" : "discard"} | ${cell(keep.map((r) => r.key).join(" ") || "none")} | n/a | n/a | n/a | ${cell(desc)} |`;
 }
