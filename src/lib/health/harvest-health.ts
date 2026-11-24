@@ -71,7 +71,13 @@ export interface ScanReport {
   startedAt: string;
   tickers: number;
   universeSize: number | null;
-  scanLevel: { regime: boolean; sectorRotation: boolean; stpRows: number };
+  scanLevel: {
+    regime: boolean;
+    sectorRotation: boolean;
+    stpRows: number;
+    /** P3-0f: Scan.regimeFeatures.macro, or null when the scan has none. */
+    macro: Record<string, unknown> | null;
+  };
   families: Record<TickerFamily, FamilyStats>;
   /** P3-0c: snapshot row count and per-family stats, when loaded. */
   snapshot?: { rows: number; families: Record<TickerFamily, FamilyStats> };
@@ -90,6 +96,11 @@ function median(xs: number[]): number | null {
 
 function familyStats(rowsIn: ReadonlyArray<Record<string, unknown> | null>): Record<TickerFamily, FamilyStats> {
   return analyzeScan({ scanId: "", startedAt: new Date(0), universeSize: null, regimeFeatures: null, sectorRotation: null, stpRows: 0, tickers: [...rowsIn] }).families;
+}
+
+function macroOf(rf: Record<string, unknown> | null): Record<string, unknown> | null {
+  const m = rf?.macro;
+  return m && typeof m === "object" && !Array.isArray(m) ? (m as Record<string, unknown>) : null;
 }
 
 export function analyzeScan(scan: ScanInput): ScanReport {
@@ -127,9 +138,10 @@ export function analyzeScan(scan: ScanInput): ScanReport {
     tickers: rows.length,
     universeSize: scan.universeSize,
     scanLevel: {
-      regime: !!scan.regimeFeatures && Object.keys(scan.regimeFeatures).length > 0,
+      regime: !!scan.regimeFeatures && Object.keys(scan.regimeFeatures).some((k) => k !== "macro"),
       sectorRotation: !!scan.sectorRotation && Object.keys(scan.sectorRotation).length > 0,
       stpRows: scan.stpRows,
+      macro: macroOf(scan.regimeFeatures),
     },
     families,
     ...(scan.snapshot ? { snapshot: { rows: scan.snapshot.length, families: familyStats(scan.snapshot) } } : {}),
@@ -156,6 +168,13 @@ export function flagsFor(reports: readonly ScanReport[]): Flag[] {
   if (!latest.scanLevel.regime) flags.push({ level: "warn", message: "family regime missing (Scan.regimeFeatures empty)" });
   if (!latest.scanLevel.sectorRotation) flags.push({ level: "warn", message: "family sectorRotation missing (Scan.sectorRotation empty)" });
   if (latest.scanLevel.stpRows === 0) flags.push({ level: "warn", message: "family stp missing (no StpSignal rows)" });
+  const macro = latest.scanLevel.macro;
+  if (!macro) flags.push({ level: "warn", message: "macro context missing (Scan.regimeFeatures.macro empty)" });
+  else {
+    const nulls = Object.entries(macro).filter(([k, v]) => k !== "dxy_source" && isNull(v)).map(([k]) => k);
+    if (nulls.length) flags.push({ level: "warn", message: `macro fields null: ${nulls.join(", ")}` });
+    if (macro.dxy_source === "UUP") flags.push({ level: "info", message: "macro dollar series fell back to UUP (dxy_* on UUP's price scale)" });
+  }
   if (latest.snapshot) {
     if (latest.snapshot.rows === 0) flags.push({ level: "warn", message: "universe snapshot missing (no UniverseSnapshot rows for the latest scan)" });
     else if (latest.universeSize != null && latest.snapshot.rows < latest.universeSize * 0.9)
@@ -202,6 +221,15 @@ export function renderText(reports: readonly ScanReport[], flags: readonly Flag[
   if (!latest) return "No completed scans.";
   out.push(`Harvest health: latest scan ${latest.scanId} at ${latest.startedAt}, ${latest.tickers} tickers, universe ${latest.universeSize ?? "none"}`);
   out.push(`Scan-level: regime ${latest.scanLevel.regime ? "ok" : "MISSING"}, sectorRotation ${latest.scanLevel.sectorRotation ? "ok" : "MISSING"}, STP rows ${latest.scanLevel.stpRows}`);
+  const mac = latest.scanLevel.macro;
+  out.push(
+    mac
+      ? `Macro (${mac.macro_bar_date ?? "no date"}): ${Object.entries(mac)
+          .filter(([k]) => k !== "macro_version" && k !== "macro_bar_date")
+          .map(([k, v]) => `${k}=${typeof v === "number" ? fmt(v) : v ?? "null"}`)
+          .join(", ")}`
+      : "Macro: MISSING",
+  );
   out.push(`Previous scans compared: ${reports.length - 1}`, "");
   for (const f of TICKER_FAMILIES) {
     const fam = latest.families[f];

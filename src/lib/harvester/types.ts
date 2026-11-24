@@ -172,6 +172,8 @@ export interface HarvestIngestPayload {
   stp?: Record<string, IngestStp>;
   /** PLAN.md 1c market regime fields for this scan (log only), stored on Scan.regimeFeatures. */
   regime?: Record<string, number | boolean | string | null>;
+  /** P3-0f macro context for this scan (log only), stored on Scan.regimeFeatures under `macro`. */
+  macro?: Record<string, number | boolean | string | null>;
   /** PLAN.md 1f sector and industry rotation for this scan (log only), stored on Scan.sectorRotation. */
   sectorRotation?: unknown;
   /** PLAN.md 1h option-chain features per symbol (log only), merged into ValidatedTicker.features. */

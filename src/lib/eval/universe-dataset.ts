@@ -23,6 +23,7 @@ import { etParts } from "@/lib/harvester/universe/bar-metrics";
 import { isBackfillFeatures } from "@/lib/harvester/universe/backfill";
 import { BENCHMARK_SYMBOL } from "@/lib/harvester/universe/snapshot";
 import { LookAheadError, type SpyClose } from "./dataset";
+import { scanAttrs } from "./scan-attrs";
 import { HORIZONS, type EvalRow, type Horizon } from "./rules";
 
 export interface StoredSnapshotRow {
@@ -90,7 +91,8 @@ export function buildUniverseRows(rowsIn: readonly StoredSnapshotRow[], spy: rea
       ret[h] = c != null && r.close > 0 ? c / r.close - 1 : null;
       excess[h] = ret[h] != null && s0 && s1 ? (ret[h] as number) - (s1 / s0 - 1) : null;
     }
-    const regime = Object.fromEntries(Object.entries(r.regimeFeatures ?? {}).map(([k, v]) => [`regime.${k}`, v]));
+    // The stock regime is not a crypto feature (P3-0e); macro.* goes to every dataset as conditioning only (P3-0f).
+    const regime = scanAttrs(r.regimeFeatures, { regime: !opts.crypto });
     out.push({ scanId: r.scanId, scanStart: r.scanStartedAt, symbol: r.symbol, ret, excess, attrs: { ...(r.features ?? {}), ...regime } });
   }
   return out;

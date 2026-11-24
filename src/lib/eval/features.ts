@@ -48,11 +48,14 @@ export const EXCLUDED_KEYS: ReadonlySet<string> = new Set([
   "regime.regime_version", "regime.spy_bar_date", "regime.spy_close",
 ]);
 
-/** Feature keys to test: every key of the logged families plus scan regime keys, minus exclusions. */
+/**
+ * Feature keys to test: every key of the logged families plus scan regime keys, minus
+ * exclusions. `macro.*` (P3-0f) are conditioning columns, never candidates here.
+ */
 export function candidateKeys(rows: readonly EvalRow[]): string[] {
   const keys = new Set<string>();
   for (const r of rows) for (const k of Object.keys(r.attrs)) {
-    if (EXCLUDED_KEYS.has(k)) continue;
+    if (EXCLUDED_KEYS.has(k) || k.startsWith("macro.")) continue;
     if (k.startsWith("regime.") || familyOf(k)) keys.add(k);
   }
   return [...keys].sort();

@@ -519,6 +519,8 @@ export interface ProcessContext {
   stp?: Record<string, IngestStp>;
   /** PLAN.md 1c market regime fields, stored on Scan.regimeFeatures. Never read by scoring. */
   regime?: Record<string, number | boolean | string | null>;
+  /** P3-0f macro context, stored on Scan.regimeFeatures under `macro`. Never read by scoring. */
+  macro?: Record<string, number | boolean | string | null>;
   /** PLAN.md 1f sector rotation, stored on Scan.sectorRotation; per-ticker keys go into features. */
   sectorRotation?: SectorRotation;
   /** PLAN.md 1h option-chain features per symbol, merged into features. Never read by scoring. */
@@ -1107,12 +1109,13 @@ export async function processSignals(allSignals: RawSignal[], ctx: ProcessContex
     });
 
     // Market regime (PLAN.md 1c) and sector rotation (1f), log only. After the scan commits; a failure is logged.
-    if (ctx.regime || ctx.sectorRotation) {
+    if (ctx.regime || ctx.macro || ctx.sectorRotation) {
       try {
+        const regimeFeatures = ctx.regime || ctx.macro ? { ...(ctx.regime ?? {}), ...(ctx.macro ? { macro: ctx.macro } : {}) } : null;
         await prisma.scan.update({
           where: { id: scan.id },
           data: {
-            ...(ctx.regime ? { regimeFeatures: ctx.regime } : {}),
+            ...(regimeFeatures ? { regimeFeatures } : {}),
             ...(ctx.sectorRotation ? { sectorRotation: ctx.sectorRotation as unknown as Prisma.InputJsonValue } : {}),
           },
         });
