@@ -1,5 +1,6 @@
 import type { RawSignal } from "../types";
 import { BLACKLIST, MEGA_CAPS } from "./ticker-utils";
+import { throwIfRetryable, withRetry } from "@/lib/yahoo-retry";
 
 // StockTwits website is Cloudflare-protected (403). TrendSpider mirrors their
 // trending list at a publicly accessible URL and is server-side rendered.
@@ -9,15 +10,23 @@ export async function fetchStockTwitsSignals(): Promise<RawSignal[]> {
   console.log("StockTwits: fetching trending tickers via TrendSpider mirror...");
 
   try {
-    const res = await fetch(TRENDSPIDER_URL, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
+    // S2: retry 429 / 5xx / network errors with backoff (Retry-After honoured, up to 60 s). No fallback source.
+    const res = await withRetry(
+      async () => {
+        const r = await fetch(TRENDSPIDER_URL, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+          },
+          signal: AbortSignal.timeout(15000),
+        });
+        throwIfRetryable(r);
+        return r;
       },
-      signal: AbortSignal.timeout(15000),
-    });
+      { label: "stocktwits" },
+    );
 
     if (!res.ok) {
       console.warn(`StockTwits: TrendSpider returned ${res.status}. Skipping.`);
