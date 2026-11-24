@@ -140,5 +140,5 @@ Compare after at least 50 trades per arm.
 ## Open decisions (defaults assumed)
 
 - Instance stays private, with no public API or x402. Default: private. This also keeps the Unusual Whales personal-use terms intact if you add it.
-- Crypto or on-chain pivot using your wallet-watcher data. Default: deferred until the stock version has a baseline.
+- Crypto or on-chain pivot using your wallet-watcher data. **Decided (Chris, 2026-11-24): add liquid crypto as a separate, log-only dataset (P3-0e).** It's evaluated against BTC and never pooled with stocks. Wallet-watcher and on-chain signals are still deferred.
 - Paid options flow. Default: deferred to step 2d.
