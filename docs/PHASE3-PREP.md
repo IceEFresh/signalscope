@@ -197,7 +197,7 @@ Besides the calendar weekly and monthly opens, test **rolling** opens for the tw
   - **superseded by §1e:** a gap through the entry does NOT fill (stop-limit, day order);
   - a gap through the **target** exits at the **open** (the better price, which a resting limit order gets);
   - a gap through the stop exits at the open (already the rule).
-- **Entry location vs the normal move (a selection rule).** A late entry in a move has less room to reach 3R before the move ends. Measure it for each trade.
+- **Entry location vs the normal move: SUPERSEDED by §1f (swing structure).** The text below is kept for history only. A late entry in a move has less room to reach 3R before the move ends. Measure it for each trade.
 
   **Reviewer's working definition (Chris to correct):**
   - The normal weekly move `W` is the mean high−low range of the prior 10 completed calendar weeks.
@@ -267,6 +267,44 @@ The control uses the same management.
 - the stop never drops below BE;
 - the 60-session cap;
 - R across a pyramided position, and initial-unit R.
+
+### 1f. Entry location by swing structure (Chris, 2026-11-25). Replaces the weekly/monthly `week_used` / `month_used` test in §1d.
+Chris's selection rule: how far into a stock's *typical move* the entry sits. A late entry in a rally has less room to reach 3R before the rally ends. Measure it from each stock's own swing history.
+
+1. **Swings, by an ATR zigzag:**
+   - A swing high is confirmed once price falls `k × ATR14` from it, and a swing low once price rises `k × ATR14` from it.
+   - ATR14 is Wilder's, on the bar where the leg starts.
+   - **Run all three thresholds:** k = **1.5, 2 and 3**.
+   - Use confirmed swings only. On the trigger day, the current leg's start is the last confirmed swing, so there's no look-ahead.
+2. **Profile per stock**, from confirmed legs in the 250 sessions up to the trigger day (fewer than 4 legs of a kind means null):
+   - **Up-legs (rallies) and down-legs (pullbacks):** median and 75th-percentile size, in ATR units and in %; median duration in bars.
+3. **Entry scores for a long** (shorts mirrored: down-legs as the move, up-legs as the pullback):
+   - `rally_used = (fill − last swing low) / median rally size`
+   - `rally_age = bars since the last swing low / median rally bars`
+   - `room_3r = (median rally size − (fill − last swing low)) / (3 × R)`: ≥ 1 means a typical rally still has room for 3R
+   - `pullback_ratio`: the size of the most recent confirmed pullback before the leg, divided by the median pullback
+4. **Pre-registered test,** replacing §1d's 2 comparisons: trades with `rally_used < 0.5` **and** `room_3r ≥ 1`, versus all trades of that direction.
+   - One test per k (1.5, 2, 3) × direction (long, short): **6 comparisons per exit**.
+   - Same KEEP rule, plus it must beat all trades of that direction.
+5. **Descriptive,** for each k:
+   - expectancy and 3R-hit rate by `rally_used` bucket (`< 0.25`, `0.25–0.5`, `0.5–0.75`, `0.75–1`, `> 1`);
+   - the same by `room_3r` (`< 1`, `≥ 1`);
+   - the same by `rally_age` (`< 0.5`, `0.5–1`, `> 1`);
+   - the same by `pullback_ratio` (`< 0.5`, `0.5–1`, `> 1`).
+   - Also the per-stock profile distribution across the universe: median rally and pullback in ATR, and bars.
+6. **Code:** a pure module `src/lib/harvester/universe/swings.ts`.
+   - `zigzag(bars, k)` returns confirmed pivots.
+   - `swingProfile(bars, t, k)` and `entryLocation(bars, t, fill, R, dir, k)`.
+   - Reused later for live logging in P3-0i2.
+7. **Tests:**
+   - zigzag pivots on synthetic bars at each k;
+   - no pivot confirmed before the reversal bar (look-ahead);
+   - profile medians and percentiles;
+   - null with fewer than 4 legs;
+   - `rally_used`, `room_3r`, `rally_age` and `pullback_ratio` on a worked example;
+   - shorts mirrored.
+
+**P3-0i2** (live logging) also logs `swing_k{1.5,2,3}_{rally_used,rally_age,room_3r_at_entry,pullback_ratio}`, plus the profile medians, into the features JSON. `room_3r` uses the STP trigger's entry and stop when there is one; otherwise null.
 
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
