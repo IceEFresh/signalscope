@@ -13,8 +13,10 @@
 //     -v "$PWD/scripts/backtesting-experiments.md:/app/scripts/backtesting-experiments.md" \
 //     -e NODE_OPTIONS=--max-old-space-size=6144 -e GIT_COMMIT=$(git rev-parse --short HEAD) \
 //     harvester npx tsx scripts/simulate-stp.ts --dataset backfill
-// Options: --exit A|B (default both), --years 2, --dry-run (summary only). Exit B (STP management,
-// §1e) is primary and gets the verdicts; exit A (fixed 3R) is a reference with no verdicts.
+// Options: --exit A|B|C (default all three), --years 2, --dry-run (summary only). Exit B (STP
+// management, §1e/§1j) is primary and gets the verdicts; exit A (fixed 3R) is a reference and
+// exit C (the §1j "choppy" variant: adds every 1 × ATR, trail from 2R) is descriptive, neither
+// with verdicts.
 
 import "dotenv/config";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -68,8 +70,8 @@ async function main() {
   const dataset = arg("--dataset") ?? "backfill";
   if (dataset !== "backfill") throw new Error(`only --dataset backfill is supported (got ${dataset})`);
   const requested = arg("--exit")?.toUpperCase();
-  if (requested && requested !== "A" && requested !== "B") throw new Error(`--exit must be A or B (got ${requested})`);
-  const exits: ExitRule[] = requested ? [requested as ExitRule] : ["B", "A"];
+  if (requested && !["A", "B", "C"].includes(requested)) throw new Error(`--exit must be A, B or C (got ${requested})`);
+  const exits: ExitRule[] = requested ? [requested as ExitRule] : ["B", "A", "C"];
   const years = Number(arg("--years") ?? 2);
   const dryRun = process.argv.includes("--dry-run");
   if (!existsSync(CACHE_DIR)) throw new Error(`${CACHE_DIR} not found: run scripts/backfill-snapshot.ts first (its chart cache is the input)`);
@@ -124,7 +126,7 @@ async function main() {
     counts: { calendar: emptyCounts(), rolling: emptyCounts() } as Record<Variant, SymbolCounts>,
     sizeSkipByType: {} as Record<string, number>,
   });
-  const byExit: Record<ExitRule, ReturnType<typeof fresh>> = { A: fresh(), B: fresh() };
+  const byExit: Record<ExitRule, ReturnType<typeof fresh>> = { A: fresh(), B: fresh(), C: fresh() };
   const overlap: Overlap = { both: 0, calendarOnly: 0, rollingOnly: 0 };
   const profileAcc: Record<string, { rally: number[]; pullback: number[]; rallyBars: number[]; pullbackBars: number[] }> = Object.fromEntries(
     SWING_KS.map((k) => [String(k), { rally: [], pullback: [], rallyBars: [], pullbackBars: [] }]),

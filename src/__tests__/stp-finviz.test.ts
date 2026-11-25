@@ -101,7 +101,7 @@ describe("§1i pre-registered comparisons", () => {
   const trade = (i: number, extra: Partial<Trade>): Trade => {
     const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
     return {
-      finvizBase: true, finvizScreens: [], swing: {}, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1,
+      finvizBase: true, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, swing: {}, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1,
       sizeMultOpens: 1, sizeMultTrend: 1, baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant: "calendar",
       alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 0, symbol: "S",
       scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1, stop: 0.9,

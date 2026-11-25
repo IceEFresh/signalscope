@@ -70,10 +70,12 @@ export function simMarkdownReport(
     "",
     SURVIVORSHIP_NOTE,
     "",
-    meta.exit === "B"
-      ? "Exit B (primary, verdicts): STP management. Stop-limit entry (no fill on a gap through it); adds every 2R at 50% of the current size, stop to the " +
-        "size-weighted breakeven after each; no target; trailing from the bar after 3R is touched (mech1/mech2: mX; others: bar stop while close is more " +
-        `than 1 ATR from sma10, else pmX); 60-session cap. R = all units over the initial 1-unit R. Costs ${(COST_ROUND_TRIP * 100).toFixed(2)}% of notional per leg. Control seed ${CONTROL_SEED}.`
+    meta.exit !== "A"
+      ? `Exit ${meta.exit} (${meta.exit === "B" ? "primary, verdicts" : "the §1j choppy variant, descriptive, no verdicts"}): STP management. Stop-limit entry (no fill on a gap through it); ` +
+        `adds every ${meta.exit === "B" ? 2 : 1} × ATR14 of the trigger bar, never on the entry day, each floor(50%) of the current shares, stop to the ` +
+        `size-weighted breakeven after each; no target; trailing from the bar after ${meta.exit === "B" ? 3 : 2}R is touched (mech1/mech2: mX; others: bar stop while close is more ` +
+        `than 1 ATR from sma10, else pmX; per-bar fudge); 60-session cap. Size = stock factor × pyramid, floored at 0.25; risk ${usd(BASE_RISK_DOLLARS)} × size. ` +
+        `R = dollar P&L over the base risk. Costs ${(COST_ROUND_TRIP * 100).toFixed(2)}% of each leg's value. Control seed ${CONTROL_SEED}.`
       : `Exit A (reference, no verdicts): stop, ${rule.targetR}R target as a limit (a gap through it exits at the open), time exit at session ${rule.maxSessions}. Costs ${(COST_ROUND_TRIP * 100).toFixed(2)}% round trip. Control seed ${CONTROL_SEED}.`,
     "",
     `${meta.symbols} symbols.` +
@@ -116,11 +118,15 @@ export function simMarkdownReport(
           "",
         ]
       : []),
+    `Sizing (§1j): stock factor 1 on ${results.find((r) => r.group === "size:stock:1")?.all.trades ?? 0} calendar trades, 0.5 on ${results.find((r) => r.group === "size:stock:0.5")?.all.trades ?? 0}; ` +
+      `the 0.25 floor applied to ${results.find((r) => r.group === "size:floorHit")?.all.trades ?? 0}; ` +
+      `the old Pine abs() rule would have given full size where the fixed rule gives half on ${results.find((r) => r.group === "size:absFullFixedHalf")?.all.trades ?? 0}.`,
+    "",
     meta.exit === "B"
       ? `**Primary groups (${prim.length} comparisons): ${n("KEEP")} KEEP, ${n("DROP")} DROP, ${n("INSUFFICIENT")} INSUFFICIENT, ${n("NOT_RUN")} NOT_RUN.** A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.`
-      : `**Reference exit: the ${prim.length} pre-registered groups are shown without verdicts.**`,
+      : `**${meta.exit === "A" ? "Reference" : "Descriptive"} exit: the ${prim.length} pre-registered groups are shown without verdicts.**${meta.exit === "C" ? " See the market:agree / market:notAgree groups for the choppy split." : ""}`,
     "",
-    ...(meta.exit === "B"
+    ...(meta.exit !== "A"
       ? [
           "Management (all trades in the group):",
           "",
@@ -153,11 +159,11 @@ const csvCell = (v: unknown) => {
 };
 
 export function tradesCsv(trades: readonly Trade[]): string {
-  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "adds", "size_at_exit", "shares", "shares_at_exit", "base_risk", "dollar_net", "size_mult",
+  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "adds", "size_at_exit", "shares", "shares_at_exit", "base_risk", "dollar_net", "size_mult", "stock_factor", "size_combined", "floor_hit", "abs_full_fixed_half",
     "layer_market", "layer_sector", "layer_industry", "size_mult_industry", "size_mult_opens", "size_mult_trend",
     "finviz_base", "finviz_screens", "k1.5_rally_used", "k1.5_room_3r", "k2_rally_used", "k2_room_3r", "k3_rally_used", "k3_room_3r", "reached_3r", "initial_unit_r_net", "control_r_net", "htf_alignment", "week_used", "month_used", "room_w", "regime", "quarter"];
   const rows = trades.map((t) =>
-    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.adds, t.size, t.shares, t.sharesAtExit, t.baseRisk, t.dollarNet, t.sizeMult,
+    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.adds, t.size, t.shares, t.sharesAtExit, t.baseRisk, t.dollarNet, t.sizeMult, t.stockFactor, t.sizeCombined, t.floorHit, t.absFullFixedHalf,
       t.layerMarket, t.layerSector, t.layerIndustry, t.sizeMultIndustry, t.sizeMultOpens, t.sizeMultTrend,
       t.finvizBase, t.finvizScreens.join(" "), t.swing["1.5"]?.rallyUsed, t.swing["1.5"]?.room3R, t.swing["2"]?.rallyUsed, t.swing["2"]?.room3R, t.swing["3"]?.rallyUsed, t.swing["3"]?.room3R, t.reached3R, t.initialUnitR, t.controlNetR, t.alignment, t.weekUsed, t.monthUsed, t.roomW, t.regime, t.quarter]
       .map(csvCell)
@@ -172,9 +178,9 @@ export function simExperimentRow(results: readonly GroupResult[], meta: { number
   const n = (v: string) => prim.filter((r) => r.verdict === v).length;
   const all = results.find((r) => r.group === "all");
   const desc =
-    `P3-0i STP TRIGGER TRADES, backfill dataset, exit ${meta.exit} (${meta.exit === "B" ? "STP management, primary" : "fixed 3R, reference, no verdicts"}): ${meta.trades} trades, ${prim.length} primary groups. ` +
+    `P3-0i STP TRIGGER TRADES, backfill dataset, exit ${meta.exit} (${meta.exit === "B" ? "STP management, primary" : meta.exit === "A" ? "fixed 3R, reference, no verdicts" : "choppy variant (1 x ATR adds, trail from 2R), descriptive"}): ${meta.trades} trades, ${prim.length} primary groups. ` +
     `${keep.length} KEEP, ${n("DROP")} DROP, ${n("INSUFFICIENT")} INSUFFICIENT. All trades held out: net exp ${r2(all?.heldOut.expectancy ?? null)}R vs control ${r2(all?.heldOut.controlExpectancy ?? null)}R. ` +
     `Survivorship-biased (current members only). A KEEP leads to a Phase 4 paper-trading proposal, not a rule. Report: ${meta.reportPath}.`;
-  const status = meta.exit === "B" ? (keep.length ? "keep" : "discard") : "reference";
+  const status = meta.exit === "B" ? (keep.length ? "keep" : "discard") : meta.exit === "A" ? "reference" : "descriptive";
   return `| ${meta.number} | ${meta.date} | ${meta.commit} | n/a | n/a | n/a | ${prim.length} | STP trade sim exit ${meta.exit} (prereg${meta.exit === "B" ? "" : ", reference"}) | ${status} | ${cell(keep.map((r) => r.group).join(" ") || "none")} | n/a | n/a | n/a | ${cell(desc)} |`;
 }

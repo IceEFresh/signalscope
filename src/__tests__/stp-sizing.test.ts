@@ -3,7 +3,7 @@ import type { DailyBar } from "@/lib/harvester/universe/bar-metrics";
 import { barDateOf } from "@/lib/harvester/universe/backfill";
 import { confirmedBy, MIN_LEGS, swingEntry, swingProfile, zigzag, SWING_KS } from "@/lib/harvester/universe/swings";
 import { etfStates, layerState, marketVote, pyramidLayers, sizeMult, sizeMultWithIndustry, type EtfState } from "@/lib/harvester/universe/pyramid";
-import { atrSeries, initialShares, portfolioStats, simulateExitB, simulateSymbol, type BarInfo, type Setup, type Trade } from "@/lib/eval/stp-sim";
+import { atrSeries, BASE_RISK_DOLLARS, combinedSize, EXIT_RULES, initialShares, portfolioStats, simulateExit, simulateExitB, simulateSymbol, stockFactor, type BarInfo, type Setup, type Trade } from "@/lib/eval/stp-sim";
 
 /** Weekday bars at 14:30 UTC from closes: open = previous close, high/low = close ± 1. */
 function fromCloses(closes: number[], start = Date.UTC(2024, 0, 1, 14, 30) / 1000): DailyBar[] {
@@ -172,20 +172,20 @@ describe("§1h fixed dollar risk", () => {
   });
 
   it("an add that rounds to 0 shares is no add; a short's dollar P&L is mirrored", () => {
-    // $15 base risk, $10 per share → 1 share; price reaches the 2R add at 120 and 4R at 140, but floor(0.5 × 1) = 0
+    // $15 base risk, $10 per share → 1 share; add step 20; price reaches the adds at 120 and 140, but floor(0.5 × 1) = 0
     const b = fromCloses([100, 100, 121, 141, 141, 60]);
-    const one = simulateExitB(b, b.map((x) => x.close), atrSeries(b), 0, 1, 100, 10, 90, 0.5, "inside", 15);
+    const one = simulateExitB(b, b.map((x) => x.close), atrSeries(b), 0, 1, 100, 10, 90, 0.5, "inside", 15, 20);
     expect(one.shares).toBe(1);
     expect(one.adds).toBe(0);
     expect(one.sharesAtExit).toBe(1);
     // with 3 shares the first add is floor(1.5) = 1
-    const three = simulateExitB(b, b.map((x) => x.close), atrSeries(b), 0, 1, 100, 10, 90, 0.5, "inside", 30);
+    const three = simulateExitB(b, b.map((x) => x.close), atrSeries(b), 0, 1, 100, 10, 90, 0.5, "inside", 30, 20);
     expect(three.shares).toBe(3);
     expect(three.adds).toBeGreaterThanOrEqual(1);
     expect(three.sharesAtExit).toBe(3 + 1 + 2); // +1 at 120 (floor 1.5), +2 at 140 (floor 2)
     // short: 10 shares, price falls 10 → +$100 gross before costs, 1R
     const sb = fromCloses([100, 99, 95, 92, 90, 89, 115]);
-    const s = simulateExitB(sb, sb.map((x) => x.close), atrSeries(sb), 0, -1, 100, 10, 110, 0.5, "inside", 100);
+    const s = simulateExitB(sb, sb.map((x) => x.close), atrSeries(sb), 0, -1, 100, 10, 110, 0.5, "inside", 100, 20);
     expect(s.shares).toBe(10);
     expect(s.dollarGross).toBeCloseTo(10 * (100 - s.exit), 9);
     expect(s.netR).toBeCloseTo(s.dollarNet / 100, 12);
@@ -199,11 +199,12 @@ describe("§1h fixed dollar risk", () => {
     expect(r.counts.sizeSkip).toBe(1);
     expect(r.sizeSkipByType).toEqual({ mech1: 1 });
     expect(r.trades).toHaveLength(1);
-    expect(r.trades[0]).toMatchObject({ baseRisk: 100, shares: 50 }); // $100 / $2 risk
-    // market and sector both disagree → size 0.25 → $25 → 12 shares
+    // §1j: stock factor 0.5 (no MA stack on this setup) × pyramid 1 = 0.5 → $200 × 0.5 = $100 → 50 shares at $2 risk
+    expect(r.trades[0]).toMatchObject({ stockFactor: 0.5, sizeCombined: 0.5, baseRisk: 100, shares: 50, floorHit: false });
     const down = new Map(info.map((x) => [x.date, { opens: -1, trend: -1 as const }]));
     const q = simulateSymbol("X", b, "B", { scanned: { setups: [setup(75, 98.5, "inside")], rollingSetups: [], info }, pyramid: { market: [down, down, down], sector: down, industry: null } });
-    expect(q.trades[0]).toMatchObject({ sizeMult: 0.25, baseRisk: 25, shares: 12, layerMarket: "disagree", layerSector: "disagree" });
+    // stock 0.5 × pyramid 0.25 = 0.125, floored to 0.25 → $200 × 0.25 = $50 → 25 shares
+    expect(q.trades[0]).toMatchObject({ sizeMult: 0.25, sizeCombined: 0.25, floorHit: true, baseRisk: 50, shares: 25, layerMarket: "disagree", layerSector: "disagree" });
     // no layer data at all → mixed, size 1, counted
     expect(r.counts.layerNull).toBe(1);
   });
@@ -217,5 +218,70 @@ describe("§1h fixed dollar risk", () => {
     expect(p.peakOpenRisk).toBe(60);
     expect(p.peakDate).toBe("2025-01-06");
     expect(p.tradesPerSession).toBeCloseTo(0.4, 12);
+  });
+});
+
+describe("§1j sizing and adds as in Chris's Pine script", () => {
+  it("stock factor: full size only with opens +1 AND MAs stacked the trade's way; shorts mirrored", () => {
+    expect(stockFactor(1, 1, 1)).toBe(1);
+    expect(stockFactor(1, -1, 1)).toBe(0.5); // opens +1 but MAs stacked bearish on a long
+    expect(stockFactor(1, 0, 1)).toBe(0.5);
+    expect(stockFactor(0.5, 1, 1)).toBe(0.5);
+    expect(stockFactor(-1, -1, -1)).toBe(1);
+    expect(stockFactor(-1, 1, -1)).toBe(0.5);
+    expect(stockFactor(null, 1, 1)).toBe(0.5);
+  });
+
+  it("size = stock × pyramid, floored at 0.25; risk is $200 × size", () => {
+    expect(combinedSize(0.5, 0.25)).toBe(0.25);
+    expect(combinedSize(0.5, 0.5)).toBe(0.25);
+    expect(combinedSize(1, 0.5)).toBe(0.5);
+    expect(combinedSize(1, 1)).toBe(1);
+    expect(BASE_RISK_DOLLARS).toBe(200);
+    expect(initialShares(BASE_RISK_DOLLARS * combinedSize(1, 1), 10)).toBe(20);
+    expect(initialShares(BASE_RISK_DOLLARS * combinedSize(0.5, 0.25), 10)).toBe(5);
+  });
+
+  // Steady rise of 2 per bar with a 3-point range: ATR14 settles near 3, far from R = 10.
+  const rising = () => fromCloses(Array.from({ length: 80 }, (_, i) => 100 + 2 * i));
+
+  it("exit B adds at 2 × ATR14 of the trigger bar, then 4 × ATR, not 2R", () => {
+    const b = rising();
+    const closes = b.map((x) => x.close);
+    const atr = atrSeries(b);
+    const f = 40;
+    const fill = b[f - 1].high; // just above the trigger bar
+    const x = simulateExit(b, closes, atr, f, 1, fill, 10, fill - 10, 0.5, "inside", "B", 200);
+    const a = atr[f - 1]!;
+    expect(a).not.toBeCloseTo(5, 0); // 2 × ATR is not 2R (20)
+    expect(x.addPrices[0]).toBeCloseTo(fill + 2 * a, 9);
+    expect(x.addPrices[1]).toBeCloseTo(fill + 4 * a, 9);
+  });
+
+  it("the choppy variant (exit C) adds every 1 × ATR and trails from 2R", () => {
+    const b = rising();
+    const closes = b.map((x) => x.close);
+    const atr = atrSeries(b);
+    const f = 40;
+    const fill = b[f - 1].high;
+    const c = simulateExit(b, closes, atr, f, 1, fill, 10, fill - 10, 0.5, "inside", "C", 200);
+    const a = atr[f - 1]!;
+    expect(c.addPrices[0]).toBeCloseTo(fill + a, 9);
+    expect(c.addPrices[1]).toBeCloseTo(fill + 2 * a, 9);
+    expect(EXIT_RULES.C.targetR).toBe(2);
+    // a trade that touches 2.5R and pulls back: C (trail from 2R) can trail; B (from 3R) can't, so B never trails here
+    // fill 109 (bar 40's high), R 10: 2R = 129, 3R = 139. Peak high 132 is past 2R but short of 3R, then a pullback.
+    const pull = fromCloses([...Array.from({ length: 41 }, (_, i) => 100 + 0.2 * i), 108, 112, 116, 121, 128, 131, 125, 118, 112, 100, 90, 80]);
+    const pc = pull.map((x) => x.close);
+    const pa = atrSeries(pull);
+    const ff = 41;
+    const e = pull[ff - 1].high;
+    const B = simulateExitB(pull, pc, pa, ff, 1, e, 10, e - 10, 0.5, "inside", 200, 1000, 3);
+    const C = simulateExitB(pull, pc, pa, ff, 1, e, 10, e - 10, 0.5, "inside", 200, 1000, 2);
+    expect(B.reached3R).toBe(false);
+    expect(B.reason).not.toBe("trail_stop");
+    expect(C.reached3R).toBe(true); // the variant's trail threshold (2R) was touched
+    expect(C.reason).toBe("trail_stop");
+    expect(C.exit).toBeGreaterThan(B.exit);
   });
 });

@@ -135,7 +135,7 @@ Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulat
 
 **Exit B: STP management, the primary exit and the only one with verdicts (§1e).**
 1. 1 unit at `entry`, stop = the trigger bar's `low − fudge` (`high + fudge` short).
-2. **Pyramid every 2R:** add levels at entry + 2R, 4R, 6R, … (shorts mirrored), each a stop-limit order for **50% of the current size** (rounded down to whole shares under §1h), with no limit on the count.
+2. **Pyramid every 2 × ATR14 (§1j, Chris's Pine `addShares = highPlusFF + atrFactor × ATR`, atrFactor 2 at 3R):** add levels at fill ± n × 2 × ATR14, where ATR14 is taken on the trigger bar D (n = 1, 2, 3, …). Shorts mirrored. Each add is a stop-limit order for **50% of the current shares, rounded down**, with no limit on the count.
    - **Never on the entry day (Chris).** From the next bar on, a level the fill bar already passed follows the gap rule: a bar that opens beyond it skips it.
    - A bar that opens through an add level skips that add (counted). The next level stays live.
    - A bar that touches the stop exits at the stop before any add on that bar.
@@ -156,7 +156,7 @@ Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulat
 3. Otherwise the target.
 4. Otherwise the time exit at the 10th session's close.
 
-Costs are 0.10% round trip. Exit A's report shows the same groups without verdicts, and its log row is marked "reference".
+Costs are 0.10% of each leg's value. Exit A's report shows the same groups without verdicts, and its log row is marked "reference".
 
 **One position per ticker.** A trigger dated before the open trade's exit bar is skipped (counted). A trigger on the exit day itself is allowed. Cancelled and skipped setups don't block.
 
@@ -168,7 +168,7 @@ Costs are 0.10% round trip. Exit A's report shows the same groups without verdic
 - Control expectancy is the mean net R of the controls found. **Edge = trigger net expectancy − control net expectancy.**
 
 **Metrics per group.** Trades, win rate (net R > 0), mean and median net R (mean = expectancy), mean gross R, profit factor, average holding sessions, max drawdown in R (equal-R trades in fill-date order), control count, control expectancy, and edge.
-- **Exit B adds:** the add rate, the average and maximum add count, add gap skips, the share reaching 3R, the share exiting at BE, the average R of trades that reached 3R and of those that didn't, 60-session cap exits, and the initial-unit R.
+- **Exit B and C add:** the add rate, the average and maximum add count, add gap skips, the share reaching 3R, the share exiting at BE, the average R of trades that reached 3R and of those that didn't, 60-session cap exits, and the initial-unit R.
 - **Exit A:** the 3R-hit rate.
 - The setup, fill, cancel, `gap_skip` and skip counts are reported for the whole run.
 
@@ -229,14 +229,19 @@ Costs are 0.10% round trip. Exit A's report shows the same groups without verdic
   - each layer's state;
   - total size-weighted R, and dollar drawdown under the sizing rule.
 
-**Fixed dollar risk (§1h).**
-- Base risk = **$100 × size_mult**. Initial shares = floor(base risk / per-share risk); **0 shares means no trade** (`size_skip`, counted per pattern, and it doesn't block the ticker).
-- Each exit-B add = floor(50% of current shares). 0 means no add.
+**Size and dollar risk (§1h as amended by §1j, Chris's Pine script).**
+- **Stock factor:** the Pine `shareSizeFactor` with its abs() fixed. It's 1 only when the trigger bar's `stp_htf_opens` is +1 in the trade's direction **and** the MAs are stacked that way (`stp_ma_state` = direction: close > sma20, close > sma50 and sma20 > sma50 for a long). Otherwise it's 0.5. Shorts mirrored.
+- **Size = stock factor × the §1g pyramid factor, floored at 0.25.** Chris never enters at less than 1/4 size.
+- Base risk = **$200 × size**. Initial shares = floor(base risk / per-share risk), with **no max-trade-size cap**. **0 shares means no trade** (`size_skip`, counted per pattern; it doesn't block the ticker).
+- Each add = floor(50% of current shares). 0 means no add.
 - Exit A uses the same initial shares with no adds.
 - Dollar P&L = shares × the price move, summed over legs, minus 0.10% of each leg's traded value.
-- **R = dollar P&L / base risk**, so unweighted R is the per-trade edge. Dollar P&L already includes size_mult.
-- The control uses the trade's size_mult.
+- **R = dollar P&L / base risk**, so unweighted R is the per-trade edge. Dollar P&L already includes the size.
+- The control uses the trade's size.
 - **Account view,** no cap applied: total dollar P&L, max dollar drawdown (in exit-date order), trades per session, and the peak open positions and peak open risk (shares × per-share risk) on any day.
+- **Descriptive:** expectancy by stock factor (1, 0.5) and by combined size (1, 0.5, 0.25); the count where the 0.25 floor applied; and the count where the old Pine abs() rule (1 when |htf| = 1 and the MA state ≠ 0) would have given full size but the fixed rule gives half.
+
+**Exit C: the "choppy" variant (§1j), descriptive only, no verdicts.** It's exit B with adds every **1 × ATR14(D)** and the trail starting once **2R** is touched (Pine `atrFactor = 1` when RR = 2). It runs on all trades and is reported split by the market layer (agree vs mixed or disagree), because Chris sets RR by hand and there's no objective "choppy" flag yet. Its log row is marked "descriptive".
 
 **Chris's Finviz screens as filters (§1i).** The definitions are in docs/FINVIZ-SCREENS.md (F01 to F28), computed from our own bars on day D. Nothing is pulled from Finviz.
 - **Base filter:** 3-month average volume > 2M shares (the mean of the 63 sessions before D) and Wilder ATR14 > $1.50. Every screen also requires the base filter.

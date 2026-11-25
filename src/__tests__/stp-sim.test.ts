@@ -102,7 +102,8 @@ describe("exit B (primary): STP management (§1e)", () => {
   const B = (ohlc: Array<[number, number, number, number]>, type = "inside", dir: 1 | -1 = 1, fill = 100, stop = 90) => {
     const b = bars(ohlc);
     const closes = b.map((x) => x.close);
-    return simulateExitB(b, closes, atrSeries(b), 0, dir, fill, Math.abs(fill - stop), stop, 0.5, type);
+    // $100 base risk, add step fixed at 2 × R here (20 points) so the add arithmetic stays readable; the §1j ATR spacing has its own tests
+    return simulateExitB(b, closes, atrSeries(b), 0, dir, fill, Math.abs(fill - stop), stop, 0.5, type, 100, 2 * Math.abs(fill - stop));
   };
   const quiet = (n: number, p: number): Array<[number, number, number, number]> => Array.from({ length: n }, () => [p, p + 0.5, p - 0.5, p]);
 
@@ -271,7 +272,7 @@ describe("verdicts", () => {
     Array.from({ length: n }, (_, i) => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-        swing: {}, finvizBase: null, finvizScreens: [], layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
+        swing: {}, finvizBase: null, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
         baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant, alignment: "aligned" as const, weekUsed: 0.2, monthUsed: 0.2, roomW: 2, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: net(i),
         symbol: `S${i % 7}`, scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir, type, firedRules: [],
         entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: net(i), netR: net(i), reason: "time" as const, holding: 1,
@@ -393,7 +394,7 @@ describe("step 1c: rolling opens (5/20 stocks, 7/30 crypto)", () => {
     const trades = Array.from({ length: 50 }, (_, i): Trade => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-swing: {}, finvizBase: null, finvizScreens: [], layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
+swing: {}, finvizBase: null, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
         baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant: "rolling", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 0, symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside",
         firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: 0, netR: 0, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };
@@ -465,7 +466,7 @@ describe("§1d entry location vs the normal move", () => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       const sw = { rallyUsed: early ? 0.3 : 0.8, rallyAge: 0.5, room3R: early ? 1.5 : 0.5, pullbackRatio: 1 };
       return {
-        finvizBase: null, finvizScreens: [], layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
+        finvizBase: null, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
         baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, swing: { "1.5": sw, "2": sw, "3": sw },
         variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: netR, symbol: "S", scanId: d,
         scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1,
@@ -496,7 +497,7 @@ describe("§1d entry location vs the normal move", () => {
     const t = (i: number): Trade => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-swing: {}, finvizBase: null, finvizScreens: [], layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
+swing: {}, finvizBase: null, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
         baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 1,
         symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1,
         stop: 0.9, exit: 1, risk: 0.1, grossR: 1, netR: 1, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",

@@ -26,7 +26,7 @@ export const CONTROL_WINDOW = 20;
 /** Random control sessions tried, without replacement, until one fills. */
 export const CONTROL_TRIES = 5;
 
-export type ExitRule = "A" | "B";
+export type ExitRule = "A" | "B" | "C";
 /**
  * §1e (Chris, 2026-11-25): exit B, the STP management, is PRIMARY and gets the verdicts;
  * exit A (fixed 3R target, 10 sessions) is a reference with no verdicts.
@@ -34,6 +34,17 @@ export type ExitRule = "A" | "B";
 export const EXIT_RULES: Record<ExitRule, { targetR: number; maxSessions: number }> = {
   A: { targetR: 3, maxSessions: 10 },
   B: { targetR: 3, maxSessions: 60 },
+  C: { targetR: 2, maxSessions: 60 },
+};
+
+/**
+ * §1j (Chris's Pine): STP management parameters. B, the primary: adds every 2 × ATR14(D),
+ * trail once 3R is touched. C, the descriptive "choppy" variant (Pine atrFactor = 1 when
+ * RR = 2): adds every 1 × ATR14(D), trail once 2R is touched. No verdicts on C.
+ */
+export const MANAGEMENT: Record<"B" | "C", { addAtr: number; trailAfterR: number }> = {
+  B: { addAtr: 2, trailAfterR: 3 },
+  C: { addAtr: 1, trailAfterR: 2 },
 };
 export const PRIMARY_EXIT: ExitRule = "B";
 
@@ -44,8 +55,12 @@ export type Variant = "calendar" | "rolling";
 
 export interface Setup {
   variant: Variant;
-  /** stp_htf_opens on the trigger bar (calendar opens), for the step 1b alignment split. */
+  /** stp_htf_opens on the trigger bar (calendar opens), for the step 1b alignment split and the §1j stock factor. */
   htf: number | null;
+  /** stp_ma_state on the trigger bar: +1 close > sma20, close > sma50, sma20 > sma50; −1 mirrored; 0 otherwise. */
+  maState?: number | null;
+  /** The live Pine `shareSizeFactor` with its abs(): 1 when |htf| = 1 and maState ≠ 0, else 0.5. */
+  sizeFactorAbs?: number | null;
   symbol: string;
   /** Trigger bar's date (ET) and index in the symbol's bars. */
   date: string;
@@ -96,10 +111,10 @@ export function scanSymbol(symbol: string, bars: readonly DailyBar[], sessions?:
     const r = computeStpRolling(slice, windows);
     info.push({ date: d, trigger: s.trigger, triggerRolling: r.trigger, fudge: s.fudge });
     if ((s.trigger === 1 || s.trigger === -1) && s.entry != null && s.stop != null && s.fudge != null && s.triggerType) {
-      setups.push({ variant: "calendar", htf: s.htfOpens, symbol, date: d, i, dir: s.trigger, type: s.triggerType, firedRules: s.firedRules, entry: s.entry, stop: s.stop, fudge: s.fudge });
+      setups.push({ variant: "calendar", htf: s.htfOpens, maState: s.maState, sizeFactorAbs: s.sizeFactor, symbol, date: d, i, dir: s.trigger, type: s.triggerType, firedRules: s.firedRules, entry: s.entry, stop: s.stop, fudge: s.fudge });
     }
     if ((r.trigger === 1 || r.trigger === -1) && r.entry != null && r.stop != null && r.fudge != null && r.triggerType) {
-      rollingSetups.push({ variant: "rolling", htf: s.htfOpens, symbol, date: d, i, dir: r.trigger, type: r.triggerType, firedRules: r.firedRules, entry: r.entry, stop: r.stop, fudge: r.fudge });
+      rollingSetups.push({ variant: "rolling", htf: s.htfOpens, maState: s.maState, sizeFactorAbs: s.sizeFactor, symbol, date: d, i, dir: r.trigger, type: r.triggerType, firedRules: r.firedRules, entry: r.entry, stop: r.stop, fudge: r.fudge });
     }
   }
   return { setups, rollingSetups, info };
@@ -216,6 +231,8 @@ export interface TradeExit {
   initialUnitR: number;
   holding: number;
   adds: number;
+  /** Fill prices of the adds, in order. */
+  addPrices: number[];
   addGapSkips: number;
   reached3R: boolean;
   /** Shares at the exit over the initial shares (1, 1.5, 2.2, …). */
@@ -229,12 +246,13 @@ export interface TradeExit {
 export const costInR = (fill: number, risk: number) => (COST_ROUND_TRIP * fill) / risk;
 /** §1e: costs are 0.10% of traded value per leg (entry, each add, exit). */
 export const COST_PER_LEG = COST_ROUND_TRIP;
-export const ADD_EVERY_R = 2;
 export const ADD_FRACTION = 0.5;
 export const TRAIL_AFTER_R = 3;
 export const EXIT_B_CAP = 60;
-/** §1h: every position risks $100 × size_mult. */
-export const BASE_RISK_DOLLARS = 100;
+/** §1j: every position risks $200 × size (was $100 in §1h). No max-trade-size cap. */
+export const BASE_RISK_DOLLARS = 200;
+/** §1j: Chris never enters at less than 1/4 size. */
+export const MIN_SIZE = 0.25;
 
 /** §1h: floor(base risk / per-share risk); 0 means no trade (size_skip). */
 export const initialShares = (baseRisk: number, risk: number) => (risk > 0 ? Math.floor(baseRisk / risk + 1e-9) : 0);
@@ -244,7 +262,7 @@ function finish(
   dir: Dir,
   exit: number,
   baseRisk: number,
-  base: Omit<TradeExit, "grossR" | "netR" | "initialUnitR" | "size" | "shares" | "sharesAtExit" | "dollarGross" | "dollarNet" | "exit">,
+  base: Omit<TradeExit, "grossR" | "netR" | "initialUnitR" | "size" | "shares" | "sharesAtExit" | "dollarGross" | "dollarNet" | "exit" | "addPrices">,
 ): TradeExit {
   const shares = legs[0].qty;
   const sharesAtExit = legs.reduce((sum, l) => sum + l.qty, 0);
@@ -253,7 +271,7 @@ function finish(
   const dollarNet = dollarGross - costs;
   const fill = legs[0].price;
   const initialUnitR = (shares * dir * (exit - fill) - COST_PER_LEG * shares * (fill + exit)) / baseRisk;
-  return { ...base, exit, grossR: dollarGross / baseRisk, netR: dollarNet / baseRisk, initialUnitR, size: sharesAtExit / shares, shares, sharesAtExit, dollarGross, dollarNet };
+  return { ...base, addPrices: legs.slice(1).map((l) => l.price), exit, grossR: dollarGross / baseRisk, netR: dollarNet / baseRisk, initialUnitR, size: sharesAtExit / shares, shares, sharesAtExit, dollarGross, dollarNet };
 }
 
 /**
@@ -283,10 +301,11 @@ export function simulateExitA(bars: readonly DailyBar[], f: number, dir: Dir, fi
 }
 
 /**
- * Exit B, STP management (§1e, primary), sized by §1h. Starts with
+ * Exit B, STP management (§1e, primary), sized by §1h/§1j. Starts with
  * floor(baseRisk / risk) shares at `fill` and the initial stop. Per bar, in order: a gap
  * through the stop exits at the open; a bar touching the stop exits at the stop (before
- * any add on that bar); adds at fill ± 2R, 4R, … as stop-limit orders, each
+ * any add on that bar); adds at fill ± n × addStep (§1j: 2 × ATR14 at the trigger bar),
+ * never on the entry day, as stop-limit orders, each
  * floor(50% of current shares) (0 → no add); an add level opened through is skipped and
  * the next level stays live. After an add, the stop moves to the size-weighted breakeven
  * when that's tighter, from the next bar. Once a high (low, short) reaches fill ± 3R, each
@@ -305,7 +324,10 @@ export function simulateExitB(
   stop0: number,
   fudge: number,
   type: string,
-  baseRisk = BASE_RISK_DOLLARS,
+  baseRisk: number,
+  /** §1j: distance between add levels, in price (2 × ATR14 at the trigger bar for B, 1 × for C). */
+  addStep: number,
+  trailAfterR = TRAIL_AFTER_R,
 ): TradeExit {
   const legs: Array<{ qty: number; price: number }> = [{ qty: initialShares(baseRisk, risk), price: fill }];
   const size = () => legs.reduce((s, l) => s + l.qty, 0);
@@ -317,7 +339,7 @@ export function simulateExitB(
   let nextAdd = 1; // the next add level is fill ± nextAdd × 2R
   let addGapSkips = 0;
   let reached3R = false;
-  const threeR = fill + dir * TRAIL_AFTER_R * risk;
+  const threeR = fill + dir * trailAfterR * risk; // the trail starts once this is touched (3R; 2R in the choppy variant)
   const last = Math.min(bars.length - 1, f + EXIT_B_CAP);
   const mech = isMechanical(type);
 
@@ -333,7 +355,7 @@ export function simulateExitB(
     // Never on the entry day (Chris, §1e): from f+1 on, a level the fill bar already passed follows the gap rule.
     let pendingStop: number | null = null;
     for (; j > f; ) {
-      const level = fill + dir * nextAdd * ADD_EVERY_R * risk;
+      const level = fill + dir * nextAdd * addStep;
       if (b.open != null && (dir === 1 ? b.open > level : b.open < level)) {
         addGapSkips++;
         nextAdd++;
@@ -380,7 +402,11 @@ export function simulateExit(
   rule: ExitRule,
   baseRisk = BASE_RISK_DOLLARS,
 ): TradeExit {
-  return rule === "A" ? simulateExitA(bars, f, dir, fill, risk, stop, baseRisk) : simulateExitB(bars, closes, atr, f, dir, fill, risk, stop, fudge, type, baseRisk);
+  if (rule === "A") return simulateExitA(bars, f, dir, fill, risk, stop, baseRisk);
+  // §1j: add spacing from ATR14 on the trigger bar (f − 1); computeStp needs 51 bars, so it exists at a trigger.
+  const m = MANAGEMENT[rule];
+  const atrD = atr[f - 1] ?? atr[f] ?? risk;
+  return simulateExitB(bars, closes, atr, f, dir, fill, risk, stop, fudge, type, baseRisk, m.addAtr * atrD, m.trailAfterR);
 }
 
 /** Deterministic PRNG (mulberry32). */
@@ -509,6 +535,18 @@ export function entryLocation(bars: readonly DailyBar[], i: number, fill: number
   };
 }
 
+/**
+ * §1j stock factor (Pine `shareSizeFactor` with its abs() fixed): 1 only when the trigger
+ * bar's stp_htf_opens is +1 in the trade's direction AND the MAs are stacked that way
+ * (stp_ma_state = direction); otherwise 0.5. Shorts mirrored.
+ */
+export function stockFactor(htf: number | null | undefined, maState: number | null | undefined, dir: Dir): 1 | 0.5 {
+  return htf != null && maState != null && htf * dir >= 1 && maState * dir >= 1 ? 1 : 0.5;
+}
+
+/** §1j size = stock factor × pyramid factor, floored at 0.25. */
+export const combinedSize = (stock: number, pyramid: number) => Math.max(MIN_SIZE, stock * pyramid);
+
 export type Alignment = "aligned" | "partial" | "against";
 
 /** Step 1b: stp_htf_opens × direction: +1 aligned, −1 against, anything else (±0.5, 0) partial; null unknown. */
@@ -540,7 +578,12 @@ export interface Trade extends EntryLocation {
   /** §1i Finviz screens on the trigger day: the base filter, and the screens that passed. */
   finvizBase: boolean | null;
   finvizScreens: ScreenId[];
-  /** §1h dollar sizing. */
+  /** §1j sizing: stock factor, stock × pyramid floored at 0.25, whether the floor bit, and whether the old abs() rule would have said full size. */
+  stockFactor: number;
+  sizeCombined: number;
+  floorHit: boolean;
+  absFullFixedHalf: boolean;
+  /** §1h/§1j dollar sizing: $200 × sizeCombined. */
   baseRisk: number;
   shares: number;
   sharesAtExit: number;
@@ -653,7 +696,9 @@ export function simulateSymbol(
     if (e.status !== "filled") continue;
     // §1g size from the layers above the stock, §1h shares at $100 × size_mult
     const layers = pyramidLayers(opts.pyramid ?? noPyramid, s.date, s.dir);
-    const baseRisk = BASE_RISK_DOLLARS * layers.sizeMult;
+    const stock = stockFactor(s.htf, s.maState, s.dir);
+    const size = combinedSize(stock, layers.sizeMult);
+    const baseRisk = BASE_RISK_DOLLARS * size;
     if (initialShares(baseRisk, e.risk) < 1) {
       counts.sizeSkip++;
       sizeSkipByType[s.type] = (sizeSkipByType[s.type] ?? 0) + 1;
@@ -667,6 +712,10 @@ export function simulateSymbol(
     if (!control) counts.noControl++;
     const screen = screensOn(bars, s.i, atr);
     trades.push({
+      stockFactor: stock,
+      sizeCombined: size,
+      floorHit: stock * layers.sizeMult < MIN_SIZE,
+      absFullFixedHalf: s.sizeFactorAbs === 1 && stock === 0.5,
       finvizBase: screen.base,
       finvizScreens: passingScreens(screen),
       swing: Object.fromEntries(SWING_KS.map((k) => [String(k), swingEntry(bars, s.i, e.fill, e.risk, s.dir, k, pivots[String(k)])])),
@@ -1050,6 +1099,13 @@ export function evaluateGroups(
   for (const layer of ["layerMarket", "layerSector", "layerIndustry"] as const)
     for (const st of ["agree", "mixed", "disagree", null] as const)
       out.push(judge(`pyramid:${layer.replace("layer", "").toLowerCase()}:${st ?? "none"}`, calendar.filter((t) => t[layer] === st), false));
+  // §1j descriptive: stock factor, combined size, floor hits; market layer agree vs not (the choppy-variant split)
+  for (const f of [1, 0.5]) out.push(judge(`size:stock:${f}`, calendar.filter((t) => t.stockFactor === f), false));
+  for (const m of [1, 0.5, 0.25]) out.push(judge(`size:combined:${m}`, calendar.filter((t) => t.sizeCombined === m), false));
+  out.push(judge("size:floorHit", calendar.filter((t) => t.floorHit), false));
+  out.push(judge("size:absFullFixedHalf", calendar.filter((t) => t.absFullFixedHalf), false));
+  out.push(judge("market:agree", calendar.filter((t) => t.layerMarket === "agree"), false));
+  out.push(judge("market:notAgree", calendar.filter((t) => t.layerMarket !== "agree"), false));
   for (const r of ["spy_above_sma20", "spy_below_sma20"] as const) out.push(judge(`regime:${r}`, calendar.filter((t) => t.regime === r), false));
   for (const q of [...new Set(calendar.map((t) => t.quarter))].sort()) out.push(judge(`quarter:${q}`, calendar.filter((t) => t.quarter === q), false));
   return out;
