@@ -306,6 +306,55 @@ Chris's selection rule: how far into a stock's *typical move* the entry sits. A 
 
 **P3-0i2** (live logging) also logs `swing_k{1.5,2,3}_{rally_used,rally_age,room_3r_at_entry,pullback_ratio}`, plus the profile medians, into the features JSON. `room_3r` uses the STP trigger's entry and stop when there is one; otherwise null.
 
+### 1g. The Stock Market Power Pyramid: position size by layer agreement (Chris, 2026-11-25)
+STP stacks order flow in four layers, top to bottom:
+1. the 3 major indices;
+2. the 11 sectors;
+3. the industry groups;
+4. the stock itself.
+
+The stock's trigger is the setup. The layers above it set the **size**:
+- everything agrees: **full size (1.0)**;
+- one layer disagrees: **half (0.5)**;
+- both the market and the sector disagree: **half again (0.25)**.
+
+**Order flow per layer:** `stp_htf_opens` (close vs the weekly and monthly opens) computed on that layer's ETF, on the trigger day, using completed bars only.
+- **Market:** SPY, QQQ and DIA, each scored separately. The market layer agrees if the majority (2 of 3) is on the trade's side.
+- **Sector:** the stock's SPDR sector ETF (from `UniverseMember.sector`, through the P3-0d/1f map).
+- **Industry:** the stock's industry ETF (the 1f map). Null when the industry is unmapped.
+
+**Agree or disagree, for a long** (shorts mirrored):
+- `+1` (above both opens) **agrees**;
+- `−1` (below both) **disagrees**;
+- `±0.5` (between the two opens) is **mixed**, and counts as neither.
+
+**Reviewer's assumptions:**
+- The size rule uses the **market and sector** layers: 0 disagreeing gives 1.0, 1 gives 0.5, 2 gives 0.25.
+- The industry layer is reported alongside. A variant also counts industry, with the size halved for each disagreeing layer.
+- Mixed counts as not disagreeing.
+- Chris can correct any of these before the run.
+
+**Simulation:**
+- Fetch the ETF bars for the backfill: SPY (already there), QQQ, DIA, the 11 sector SPDRs, and the mapped industry ETFs. Cache them next to the stock bars, sliced to day D like everything else.
+- Sector and industry use today's mapping (survivorship caveat).
+- Each trade gets `size_mult` (1, 0.5 or 0.25) and `pyramid_layers` (market, sector and industry, each agree, mixed or disagree).
+- Report **both** of these: unweighted R, the per-trade edge; and **size-weighted R** (R × size_mult), the portfolio effect of the sizing rule.
+- **Pre-registered, +2 comparisons per exit:** "all agree" trades (market and sector both agree) vs all trades, long and short. Same KEEP rule.
+- **Descriptive only:** expectancy and 3R-hit rate by size_mult (1, 0.5, 0.25), by each layer's state, and for the industry-included variant. Also total size-weighted R and max drawdown, with the sizing rule vs flat size.
+
+**Live logging (P3-0i2):**
+- `pyramid_market` with SPY, QQQ and DIA htf, plus the vote; `pyramid_sector` with the ETF and its htf; `pyramid_industry` with the ETF and its htf.
+- `pyramid_size_long` and `pyramid_size_short`.
+- Log only.
+
+**Tests:**
+- the 2-of-3 index majority;
+- mixed is not a disagreement;
+- size 1, 0.5 and 0.25 cases;
+- shorts mirrored;
+- a null industry;
+- ETF bars sliced to D (look-ahead).
+
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
 
