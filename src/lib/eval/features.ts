@@ -6,6 +6,11 @@
  *     to the test rows (no test data leaks into the buckets). Categorical (boolean or
  *     string): each category is its own bucket. Missing values are reported as their
  *     own bucket but are never selected.
+ *   - Discrete (P3-0h, amendment 2026-11-25): a numeric key with at most
+ *     MAX_DISCRETE_VALUES distinct non-null values in the held-out split's training rows
+ *     is bucketed by value (`=-1`, `=0`, `=1`), never by quintile. Quintile cuts on
+ *     such keys merge values (e.g. −1 and 0 into one "q1"). The kind is decided once per
+ *     feature and used by the held-out split and every fold.
  *   - The bucket to test is the one with the highest training mean excess return (with
  *     at least MIN_FOLD_ROWS training rows), chosen without looking at the test rows.
  *   - Held out (newest 30% of scans): that bucket must beat the baseline (all test rows)
@@ -34,6 +39,8 @@ export const QUINTILES = 5;
 /** Categorical features with more categories than this are skipped (listed in the pre-registration). */
 export const MAX_CATEGORIES = 12;
 export const MISSING = "missing";
+/** P3-0h: numeric keys with this many distinct training values or fewer are bucketed by value. */
+export const MAX_DISCRETE_VALUES = 7;
 
 /**
  * Keys never tested: version stamps, dates, model names, bases, data-quality flags,
@@ -61,14 +68,21 @@ export function candidateKeys(rows: readonly EvalRow[]): string[] {
   return [...keys].sort();
 }
 
-export type FeatureKind = "numeric" | "categorical" | "skipped";
+export type FeatureKind = "numeric" | "discrete" | "categorical" | "skipped";
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
-export function featureKind(rows: readonly EvalRow[], key: string): FeatureKind {
+/**
+ * Kind of a feature. `trainRows` (the held-out split's training rows) decide whether a
+ * numeric key is discrete; without them, the rows themselves do.
+ */
+export function featureKind(rows: readonly EvalRow[], key: string, trainRows: readonly EvalRow[] = rows): FeatureKind {
   const vals = rows.map((r) => r.attrs[key]).filter((v) => v !== null && v !== undefined);
   if (vals.length === 0) return "skipped";
-  if (vals.every(isNum)) return "numeric";
+  if (vals.every(isNum)) {
+    const distinct = new Set(trainRows.map((r) => r.attrs[key]).filter(isNum));
+    return distinct.size <= MAX_DISCRETE_VALUES ? "discrete" : "numeric";
+  }
   const cats = new Set(vals.map(String));
   return cats.size <= MAX_CATEGORIES ? "categorical" : "skipped";
 }
@@ -87,6 +101,7 @@ export function bucketOf(value: unknown, kind: FeatureKind, cuts: readonly numbe
     const i = cuts.findIndex((c) => v <= c);
     return `q${(i === -1 ? cuts.length : i) + 1}`;
   }
+  if (kind === "discrete") return `=${value as number}`;
   return String(value);
 }
 
@@ -169,8 +184,8 @@ export interface FeatureResult {
 }
 
 export function evaluateFeature(rows: readonly EvalRow[], key: string): FeatureResult {
-  const kind = featureKind(rows, key);
   const { train, test } = timeSplit(rows);
+  const kind = featureKind(rows, key, train);
   const heldOut = testSplit(train, test, key, kind, MIN_HELDOUT_ROWS);
   // Each fold tests the bucket chosen on the held-out split's training rows, not its own best.
   const folds = walkForwardFolds(rows).map((f) => testSplit(f.train, f.test, key, kind, MIN_FOLD_ROWS, heldOut.selected));
