@@ -29,6 +29,9 @@ import { SWING_KS, swingEntry, swingProfile, zigzag } from "./swings";
 import { combinedSize, stockFactor } from "@/lib/eval/stp-sim";
 import { wilderAtr } from "./bar-features";
 import { swingHistory } from "./bar-store";
+import { pyramidLayers } from "./pyramid";
+import { inHoursOn, macroCalendar, nextEvent, outOfHoursWithin, type MacroEvent } from "../macro-calendar";
+import { funnelGates, LEVEL_SWING_K, riskReward, RR_MIN } from "@/lib/eval/funnel";
 
 export type LiveValue = number | string | boolean | null;
 
@@ -42,10 +45,18 @@ export interface LiveContext {
   industryStates?: ReadonlyMap<string, EtfState> | null;
   /** P3-0i2b: the symbol's stored bar history; the swing keys use it plus this run's chart (≤ D). */
   history?: readonly DailyBar[];
+  /** P3-0j: the macro calendar (default: the checked-in one). */
+  events?: readonly MacroEvent[];
+  /** P3-0j: whether the stock reports earnings within 5 sessions (Yahoo); null/undefined = unknown, not blocking. */
+  earnings5?: boolean | null;
 }
 
 /** P3-0i2 keys, all logged for every row (null when not computable), so the health report sees each family. */
 export const LIVE_STP_KEY_PREFIXES = ["stp_htf_opens_rolling", "stp_trigger_rolling", "stp_trigger_type_rolling", "stp_size_factor_long", "stp_size_factor_short", "size_combined_", "pyramid_", "finviz_", "swing_k"] as const;
+/** P3-0j funnel keys (stock rows; log only). funnel_rank is set across the run's rows by applyFunnelRanks. */
+export const LIVE_FUNNEL_KEYS = [
+  "funnel_pass", "gate_finviz", "gate_earnings5", "gate_rr", "event_half", "event_today_inhours", "rr", "rr_level", "open_air", "funnel_rank", "countertrend", "next_event", "next_event_days",
+] as const;
 
 const atrOf = (bars: readonly DailyBar[]) => {
   const s = wilderAtr(bars);
@@ -105,6 +116,7 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
     out.finviz_base = sc?.base ?? null;
     out.finviz_screens = sc ? passingScreens(sc).join(" ") : null;
   }
+  const marketLong = ctx.assetClass === "stock" ? pyramidLayers({ market: ctx.market ?? [null, null, null], sector: null, industry: null }, date ?? "", 1).market : null;
 
   // §1f swing scores and profile medians
   const trig = sameBar && (stp!.trigger === 1 || stp!.trigger === -1) && stp!.entry != null && stp!.stop != null ? stp! : null;
@@ -128,5 +140,44 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
     out[`${pref}_rally_median_bars`] = p.rally?.medianBars ?? null;
     out[`${pref}_pullback_median_bars`] = p.pullback?.medianBars ?? null;
   }
+
+  // P3-0j funnel (stocks): gates and R/R on an STP trigger today; the event keys on every stock row
+  if (ctx.assetClass === "stock") {
+    const events = ctx.events ?? macroCalendar();
+    const half = date ? outOfHoursWithin(date, events) : null;
+    const next = date ? nextEvent(date, events) : null;
+    // An empty or expired calendar is unknown, not "no event"
+    const known = !!date && events.length > 0 && events[events.length - 1].date > date;
+    out.event_half = known ? !!half : null;
+    out.event_today_inhours = known ? !!inHoursOn(date!, events) : null;
+    out.next_event = next ? `${next.event.event} ${next.event.date}` : null;
+    out.next_event_days = next?.sessions ?? null;
+    out.gate_finviz = out.finviz_base ?? null;
+    out.gate_earnings5 = ctx.earnings5 == null ? null : !ctx.earnings5;
+    for (const k of ["rr", "rr_level", "open_air", "countertrend", "gate_rr", "funnel_pass", "funnel_rank"] as const) out[k] = null;
+    if (trig && sb.length) {
+      const sbAtr = atrOf(sb);
+      const rr = riskReward(sb, sb.map((b) => b.close), st, dir, trig.entry!, trig.stop!, sbAtr[st], zigzag(sb, LEVEL_SWING_K));
+      const g = funnelGates({ dir, finvizBase: (out.finviz_base as boolean | null) ?? null, earnings5: ctx.earnings5 ?? null, rr: rr.rr, marketLong });
+      out.rr = rr.rr;
+      out.rr_level = rr.level;
+      out.open_air = rr.openAir;
+      out.countertrend = g.countertrend;
+      out.gate_rr = rr.rr == null ? null : rr.rr >= (g.countertrend ? g.rrMin : RR_MIN);
+      out.funnel_pass = g.pass;
+    }
+  }
   return out;
+}
+
+/**
+ * P3-0j: rank today's passing candidates across the run's rows by R/R (ties: k = 2
+ * rally_used, then symbol) and set funnel_rank; other rows keep null.
+ */
+export function applyFunnelRanks(rows: ReadonlyArray<{ symbol: string; features: Record<string, unknown> }>): number {
+  const c = rows.filter((r) => r.features.funnel_pass === true && typeof r.features.rr === "number");
+  const num = (v: unknown) => (typeof v === "number" ? v : Infinity);
+  c.sort((a, b) => (b.features.rr as number) - (a.features.rr as number) || num(a.features.swing_k2_rally_used) - num(b.features.swing_k2_rally_used) || a.symbol.localeCompare(b.symbol));
+  c.forEach((r, k) => (r.features.funnel_rank = k + 1));
+  return c.length;
 }

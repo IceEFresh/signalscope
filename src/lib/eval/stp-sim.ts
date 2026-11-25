@@ -227,7 +227,24 @@ export function trailCandidate(
   return null;
 }
 
-export type ExitReason = "stop" | "stop_gap" | "trail_stop" | "be_stop" | "target" | "time" | "time_cap" | "end_of_data";
+export type ExitReason = "stop" | "stop_gap" | "trail_stop" | "be_stop" | "target" | "time" | "time_cap" | "end_of_data" | "event_stop" | "earnings_stop" | "earnings";
+
+/** P3-0j event stop tiers, set at the close of the session before a macro event. */
+export type EventTier = "event_bar" | "event_be" | "event_hold";
+
+/**
+ * P3-0j extra exit rules (off by default, so P3-0i is unchanged):
+ * - `eventBefore`: bar indices whose close is the last close before a macro event. Open
+ *   profit there (close − fill, long) ≥ 2R → bar stop (that bar's low − fudge); ≥ 1 ATR14 →
+ *   breakeven (size-weighted cost); otherwise hold. Live from the next bar; never loosens.
+ * - `earningsAt`: bar index of the next earnings session E. The bar stop applies on E−2 and
+ *   E−1 (set at the closes of E−3 and E−2) when tighter; any position is sold at the close
+ *   of E−1 (`earnings`).
+ */
+export interface ExitExtras {
+  eventBefore?: ReadonlySet<number>;
+  earningsAt?: number | null;
+}
 
 export interface TradeExit {
   exitIndex: number;
@@ -245,6 +262,8 @@ export interface TradeExit {
   addGapSkips: number;
   /** P3-0i4: the position reached MAX_ADDS adds, so no further add was placed. */
   addCapReached: boolean;
+  /** P3-0j: the event-stop tier applied at each macro event during the trade, in order. */
+  eventTiers?: EventTier[];
   reached3R: boolean;
   /** Shares at the exit over the initial shares (1, 1.5, 2.2, …). */
   size: number;
@@ -341,6 +360,7 @@ export function simulateExitB(
   /** §1j: distance between add levels, in price (2 × ATR14 at the trigger bar for B, 1 × for C). */
   addStep: number,
   trailAfterR = TRAIL_AFTER_R,
+  extra?: ExitExtras,
 ): TradeExit {
   const legs: Array<{ qty: number; price: number }> = [{ qty: initialShares(baseRisk, risk), price: fill }];
   const size = () => legs.reduce((s, l) => s + l.qty, 0);
@@ -356,9 +376,21 @@ export function simulateExitB(
   const last = Math.min(bars.length - 1, f + EXIT_B_CAP);
   const mech = isMechanical(type);
 
+  const eventTiers: EventTier[] = [];
+  /** P3-0j: the rule that last set the stop, when it was an event or earnings rule. */
+  let setBy: "event_stop" | "earnings_stop" | null = null;
   const done = (j: number, exit: number, reason: ExitReason) =>
-    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: legs.length - 1, addGapSkips, addCapReached: legs.length - 1 >= MAX_ADDS, reached3R });
-  const stopReason = (): ExitReason => (trailed ? "trail_stop" : movedToBE ? "be_stop" : "stop");
+    finish(legs, dir, exit, baseRisk, {
+      exitIndex: j, reason, holding: j - f, adds: legs.length - 1, addGapSkips, addCapReached: legs.length - 1 >= MAX_ADDS, reached3R,
+      ...(extra ? { eventTiers } : {}),
+    });
+  const stopReason = (): ExitReason => setBy ?? (trailed ? "trail_stop" : movedToBE ? "be_stop" : "stop");
+  const tighten = (c: number | null, by: "event_stop" | "earnings_stop") => {
+    if (c != null && tighter(stop, c) === c && c !== stop) {
+      stop = c;
+      setBy = by;
+    }
+  };
 
   for (let j = f; j <= last; j++) {
     const b = bars[j];
@@ -383,18 +415,38 @@ export function simulateExitB(
       if (tighter(stop, be) === be && be !== stop) pendingStop = be;
     }
     if (dir === 1 ? b.high >= threeR : b.low <= threeR) reached3R = true;
+    // P3-0j: never hold through earnings: sold at the close of E−1
+    if (extra?.earningsAt != null && j === extra.earningsAt - 1) return done(j, b.close, "earnings");
     if (j === f + EXIT_B_CAP) return done(j, b.close, "time_cap");
     // From the next bar: breakeven after adds, then the trail once 3R has been touched.
-    if (pendingStop != null) {
-      stop = tighter(stop, pendingStop);
+    if (pendingStop != null && tighter(stop, pendingStop) === pendingStop && pendingStop !== stop) {
+      stop = pendingStop;
       movedToBE = true;
+      setBy = null;
     }
     if (reached3R) {
       const c = trailCandidate(bars, closes, atr, j, dir, fudge, mech);
       if (c != null && tighter(stop, c) === c && c !== stop) {
         stop = c;
         trailed = true;
+        setBy = null;
       }
+    }
+    if (extra) {
+      const barStop = dir === 1 ? b.low - (barFudge(atr[j]) ?? fudge) : b.high + (barFudge(atr[j]) ?? fudge);
+      if (extra.eventBefore?.has(j)) {
+        const profit = dir * (b.close - fill);
+        const a = atr[j];
+        if (profit >= 2 * risk) {
+          eventTiers.push("event_bar");
+          tighten(barStop, "event_stop");
+        } else if (a != null && profit >= a) {
+          eventTiers.push("event_be");
+          tighten(avgCost(), "event_stop");
+        } else eventTiers.push("event_hold");
+      }
+      const E = extra.earningsAt;
+      if (E != null && j >= E - 3 && j < E - 1) tighten(barStop, "earnings_stop");
     }
   }
   return done(last, bars[last].close, "end_of_data");
@@ -414,12 +466,13 @@ export function simulateExit(
   type: string,
   rule: ExitRule,
   baseRisk = BASE_RISK_DOLLARS,
+  extra?: ExitExtras,
 ): TradeExit {
   if (rule === "A") return simulateExitA(bars, f, dir, fill, risk, stop, baseRisk);
   // §1j: add spacing from ATR14 on the trigger bar (f − 1); computeStp needs 51 bars, so it exists at a trigger.
   const m = MANAGEMENT[rule];
   const atrD = atr[f - 1] ?? atr[f] ?? risk;
-  return simulateExitB(bars, closes, atr, f, dir, fill, risk, stop, fudge, type, baseRisk, m.addAtr * atrD, m.trailAfterR);
+  return simulateExitB(bars, closes, atr, f, dir, fill, risk, stop, fudge, type, baseRisk, m.addAtr * atrD, m.trailAfterR, extra);
 }
 
 /** Deterministic PRNG (mulberry32). */
