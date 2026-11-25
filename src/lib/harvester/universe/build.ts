@@ -113,7 +113,6 @@ export async function buildUniverse(deps: UniverseBuildDeps = defaultDeps()): Pr
         m.sector = p?.sector ?? null;
         m.industry = p?.industry ?? null;
       }
-      console.log(`[universe] profiles for ${profiles.size}/${members.length} members`);
     } catch (err) {
       console.warn("[universe] profile fetch failed, sector/industry left null:", err instanceof Error ? err.message : err);
     }

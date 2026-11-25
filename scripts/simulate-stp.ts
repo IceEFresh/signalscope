@@ -210,6 +210,7 @@ async function main() {
           base: median(trades.filter((t) => t.variant === "calendar" && t.finvizBase === true).map((t) => t.fill)),
           all: median(trades.filter((t) => t.variant === "calendar").map((t) => t.fill)),
         },
+        trades,
       }),
     );
     writeFileSync(`scripts/output/stp-sim-backfill-exit${exit}-${date}-trades.csv`, tradesCsv(trades));

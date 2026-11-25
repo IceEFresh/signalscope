@@ -103,7 +103,7 @@ describe("§1i pre-registered comparisons", () => {
     return {
       finvizBase: true, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, swing: {}, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1,
       sizeMultOpens: 1, sizeMultTrend: 1, baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant: "calendar",
-      alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 0, symbol: "S",
+      alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, addCapReached: false, reached3R: false, size: 1, initialUnitR: 0, symbol: "S",
       scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1, stop: 0.9,
       exit: 1, risk: 0.1, grossR: 0, netR: 0, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1", ...extra,
     };
