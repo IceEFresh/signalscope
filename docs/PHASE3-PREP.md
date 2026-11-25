@@ -383,6 +383,44 @@ Definitions are in `docs/FINVIZ-SCREENS.md` (F01 to F28). All of them are comput
 - **Live (P3-0i2):** log `finviz_base` and `finviz_screens` per ticker per harvest, including the short-float and earnings screens.
 - **Tests:** each filter on a hand-built series at its edge (≥2% vs 1.99%, a new 20-day high on exactly the 20th bar); the cross-below-sma20 case; a null short float gives null, not false; and look-ahead (a planted D+1 bar changes nothing).
 
+### 1j. Sizing and adds as in Chris's Pine script (Chris, 2026-11-24). Supersedes conflicting lines in §1e, §1g and §1h
+**Adds (replaces "every 2R" in §1e):**
+- Add levels are at fill ± n × 2 × ATR14, for n = 1, 2, 3, ..., where ATR14 is taken at the trigger bar D (the Pine `addShares = highPlusFF + atrFactor × ATR`, with `atrFactor = 2` at 3R).
+- Each add is 50% of the current shares, rounded down.
+- The breakeven after an add is the size-weighted average cost (the Pine `moveSL = (2·entry + add)/3` for the first add).
+- No add on the entry day (§1e). The gap rule is unchanged.
+
+**Profit target:**
+- 3R is the primary: the trail starts once 3R is touched (§1e).
+- **Descriptive variant, the "choppy" rule:** the trail starts at 2R and adds every 1 × ATR (Pine `atrFactor = 1` when RR = 2). It's run on all trades and reported split by the market layer (agree vs mixed or disagree), because Chris sets RR by hand and there's no objective "choppy" flag yet.
+
+**Size:**
+- Size = **stock factor × pyramid factor, floored at 0.25.**
+- **Stock factor,** from the Pine `shareSizeFactor` with its absolute-value bug fixed (Chris: "the MAs should knock it down to half"). Full size (1) for a long needs both:
+  - `stp_htf_opens = +1`;
+  - MAs stacked in the trade's direction: close > sma20, close > sma50 and sma20 > sma50.
+  
+  Otherwise it's 0.5. Shorts are mirrored. Opens of −1 or MAs stacked against the trade are 0.5, not 1.
+- **Pyramid factor:** §1g (1, 0.5 or 0.25 from the market and sector layers).
+- Example: a stock at 0.5 with a pyramid at 0.25 gives 0.125, floored to **0.25**. Chris never enters at less than 1/4 size.
+
+**Risk:**
+- **Base risk = $200 × size** (it was $100 in §1h).
+- Shares = floor(base risk / (entry − stop)). **No max-trade-size cap** in this test.
+
+**Reports and pre-registration:**
+- The §1g "all agree" comparisons stay as they are.
+- Descriptive additions: expectancy by stock factor (1, 0.5), by combined size (1, 0.5, 0.25), and the floor-hit count. Also the share of trades where the old `abs()` rule would have given full size but the fixed rule gives half.
+- The live `stp_size_factor` keeps the Pine `abs()` formula for parity. P3-0i2 adds `stp_size_factor_long` and `stp_size_factor_short` (fixed rule) and `size_combined_long` and `size_combined_short`.
+
+**Tests:**
+- adds at 2 × ATR(D), not 2R;
+- the second add at 4 × ATR;
+- opens +1 with bearish-stacked MAs on a long gives 0.5;
+- 0.5 × 0.25 floors to 0.25;
+- shares at $200;
+- the choppy variant adds at 1 × ATR and trails from 2R.
+
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
 
