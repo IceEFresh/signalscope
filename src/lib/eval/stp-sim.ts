@@ -10,6 +10,7 @@ import type { DailyBar } from "@/lib/harvester/universe/bar-metrics";
 import { sma } from "@/lib/harvester/universe/bar-features";
 import { computeStp, htfOpensAt } from "@/lib/harvester/universe/stp";
 import { barDateOf, windowStart } from "@/lib/harvester/universe/backfill";
+import { computeStpRolling, ROLLING_WINDOWS, type RollingWindows } from "@/lib/harvester/universe/stp-rolling";
 import { timeSplit, walkForwardFolds, FOLDS_REQUIRED, MIN_FOLD_ROWS, MIN_HELDOUT_ROWS, WALK_FORWARD_FOLDS } from "./rules";
 
 export const SIM_VERSION = 1;
@@ -30,7 +31,13 @@ export const EXIT_RULES: Record<ExitRule, { targetR: number; maxSessions: number
 
 export type Dir = 1 | -1;
 
+/** Which trend definition produced the setup: calendar weekly/monthly opens (computeStp) or rolling opens (step 1c). */
+export type Variant = "calendar" | "rolling";
+
 export interface Setup {
+  variant: Variant;
+  /** stp_htf_opens on the trigger bar (calendar opens), for the step 1b alignment split. */
+  htf: number | null;
   symbol: string;
   /** Trigger bar's date (ET) and index in the symbol's bars. */
   date: string;
@@ -47,30 +54,63 @@ export interface BarInfo {
   date: string;
   /** computeStp on that day's slice: +1, −1, 0, or null when it can't be computed. */
   trigger: number | null;
+  /** computeStpRolling (inside and U-turn with rolling opens) on the same slice. */
+  triggerRolling: number | null;
   fudge: number | null;
 }
 
-/** computeStp for every bar (dated in `sessions`, when given) on the live-window slice ending at it. */
-export function scanSymbol(symbol: string, bars: readonly DailyBar[], sessions?: ReadonlySet<string>): { setups: Setup[]; info: BarInfo[] } {
+export interface Scanned {
+  setups: Setup[];
+  rollingSetups: Setup[];
+  info: BarInfo[];
+}
+
+/**
+ * computeStp and computeStpRolling for every bar (dated in `sessions`, when given) on the
+ * live-window slice ending at it. `windows` is the rolling window (5/20 stocks, 7/30 crypto).
+ */
+export function scanSymbol(symbol: string, bars: readonly DailyBar[], sessions?: ReadonlySet<string>, windows: RollingWindows = ROLLING_WINDOWS.stock): Scanned {
   const dates = bars.map((b) => barDateOf(b) ?? "");
   const info: BarInfo[] = [];
   const setups: Setup[] = [];
+  const rollingSetups: Setup[] = [];
   let start = 0;
   for (let i = 0; i < bars.length; i++) {
     const d = dates[i];
     if (!d || (sessions && !sessions.has(d))) {
-      info.push({ date: d, trigger: null, fudge: null });
+      info.push({ date: d, trigger: null, triggerRolling: null, fudge: null });
       continue;
     }
     const ws = windowStart(d);
     while (start < i && dates[start] <= ws) start++;
-    const s = computeStp(bars.slice(start, i + 1));
-    info.push({ date: d, trigger: s.trigger, fudge: s.fudge });
+    const slice = bars.slice(start, i + 1);
+    const s = computeStp(slice);
+    const r = computeStpRolling(slice, windows);
+    info.push({ date: d, trigger: s.trigger, triggerRolling: r.trigger, fudge: s.fudge });
     if ((s.trigger === 1 || s.trigger === -1) && s.entry != null && s.stop != null && s.fudge != null && s.triggerType) {
-      setups.push({ symbol, date: d, i, dir: s.trigger, type: s.triggerType, firedRules: s.firedRules, entry: s.entry, stop: s.stop, fudge: s.fudge });
+      setups.push({ variant: "calendar", htf: s.htfOpens, symbol, date: d, i, dir: s.trigger, type: s.triggerType, firedRules: s.firedRules, entry: s.entry, stop: s.stop, fudge: s.fudge });
+    }
+    if ((r.trigger === 1 || r.trigger === -1) && r.entry != null && r.stop != null && r.fudge != null && r.triggerType) {
+      rollingSetups.push({ variant: "rolling", htf: s.htfOpens, symbol, date: d, i, dir: r.trigger, type: r.triggerType, firedRules: r.firedRules, entry: r.entry, stop: r.stop, fudge: r.fudge });
     }
   }
-  return { setups, info };
+  return { setups, rollingSetups, info };
+}
+
+export interface Overlap {
+  both: number;
+  calendarOnly: number;
+  rollingOnly: number;
+}
+
+/** Step 1c overlap: inside and U-turn setups (same ticker, date and direction) that both definitions fire, or only one. */
+export function setupOverlap(calendar: readonly Setup[], rolling: readonly Setup[]): Overlap {
+  const key = (s: Setup) => `${s.symbol}|${s.date}|${s.dir}`;
+  const cal = new Set(calendar.filter((s) => s.type === "inside" || s.type === "butn" || s.type === "brutn").map(key));
+  const rol = new Set(rolling.map(key));
+  let both = 0;
+  for (const k of cal) if (rol.has(k)) both++;
+  return { both, calendarOnly: cal.size - both, rollingOnly: rol.size - both };
 }
 
 export type EntryOutcome =
@@ -229,7 +269,8 @@ export function matchedControl(
   const pool: number[] = [];
   for (let c = setup.i - CONTROL_WINDOW; c <= setup.i + CONTROL_WINDOW; c++) {
     if (c === setup.i || c < 0 || c + 1 >= bars.length) continue;
-    if (info[c]?.trigger === 0 && info[c].fudge != null) pool.push(c);
+    const trig = setup.variant === "rolling" ? info[c]?.triggerRolling : info[c]?.trigger;
+    if (trig === 0 && info[c].fudge != null) pool.push(c);
   }
   const r = rng(controlSeed(setup.symbol, setup.date, seedBase));
   for (let k = 0; k < CONTROL_TRIES && pool.length > 0; k++) {
@@ -245,7 +286,18 @@ export function matchedControl(
   return null;
 }
 
+export type Alignment = "aligned" | "partial" | "against";
+
+/** Step 1b: stp_htf_opens × direction: +1 aligned, −1 against, anything else (±0.5, 0) partial; null unknown. */
+export function htfAlignment(htf: number | null, dir: Dir): Alignment | null {
+  if (htf == null) return null;
+  const a = htf * dir;
+  return a >= 1 ? "aligned" : a <= -1 ? "against" : "partial";
+}
+
 export interface Trade {
+  variant: Variant;
+  alignment: Alignment | null;
   symbol: string;
   /** Trigger date: the time key for the split. */
   scanId: string;
@@ -301,9 +353,12 @@ export function simulateSymbol(
   symbol: string,
   bars: readonly DailyBar[],
   rule: ExitRule,
-  opts: { sessions?: ReadonlySet<string>; regime?: ReadonlyMap<string, Trade["regime"]>; scanned?: { setups: Setup[]; info: BarInfo[] } } = {},
+  opts: { sessions?: ReadonlySet<string>; regime?: ReadonlyMap<string, Trade["regime"]>; scanned?: Scanned; variant?: Variant } = {},
 ): { trades: Trade[]; counts: SymbolCounts } {
-  const { setups, info } = opts.scanned ?? scanSymbol(symbol, bars, opts.sessions);
+  const scanned = opts.scanned ?? scanSymbol(symbol, bars, opts.sessions);
+  const variant = opts.variant ?? "calendar";
+  const setups = variant === "rolling" ? scanned.rollingSetups : scanned.setups;
+  const info = scanned.info;
   const closes = bars.map((b) => b.close);
   const counts = emptyCounts();
   const trades: Trade[] = [];
@@ -325,6 +380,8 @@ export function simulateSymbol(
     const control = matchedControl(s, bars, closes, info, rule);
     if (!control) counts.noControl++;
     trades.push({
+      variant,
+      alignment: htfAlignment(s.htf, s.dir),
       symbol,
       scanId: s.date,
       scanStart: new Date(`${s.date}T21:00:00Z`),
@@ -436,13 +493,25 @@ export interface GroupResult {
 export const TRIGGER_TYPES = ["inside", "butn", "brutn", "mech1", "mech2", "egop"] as const;
 
 /** The pre-registered primary groups: all, long, short, and each type × direction the rules allow. */
-export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: Pick<Trade, "dir" | "type">) => boolean }> = [
-  { group: "all", match: () => true },
-  { group: "long", match: (t) => t.dir === 1 },
-  { group: "short", match: (t) => t.dir === -1 },
+type GroupKey = Pick<Trade, "dir" | "type" | "variant">;
+const cal = (t: GroupKey) => t.variant === "calendar";
+
+/**
+ * The pre-registered primary groups, 17 per exit: all, long, short and each type ×
+ * direction on the calendar triggers (13), plus inside± and the U-turns with rolling
+ * opens (4, step 1c).
+ */
+export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey) => boolean }> = [
+  { group: "all", match: cal },
+  { group: "long", match: (t) => cal(t) && t.dir === 1 },
+  { group: "short", match: (t) => cal(t) && t.dir === -1 },
   ...[
     ["inside", 1], ["inside", -1], ["butn", 1], ["brutn", -1], ["mech1", 1], ["mech1", -1], ["mech2", 1], ["mech2", -1], ["egop", 1], ["egop", -1],
-  ].map(([type, dir]) => ({ group: `${type}${dir === 1 ? "+" : "-"}`, match: (t: Pick<Trade, "dir" | "type">) => t.type === type && t.dir === dir })),
+  ].map(([type, dir]) => ({ group: `${type}${dir === 1 ? "+" : "-"}`, match: (t: GroupKey) => cal(t) && t.type === type && t.dir === dir })),
+  ...[["inside", 1], ["inside", -1], ["butn", 1], ["brutn", -1]].map(([type, dir]) => ({
+    group: `rolling:${type}${dir === 1 ? "+" : "-"}`,
+    match: (t: GroupKey) => t.variant === "rolling" && t.type === type && t.dir === dir,
+  })),
 ];
 
 /**
@@ -477,8 +546,13 @@ export function evaluateGroups(trades: readonly Trade[]): GroupResult[] {
     return { group, primary, all: groupMetrics(sel), heldOut, folds, foldsPassed, verdict, reason };
   };
   const out: GroupResult[] = PRIMARY_GROUPS.map((g) => judge(g.group, trades.filter(g.match), true));
-  for (const type of TRIGGER_TYPES) out.push(judge(`type:${type}`, trades.filter((t) => t.type === type), false));
-  for (const r of ["spy_above_sma20", "spy_below_sma20"] as const) out.push(judge(`regime:${r}`, trades.filter((t) => t.regime === r), false));
-  for (const q of [...new Set(trades.map((t) => t.quarter))].sort()) out.push(judge(`quarter:${q}`, trades.filter((t) => t.quarter === q), false));
+  const calendar = trades.filter((t) => t.variant === "calendar");
+  for (const type of TRIGGER_TYPES) out.push(judge(`type:${type}`, calendar.filter((t) => t.type === type), false));
+  // Step 1b: do the weekly/monthly opens add anything on top of the MA- and catalyst-based patterns?
+  for (const type of ["mech1", "mech2", "egop"] as const)
+    for (const a of ["aligned", "partial", "against"] as const)
+      out.push(judge(`htf:${type}:${a}`, calendar.filter((t) => t.type === type && t.alignment === a), false));
+  for (const r of ["spy_above_sma20", "spy_below_sma20"] as const) out.push(judge(`regime:${r}`, calendar.filter((t) => t.regime === r), false));
+  for (const q of [...new Set(calendar.map((t) => t.quarter))].sort()) out.push(judge(`quarter:${q}`, calendar.filter((t) => t.quarter === q), false));
   return out;
 }

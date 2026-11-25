@@ -17,7 +17,7 @@ import { BENCHMARK_SYMBOL } from "@/lib/harvester/universe/snapshot";
 import { backfillSessions } from "@/lib/harvester/universe/backfill";
 import { commitId } from "@/lib/eval/commit";
 import { lastExperimentNumber } from "@/lib/eval/report";
-import { emptyCounts, evaluateGroups, scanSymbol, simulateSymbol, spyRegimeByDate, type ExitRule, type SymbolCounts, type Trade } from "@/lib/eval/stp-sim";
+import { emptyCounts, evaluateGroups, scanSymbol, setupOverlap, simulateSymbol, spyRegimeByDate, type ExitRule, type Overlap, type SymbolCounts, type Trade, type Variant } from "@/lib/eval/stp-sim";
 import { simExperimentRow, simMarkdownReport, tradesCsv } from "@/lib/eval/stp-sim-report";
 
 const CACHE_DIR = "scripts/output/backfill-bars";
@@ -50,7 +50,9 @@ function main() {
   console.log(`[stp-sim] ${symbols.length} symbols, ${sessionList.length} sessions ${sessionList[0]}..${sessionList.at(-1)}, exits ${exits.join(", ")}`);
 
   const t0 = Date.now();
-  const byExit: Record<ExitRule, { trades: Trade[]; counts: SymbolCounts }> = { A: { trades: [], counts: emptyCounts() }, B: { trades: [], counts: emptyCounts() } };
+  const fresh = () => ({ trades: [] as Trade[], counts: { calendar: emptyCounts(), rolling: emptyCounts() } as Record<Variant, SymbolCounts> });
+  const byExit: Record<ExitRule, ReturnType<typeof fresh>> = { A: fresh(), B: fresh() };
+  const overlap: Overlap = { both: 0, calendarOnly: 0, rollingOnly: 0 };
   for (const [k, sym] of symbols.entries()) {
     let bars: DailyBar[];
     try {
@@ -60,12 +62,17 @@ function main() {
       continue;
     }
     if (bars.length < 60) continue;
-    const scanned = scanSymbol(sym, bars, sessions); // once per symbol, shared by both exits
-    for (const exit of exits) {
-      const r = simulateSymbol(sym, bars, exit, { regime, scanned });
-      byExit[exit].trades.push(...r.trades);
-      for (const key of Object.keys(r.counts) as (keyof SymbolCounts)[]) byExit[exit].counts[key] += r.counts[key];
-    }
+    const scanned = scanSymbol(sym, bars, sessions); // once per symbol (stocks: rolling 5/20), shared by both exits
+    const o = setupOverlap(scanned.setups, scanned.rollingSetups);
+    overlap.both += o.both;
+    overlap.calendarOnly += o.calendarOnly;
+    overlap.rollingOnly += o.rollingOnly;
+    for (const exit of exits)
+      for (const variant of ["calendar", "rolling"] as const) {
+        const r = simulateSymbol(sym, bars, exit, { regime, scanned, variant });
+        byExit[exit].trades.push(...r.trades);
+        for (const key of Object.keys(r.counts) as (keyof SymbolCounts)[]) byExit[exit].counts[variant][key] += r.counts[key];
+      }
     if ((k + 1) % 100 === 0) console.log(`[stp-sim] ${k + 1}/${symbols.length} symbols, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }
 
@@ -76,14 +83,14 @@ function main() {
     const results = evaluateGroups(trades);
     const prim = results.filter((r) => r.primary);
     console.log(
-      `P3-0i exit ${exit}: ${trades.length} trades from ${counts.setups} setups; primary groups ${prim.filter((r) => r.verdict === "KEEP").length} KEEP, ` +
+      `P3-0i exit ${exit}: ${trades.length} trades (${counts.calendar.filled} calendar, ${counts.rolling.filled} rolling); primary groups ${prim.filter((r) => r.verdict === "KEEP").length} KEEP, ` +
         `${prim.filter((r) => r.verdict === "DROP").length} DROP, ${prim.filter((r) => r.verdict === "INSUFFICIENT").length} INSUFFICIENT`,
     );
     for (const r of prim.filter((x) => x.verdict === "KEEP")) console.log(`  KEEP ${r.group}: ${r.reason}`);
     if (dryRun) continue;
     mkdirSync("scripts/output", { recursive: true });
     const reportPath = `scripts/output/stp-sim-backfill-exit${exit}-${date}.md`;
-    writeFileSync(reportPath, simMarkdownReport(results, counts, { date, commit, exit, symbols: symbols.length }));
+    writeFileSync(reportPath, simMarkdownReport(results, counts.calendar, { date, commit, exit, symbols: symbols.length, rollingCounts: counts.rolling, overlap }));
     writeFileSync(`scripts/output/stp-sim-backfill-exit${exit}-${date}-trades.csv`, tradesCsv(trades));
     const md = readFileSync(LOG_PATH, "utf8");
     const row = simExperimentRow(results, { number: lastExperimentNumber(md) + 1, date, commit, exit, reportPath, trades: trades.length });

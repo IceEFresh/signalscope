@@ -36,6 +36,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 20. **P3-0f: macro context fields, log only** (spec: docs/PHASE3-PREP.md). No migration: they go in `Scan.regimeFeatures`.
 21. **P3-0h: harness fix, low-cardinality features are categorical** (spec: docs/PHASE3-PREP.md). No migration.
 22. **P3-0i: STP trigger trade simulation on the backfill** (spec: docs/PHASE3-PREP.md). No migration. Pre-register before the first run.
+22b. **P3-0i2: live logging of the rolling STP keys** (spec: P3-0i step 1c, "Live logging", in docs/PHASE3-PREP.md). Add `stp_htf_opens_rolling`, `stp_trigger_rolling` and `stp_trigger_type_rolling` to the snapshot and ticker features, using 5/20 for stocks and 7/30 for crypto (`src/lib/harvester/universe/stp-rolling.ts`, built in P3-0i). Log only, no migration; `StpSignal` and the calendar trigger stay unchanged.
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.

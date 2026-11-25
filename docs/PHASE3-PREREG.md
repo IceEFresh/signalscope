@@ -121,7 +121,7 @@ The stock regime (`regime.*`) is not attached to crypto rows. The regime is stoc
 - **Log:** both backfill runs stay in `scripts/backtesting-experiments.md`. The first run's row is kept, and the rerun after this fix gets its own row.
 - **Not covered by this amendment:** the U-shape the first backfill run showed in `return_20d`, `rsi14_max_20d` and `sma20_vs_sma50` (both extremes beat the middle). Testing that would be a new hypothesis, such as beta-adjusted excess or |feature| buckets. It needs its own pre-registration and a test on the live universe dataset, not on the backfill that suggested it.
 
-## STP trigger trades (P3-0i): 13 comparisons per exit, reported separately
+## STP trigger trades (P3-0i): 17 comparisons per exit, reported separately
 Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulates STP triggers as trades on the P3-0g backfill bars, the chart cache in `scripts/output/backfill-bars/`. It runs on every cached symbol except SPY, with trigger dates in the backfill's last 2 years of SPY sessions. The survivorship bias is the same as the backfill's: current members only, so results are optimistic.
 
 **Setups.** `computeStp` on each day D's live-window slice, the same slicing as P3-0g: bars dated on or before D, after D minus 3 months. Every `trigger ≠ 0` is one setup, with its own `entry`, `stop`, `fudge`, `triggerType` and `firedRules`. The backfill has no earnings dates, so `egop` never fires, and its groups will be INSUFFICIENT.
@@ -165,13 +165,30 @@ If the data ends first, the trade exits at the last close (`end_of_data`). Exit-
 - **KEEP:** held-out net expectancy > 0 **and** above its matched control, **and** the same is true in at least 2 of 3 folds. A fold needs at least 30 trades to count.
 - **DROP:** anything else.
 
-**Primary groups, 13 per exit:**
-- all, long, short;
-- inside+, inside−, butn+, brutn−, mech1+, mech1−, mech2+, mech2−, egop+, egop−.
+**Trend criteria (step 1b).** Each pattern's own criteria, as `computeStp` applies them, define the primary population, with no extra gate:
+- inside and U-turns: price against both the calendar weekly and monthly opens (`trendDirection`, at t−3 for U-turns);
+- Mechanical I and II: the moving averages;
+- EGOP: the earnings gap.
 
-`butn` is bullish only and `brutn` bearish only. Exit A's 13 are the primary test; exit B's 13 are reported separately and never pooled with exit A. At a nominal 5%, about 1 KEEP per exit could come from chance before the fold rule.
+**Rolling opens (step 1c).** A second trend definition for inside candles and U-turns.
+- The rolling "week" open is the open of bar t−4 and the "month" open that of bar t−19 (5 and 20 sessions, today counted as session 1). Crypto would use 7/30 (t−6, t−29); the helper takes the window as a parameter, but crypto isn't simulated here.
+- `stp_htf_opens_rolling` uses the `stp_htf_opens` formula with those opens; U-turns read it at t−3.
+- The pattern rules, entry, stop and fudge are otherwise identical to `computeStp`'s, with the same 51-bar minimum.
+- Rolling setups are simulated as their own population, under the same trade rules: one position per ticker within that population.
+- Their matched controls are drawn from sessions where the **rolling** trigger is 0. Calendar controls are drawn where the calendar trigger is 0.
+- **Overlap** is reported at setup level (same ticker, date and direction, inside and U-turn only): both fire, calendar only, rolling only.
 
-**Descriptive only, no verdict:** by `triggerType` (both directions), SPY above or below its SMA20 on the trigger day (from the backfill SPY bars), and calendar quarter.
+**Primary groups, 17 per exit:**
+- calendar triggers: all, long, short, inside+, inside−, butn+, brutn−, mech1+, mech1−, mech2+, mech2−, egop+, egop− (13);
+- rolling triggers: rolling inside+, rolling inside−, rolling butn+, rolling brutn− (4).
+
+"all", "long" and "short" cover calendar triggers only. `butn` is bullish only and `brutn` bearish only. Exit A's 17 are the primary test; exit B's 17 are reported separately and never pooled with exit A. At a nominal 5%, about 1 KEEP per exit could come from chance before the fold rule.
+
+**Descriptive only, no verdict (calendar triggers):**
+- by `triggerType`, both directions;
+- **step 1b:** mech1, mech2 and egop, each split by `stp_htf_opens` alignment with the trade direction: aligned (htf × direction = +1), against (−1), partial (±0.5 or 0). This shows whether the weekly and monthly opens add anything on top of each pattern's own criteria;
+- SPY above or below its SMA20 on the trigger day, from the backfill SPY bars;
+- calendar quarter.
 
 **Output.** One report, one trades CSV and one experiment-log row per exit. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
 

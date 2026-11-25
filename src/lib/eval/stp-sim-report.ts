@@ -3,7 +3,7 @@
  * per exit rule.
  */
 import { SURVIVORSHIP_NOTE } from "./report";
-import { COST_ROUND_TRIP, CONTROL_SEED, EXIT_RULES, type ExitRule, type GroupMetrics, type GroupResult, type SymbolCounts, type Trade } from "./stp-sim";
+import { COST_ROUND_TRIP, CONTROL_SEED, EXIT_RULES, type ExitRule, type GroupMetrics, type GroupResult, type Overlap, type SymbolCounts, type Trade } from "./stp-sim";
 
 const r2 = (v: number | null) => (v == null ? "n/a" : v.toFixed(3));
 const pct = (v: number | null) => (v == null ? "n/a" : `${(v * 100).toFixed(1)}%`);
@@ -18,15 +18,22 @@ const HEAD = [
   "|---|---|---|---|---|---|---|---|---|---|---|---|",
 ];
 
+function countsLine(label: string, counts: SymbolCounts): string {
+  const fillRate = counts.filled + counts.cancelled > 0 ? counts.filled / (counts.filled + counts.cancelled) : null;
+  return (
+    `${label}: setups ${counts.setups}: filled ${counts.filled}, cancelled (no D+1 fill) ${counts.cancelled}, skipped gap past stop or R ≤ 0 ${counts.skippedGap}, ` +
+    `skipped while a position was open ${counts.skippedOverlap}, no D+1 bar ${counts.noBar}. Fill rate ${pct(fillRate)}. Trades without a matched control: ${counts.noControl}.`
+  );
+}
+
 export function simMarkdownReport(
   results: readonly GroupResult[],
   counts: SymbolCounts,
-  meta: { date: string; commit: string; exit: ExitRule; symbols: number },
+  meta: { date: string; commit: string; exit: ExitRule; symbols: number; rollingCounts?: SymbolCounts; overlap?: Overlap },
 ): string {
   const rule = EXIT_RULES[meta.exit];
   const prim = results.filter((r) => r.primary);
   const n = (v: string) => prim.filter((r) => r.verdict === v).length;
-  const fillRate = counts.filled + counts.cancelled > 0 ? counts.filled / (counts.filled + counts.cancelled) : null;
   const out = [
     `# P3-0i STP trigger trades: backfill dataset, exit ${meta.exit}, ${meta.date} (${meta.commit})`,
     "",
@@ -35,9 +42,18 @@ export function simMarkdownReport(
     `Exit ${meta.exit}: stop at the trigger's stop, target ${rule.targetR}R, time exit at the close of session ${rule.maxSessions} after the fill${rule.trailing ? ", STP trailing exits (mX, pmX, bar stop)" : ""}. ` +
       `Costs ${(COST_ROUND_TRIP * 100).toFixed(2)}% of price round trip, in R. Net R is primary. Control seed ${CONTROL_SEED}.`,
     "",
-    `${meta.symbols} symbols. Setups ${counts.setups}: filled ${counts.filled}, cancelled (no D+1 fill) ${counts.cancelled}, skipped gap past stop or R ≤ 0 ${counts.skippedGap}, ` +
-      `skipped while a position was open ${counts.skippedOverlap}, no D+1 bar ${counts.noBar}. Fill rate ${pct(fillRate)}. Trades without a matched control: ${counts.noControl}.`,
+    `${meta.symbols} symbols.`,
     "",
+    countsLine("Calendar opens (computeStp)", counts),
+    "",
+    ...(meta.rollingCounts ? [countsLine("Rolling opens (inside and U-turn, 5/20 sessions)", meta.rollingCounts), ""] : []),
+    ...(meta.overlap
+      ? [
+          `Overlap of the two trend definitions, inside and U-turn setups (same ticker, date, direction): both fire ${meta.overlap.both}, ` +
+            `calendar only ${meta.overlap.calendarOnly}, rolling only ${meta.overlap.rollingOnly}.`,
+          "",
+        ]
+      : []),
     `**Primary groups (${prim.length} comparisons): ${n("KEEP")} KEEP, ${n("DROP")} DROP, ${n("INSUFFICIENT")} INSUFFICIENT.** A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.`,
     "",
     "| group | verdict | held-out trades | held-out net exp R | held-out control exp R | folds passed | reason |",
@@ -59,9 +75,9 @@ const csvCell = (v: unknown) => {
 };
 
 export function tradesCsv(trades: readonly Trade[]): string {
-  const cols = ["symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "control_r_net", "regime", "quarter"];
+  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "control_r_net", "htf_alignment", "regime", "quarter"];
   const rows = trades.map((t) =>
-    [t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.controlNetR, t.regime, t.quarter]
+    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.controlNetR, t.alignment, t.regime, t.quarter]
       .map(csvCell)
       .join(","),
   );
