@@ -37,6 +37,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 21. **P3-0h: harness fix, low-cardinality features are categorical** (spec: docs/PHASE3-PREP.md). No migration.
 22. **P3-0i: STP trigger trade simulation on the backfill** (spec: docs/PHASE3-PREP.md). No migration. Pre-register before the first run.
 22b. **P3-0i2: live rolling-open STP keys** (spec: P3-0i step 1c, live logging). No migration.
+22b2. **P3-0i2b**: persistent bar store for the live swing keys (PHASE3-PREP §P3-0i2b). After #69.
 22c. **P3-0i3: historical earnings dates from SEC EDGAR 8-K item 2.02** (spec: docs/PHASE3-PREP.md). No migration. Lets EGOP be simulated on the backfill.
 ## Builder loop, for each item
 

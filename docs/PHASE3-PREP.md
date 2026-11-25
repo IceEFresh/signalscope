@@ -500,6 +500,44 @@ It's read-only on the DB. Use the same NAS command pattern as validate-features 
 
 Log only. No score, stage, label or rule changes. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
 
+## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
+The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
+
+**Store**
+- One JSON file per symbol, in the same format as `scripts/output/backfill-bars`, at `data/bar-store/<symbol>.json`.
+- Bind-mount it into the harvester: `./data/bar-store:/app/data/bar-store` in `docker-compose.yml`. Add `data/` to `.gitignore`. Show the compose diff in the PR body.
+- Keep the last **600 sessions**.
+
+**Seed**
+- `scripts/seed-bar-store.ts` copies `scripts/output/backfill-bars/*.json` into the store. It skips symbols already present, so it's safe to rerun. Run it once on the NAS.
+
+**Append (each harvest, after the chart fetch)**
+- Merge the chart bars by date, keeping **completed sessions only**: dates before the run's session date. The harvest runs before the open, so the newest bar is yesterday's.
+- A date in both the store and the chart takes the chart's values.
+- **Split and dividend check:** on dates in both, if any close differs by more than 1%, Yahoo has re-adjusted the history. Fetch a 2-year chart for that symbol and rewrite its file. That's one request, and rare.
+- **New universe members with no file:** fetch a 2-year chart once. That's a few dozen requests on weekly rebuild days.
+- A failed write or fetch logs a warning and never stops the harvest.
+
+**Live swing keys**
+- `swing_k*` from P3-0i2 read the store's bars plus this run's chart, deduped by date and causal (≤ D).
+- Indicators that only need 63 bars keep using the chart alone, so they stay identical to the backfill.
+
+**Health line**
+- `[bar-store] n/m members with ≥250 sessions, x re-adjusted, y seeded new, z write errors`.
+- Warn when fewer than 80% of members have ≥250 sessions.
+
+**Tests (fixtures, no network)**
+- merge and dedupe;
+- an unfinished day isn't stored;
+- the 600-session cap;
+- the 1% mismatch triggers a refetch, the rewrite replaces the file, and the stub fetch is called once;
+- a new member triggers one fetch;
+- a write error keeps the harvest going;
+- swing keys turn non-null once the store has ≥250 sessions with ≥4 legs;
+- look-ahead: a stored bar dated after D is ignored.
+
+No migration and no dependency.
+
 ## P3-0i3: historical earnings dates from SEC EDGAR (Chris, 2026-11-25)
 
 **Why:** EGOP needs earnings dates, and the backfill has none. Yahoo gives only the next date. The NAS can't use TradingView (no API, and its terms forbid it). SEC EDGAR is free and complete: a US company's earnings release is furnished on **Form 8-K, Item 2.02** ("Results of Operations"), usually the same day or the next.
