@@ -29,7 +29,67 @@ export const CONDITIONAL_FAMILIES: ReadonlySet<TickerFamily> = new Set(["opt", "
 /** P3-0e: crypto rows carry the SPY-comparison bar keys under BTC names. */
 const CRYPTO_BAR_KEYS = new Set(["btc_return_20d", "rs_vs_btc_20d"]);
 
+/**
+ * P3-0i2 live keys: log-only and not pre-registered, so they belong to no tested family
+ * (candidateKeys skips them) and the health report's family stats ignore them.
+ */
+export function isLiveStpKey(key: string): boolean {
+  return (
+    /^stp_(htf_opens_rolling|trigger_rolling|trigger_type_rolling|size_factor_long|size_factor_short)$/.test(key) ||
+    /^(size_combined_|pyramid_|finviz_|swing_k)/.test(key)
+  );
+}
+
+/** P3-0i2: below this share of stock rows with a sector layer, the live Power Pyramid keys are flagged. */
+export const PYRAMID_SECTOR_MIN_SHARE = 0.5;
+
+export interface PyramidCoverage {
+  stockRows: number;
+  /** Rows whose market layer had at least one index ETF state (pyramid_market_spy_htf etc. non-null). */
+  market: number;
+  /** Rows with a sector ETF mapped (needs the stock's weekly profile) and its state that day. */
+  sector: number;
+  industry: number;
+  /** Universe members with a stored sector, and all members; null when unknown. */
+  profiled: number | null;
+  members: number | null;
+  warn: boolean;
+}
+
+/**
+ * Coverage of the live Power Pyramid keys (P3-0i2) over snapshot rows that carry them.
+ * Missing weekly profiles silently null every sector and industry layer, which shrinks the
+ * size keys to the market layer alone, so a low sector share is a warning.
+ */
+export function pyramidCoverage(
+  rows: ReadonlyArray<Record<string, unknown> | null>,
+  profiled: number | null = null,
+  members: number | null = null,
+): PyramidCoverage | null {
+  const withKeys = rows.filter((r): r is Record<string, unknown> => !!r && "pyramid_size_long" in r);
+  if (withKeys.length === 0) return null;
+  const has = (k: string) => withKeys.filter((r) => r[k] != null).length;
+  const market = withKeys.filter((r) => ["spy", "qqq", "dia"].some((e) => r[`pyramid_market_${e}_htf`] != null)).length;
+  const sector = has("pyramid_sector_htf");
+  return {
+    stockRows: withKeys.length,
+    market,
+    sector,
+    industry: has("pyramid_industry_htf"),
+    profiled,
+    members,
+    warn: sector / withKeys.length < PYRAMID_SECTOR_MIN_SHARE,
+  };
+}
+
+/** One line for the harvest log and the health report. */
+export function pyramidCoverageLine(c: PyramidCoverage): string {
+  const prof = c.members != null ? `, profiles ${c.profiled ?? 0}/${c.members} members` : "";
+  return `[stp-live] pyramid: market layer ${c.market}/${c.stockRows} stock rows, sector ${c.sector}/${c.stockRows}, industry ${c.industry}/${c.stockRows}${prof}`;
+}
+
 export function familyOf(key: string): TickerFamily | null {
+  if (isLiveStpKey(key)) return null;
   if (key.startsWith("stp_")) return "stp";
   if (BAR_KEYS.has(key) || CRYPTO_BAR_KEYS.has(key)) return "bar";
   if (EARNINGS_KEYS.has(key)) return "earnings";
@@ -51,6 +111,8 @@ export interface ScanInput {
   /** P3-0e: crypto snapshot features for this scan and the universe's crypto member count (latest scan only). */
   cryptoSnapshot?: Array<Record<string, unknown> | null>;
   cryptoMembers?: number | null;
+  /** P3-0i2: universe members with a stored sector (weekly profile). */
+  profiledMembers?: number | null;
 }
 
 export interface KeyStats {
@@ -81,6 +143,8 @@ export interface ScanReport {
   families: Record<TickerFamily, FamilyStats>;
   /** P3-0c: snapshot row count and per-family stats, when loaded. */
   snapshot?: { rows: number; families: Record<TickerFamily, FamilyStats> };
+  /** P3-0i2: live Power Pyramid coverage over the stock snapshot rows. */
+  pyramid?: PyramidCoverage | null;
   /** P3-0e: crypto members, rows in this snapshot, and per-family stats. */
   crypto?: { members: number | null; rows: number; families: Record<TickerFamily, FamilyStats> };
 }
@@ -144,7 +208,12 @@ export function analyzeScan(scan: ScanInput): ScanReport {
       macro: macroOf(scan.regimeFeatures),
     },
     families,
-    ...(scan.snapshot ? { snapshot: { rows: scan.snapshot.length, families: familyStats(scan.snapshot) } } : {}),
+    ...(scan.snapshot
+      ? {
+          snapshot: { rows: scan.snapshot.length, families: familyStats(scan.snapshot) },
+          pyramid: pyramidCoverage(scan.snapshot, scan.profiledMembers ?? null, scan.universeSize),
+        }
+      : {}),
     ...(scan.cryptoSnapshot
       ? { crypto: { members: scan.cryptoMembers ?? null, rows: scan.cryptoSnapshot.length, families: familyStats(scan.cryptoSnapshot) } }
       : {}),
@@ -182,6 +251,16 @@ export function flagsFor(reports: readonly ScanReport[]): Flag[] {
     for (const f of ["bar", "stp"] as const)
       for (const [k, st] of Object.entries(latest.snapshot.families[f].keys))
         if (st.nullRate >= 1) flags.push({ level: "warn", message: `snapshot ${f}.${k} is 100% null in the latest scan` });
+  }
+  if (latest.pyramid?.warn) {
+    const p = latest.pyramid;
+    flags.push({
+      level: "warn",
+      message:
+        `live pyramid sector layer on ${p.sector}/${p.stockRows} stock rows (under ${PYRAMID_SECTOR_MIN_SHARE * 100}%)` +
+        (p.members != null ? `; ${p.profiled ?? 0}/${p.members} universe members have a sector profile` : "") +
+        ": pyramid_size_* and size_combined_* reflect the market layer only",
+    });
   }
   if (latest.crypto) {
     const c = latest.crypto;
@@ -244,6 +323,7 @@ export function renderText(reports: readonly ScanReport[], flags: readonly Flag[
       for (const [k, st] of Object.entries(sn.families[f].keys).sort(([a], [b]) => a.localeCompare(b)))
         out.push(`  ${k.padEnd(34)} null ${pct(st.nullRate).padStart(4)}  min ${fmt(st.min)}  med ${fmt(st.median)}  max ${fmt(st.max)}`);
   }
+  if (latest.pyramid) out.push("", pyramidCoverageLine(latest.pyramid));
   if (latest.crypto) {
     const c = latest.crypto;
     out.push("", `[crypto] ${c.members ?? "?"} members, ${c.rows} snapshot rows; coverage bar ${pct(c.families.bar.coverage)}, stp ${pct(c.families.stp.coverage)}`);

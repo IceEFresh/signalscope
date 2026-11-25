@@ -73,6 +73,8 @@ export async function computeSnapshotRows(
   stp: Record<string, StpResult>,
   peek: (s: string) => ReturnType<typeof peekDailyChart> = peekDailyChart,
   sectorInput?: { profiles: Record<string, { sector: string | null; industry: string | null }>; rotation: SectorRotation | null },
+  /** P3-0i2: extra log-only keys per row (stp-live.ts), from the same bars and STP result. */
+  liveKeys?: (symbol: string, bars: readonly DailyBar[], stp: StpResult | undefined) => Record<string, number | string | boolean | null>,
 ): Promise<{ rows: SnapshotRow[]; missing: number }> {
   const industryCounts = new Map<string, number>();
   for (const p of Object.values(sectorInput?.profiles ?? {})) {
@@ -107,6 +109,13 @@ export async function computeSnapshotRows(
   for (const s of [...new Set([...symbols, BENCHMARK_SYMBOL])]) {
     const bars = s === BENCHMARK_SYMBOL ? spyBars : await load(s);
     const row = bars ? snapshotRow(s, bars, spyBars, stp[s], sectorFor(s)) : null;
+    if (row && bars && liveKeys) {
+      try {
+        Object.assign(row.features, liveKeys(s, bars, stp[s]));
+      } catch (err) {
+        console.warn(`[snapshot] ${s}: live STP keys failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     if (row) rows.push(row);
     else missing++;
   }

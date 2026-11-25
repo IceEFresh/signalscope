@@ -38,13 +38,16 @@ async function load(n: number): Promise<ScanInput[]> {
   const feat = (r: { features: unknown }) => (r.features as Record<string, unknown> | null) ?? null;
   const snapshot = snapRows?.filter((r) => r.assetClass !== "crypto").map(feat);
   const cryptoSnapshot = snapRows?.filter((r) => r.assetClass === "crypto").map(feat);
+  const profiledMembers = scans[0]?.universeId
+    ? await prisma.universeMember.count({ where: { universeId: scans[0].universeId, sector: { not: null }, OR: [{ assetClass: null }, { assetClass: "stock" }] } })
+    : null;
   const cryptoMembers = scans[0]?.universeId
     ? await prisma.universeMember.count({ where: { universeId: scans[0].universeId, assetClass: "crypto" } })
     : null;
   const stpBy = new Map(stp.map((g) => [g.scanId, g._count._all]));
   const uniBy = new Map(universes.map((u) => [u.id, u.memberCount]));
   return scans.map((s, i) => ({
-    ...(i === 0 && snapshot ? { snapshot, cryptoSnapshot, cryptoMembers } : {}),
+    ...(i === 0 && snapshot ? { snapshot, cryptoSnapshot, cryptoMembers, profiledMembers } : {}),
     scanId: s.id,
     startedAt: s.startedAt,
     universeSize: s.universeId ? uniBy.get(s.universeId) ?? null : null,

@@ -80,6 +80,7 @@ export function simMarkdownReport(
     "",
     `${meta.symbols} symbols.` +
       (meta.sectorProfiles ? ` Calendar trades with a stored sector (§1g): ${meta.sectorProfiles.tradesWith} of ${meta.sectorProfiles.trades}.` : "") +
+      " The stock factor (§1j) uses the calendar stp_htf_opens for every trade, rolling-trigger trades included, as specified." +
       (meta.finvizPrice ? ` Median fill price: Finviz base-filter trades ${usd(meta.finvizPrice.base)} vs all trades ${usd(meta.finvizPrice.all)} (ATR > $1.50 favours higher-priced stocks).` : ""),
     "",
     countsLine("Calendar opens (computeStp)", counts),
