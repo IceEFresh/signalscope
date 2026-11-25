@@ -8,6 +8,7 @@ import {
   CONTROL_SEED,
   EXIT_B_CAP,
   EXIT_RULES,
+  MAX_ADDS,
   PRIMARY_EXIT,
   atrSeries,
   barFudge,
@@ -30,7 +31,7 @@ import {
   type Trade,
 } from "@/lib/eval/stp-sim";
 import { computeStpRolling, rollingHtfOpensAt, rollingWindowsFor, ROLLING_WINDOWS } from "@/lib/harvester/universe/stp-rolling";
-import { simExperimentRow, simMarkdownReport, tradesCsv } from "@/lib/eval/stp-sim-report";
+import { OUTLIER_R, outlierLines, simExperimentRow, simMarkdownReport, tradesCsv } from "@/lib/eval/stp-sim-report";
 import { MIN_HELDOUT_ROWS } from "@/lib/eval/rules";
 
 const NOW = new Date("2030-01-01T00:00:00Z");
@@ -141,6 +142,20 @@ describe("exit B (primary): STP management (§1e)", () => {
     expect(x.addGapSkips).toBe(1);
     expect(x.adds).toBe(1);
     expect(x.sharesAtExit).toBe(15);
+  });
+
+  it(`P3-0i4: a run through 6 add levels fills ${MAX_ADDS} adds and no 4th`, () => {
+    expect(MAX_ADDS).toBe(3);
+    // bars 1–6 reach 120, 140, 160, 180, 200, 220; shares 10 → 15 → 22 → 33, then no more
+    const run = [120, 140, 160, 180, 200, 220].map((l): [number, number, number, number] => [l - 19, l + 1, l - 20, l]);
+    const x = B([[100, 101, 99, 100], ...run, [220, 220.5, 100, 101]]);
+    expect(x.adds).toBe(3);
+    expect(x.addPrices).toEqual([120, 140, 160]);
+    expect(x.sharesAtExit).toBe(33);
+    expect(x.addCapReached).toBe(true);
+    expect(x.addGapSkips).toBe(0); // levels past the cap aren't counted as skips
+    const two = B([[100, 101, 99, 100], [110, 121, 109, 119], [119, 141, 118, 139], [139, 139.5, 100, 101]]);
+    expect(two.addCapReached).toBe(false);
   });
 
   it("when a bar touches the stop and an add level, the stop wins and the add doesn't happen", () => {
@@ -273,13 +288,37 @@ describe("verdicts", () => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
         swing: {}, finvizBase: null, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
-        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant, alignment: "aligned" as const, weekUsed: 0.2, monthUsed: 0.2, roomW: 2, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: net(i),
+        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant, alignment: "aligned" as const, weekUsed: 0.2, monthUsed: 0.2, roomW: 2, adds: 0, addGapSkips: 0, addCapReached: false, reached3R: false, size: 1, initialUnitR: net(i),
         symbol: `S${i % 7}`, scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir, type, firedRules: [],
         entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: net(i), netR: net(i), reason: "time" as const, holding: 1,
         controlNetR: ctrl(i), regime: null, quarter: "2025Q1",
       };
     });
   const verdict = (trades: Trade[], g: string) => evaluateGroups(trades).find((r) => r.group === g)!;
+
+  it("P3-0i4 outliers: the 5 largest dollar losses and gains, and a WARNING line per trade beyond ±50R", () => {
+    const pnl = [-11_000_000_000, -36_000, -500, -400, -300, -200, -100, 0, 100, 200, 300, 400, 500, 12_000];
+    const trades = mk(pnl.length, () => 0, () => 0).map((t, i) => ({ ...t, symbol: `T${i}`, dollarNet: pnl[i], netR: pnl[i] / 200, adds: i === 0 ? 40 : 0 }));
+    const lines = outlierLines(trades);
+    const text = lines.join("\n");
+    // ±50R at $200 base risk is ±$10,000: T0, T1 and T13 warn, worst first
+    const warn = lines.filter((l) => l.startsWith("WARNING:"));
+    expect(OUTLIER_R).toBe(50);
+    expect(warn.map((l) => l.split(" ")[1])).toEqual(["T0", "T1", "T13"]);
+    expect(warn[0]).toContain("40 adds");
+    expect(text).toContain("3 trade(s) beyond ±50R");
+    const rows = (title: string) => {
+      const start = lines.findIndex((l) => l.startsWith(title));
+      return lines.slice(start + 4).filter((l, i, a) => a.slice(0, i + 1).every((x) => x.startsWith("| "))).map((l) => l.split(" | ")[1]);
+    };
+    expect(rows("Largest 5 dollar losses")).toEqual(["T0", "T1", "T2", "T3", "T4"]);
+    expect(rows("Largest 5 dollar gains")).toEqual(["T13", "T12", "T11", "T10", "T9"]);
+    // the zero-P&L trade is neither a loss nor a gain; the report includes the section when trades are passed
+    expect(text).not.toContain("| T7 |");
+    const md = simMarkdownReport(evaluateGroups(trades), { setups: 1, filled: 1, cancelled: 0, gapSkip: 0, sizeSkip: 0, layerNull: 0, skippedGap: 0, skippedOverlap: 0, noBar: 0, noControl: 0 }, { date: "d", commit: "c", exit: "B", symbols: 1, trades });
+    expect(md).toContain("WARNING: T0");
+    expect(md).toContain("add cap (3) reached");
+  });
 
   it("KEEP: positive net expectancy above the control in the held-out split and in 2+ folds, with 100+ held-out trades", () => {
     const r = verdict(mk(400, (i) => (i % 3 === 0 ? -1 : 0.8), () => 0), "inside+");
@@ -395,7 +434,7 @@ describe("step 1c: rolling opens (5/20 stocks, 7/30 crypto)", () => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
 swing: {}, finvizBase: null, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
-        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant: "rolling", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 0, symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside",
+        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant: "rolling", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, addCapReached: false, reached3R: false, size: 1, initialUnitR: 0, symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside",
         firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: 0, netR: 0, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };
     });
@@ -468,7 +507,7 @@ describe("§1d entry location vs the normal move", () => {
       return {
         finvizBase: null, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
         baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, swing: { "1.5": sw, "2": sw, "3": sw },
-        variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: netR, symbol: "S", scanId: d,
+        variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, addCapReached: false, reached3R: false, size: 1, initialUnitR: netR, symbol: "S", scanId: d,
         scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1,
         risk: 0.1, grossR: netR, netR, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };
@@ -498,7 +537,7 @@ describe("§1d entry location vs the normal move", () => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
 swing: {}, finvizBase: null, finvizScreens: [], stockFactor: 1, sizeCombined: 1, floorHit: false, absFullFixedHalf: false, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
-        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 1,
+        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, addCapReached: false, reached3R: false, size: 1, initialUnitR: 1,
         symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1,
         stop: 0.9, exit: 1, risk: 0.1, grossR: 1, netR: 1, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };

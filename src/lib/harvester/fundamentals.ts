@@ -39,32 +39,98 @@ async function fetchQuoteSummaryData(
   return result;
 }
 
+export interface Profile {
+  sector: string | null;
+  industry: string | null;
+}
+
+export interface ProfileFetchStats {
+  total: number;
+  /** Symbols with a sector or an industry. */
+  fetched: number;
+  /** The request succeeded but assetProfile had neither field (funds, some ADRs). */
+  empty: number;
+  /** The request failed after retries. */
+  failed: number;
+  /** The first PROFILE_ERROR_SAMPLES failure messages, "SYM: message". */
+  errors: string[];
+}
+
+export const PROFILE_CONCURRENCY = 5;
+/** P3-0i4: pause between batches of 5, so ~1,500 profiles don't hit Yahoo in one burst. */
+export const PROFILE_BATCH_PAUSE_MS = 500;
+/** P3-0i4: retries per profile (429s and 5xx back off through withYahooRetry, honouring Retry-After). */
+export const PROFILE_RETRIES = 4;
+export const PROFILE_ERROR_SAMPLES = 3;
+export const PROFILE_WARN_SHARE = 0.8;
+
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * P3-0d: Yahoo sector and industry only (assetProfile), for the weekly universe build.
- * Five at a time with the shared retry; a failure leaves that symbol out.
+ * P3-0i4: sector and industry for `symbols`, PROFILE_CONCURRENCY at a time with a pause
+ * between batches. Each request goes through withYahooRetry (429 → backoff and Retry-After).
+ * A failure leaves that symbol out of the map; failures are counted and the first messages
+ * kept, so the log shows why profiles are missing (they were swallowed before P3-0i4).
  */
-export async function fetchSectorIndustry(symbols: string[]): Promise<Map<string, { sector: string | null; industry: string | null }>> {
-  const out = new Map<string, { sector: string | null; industry: string | null }>();
-  const CONCURRENCY = 5;
-  for (let i = 0; i < symbols.length; i += CONCURRENCY) {
+export async function fetchProfilesWith(
+  symbols: readonly string[],
+  fetchSummary: (symbol: string) => Promise<unknown>,
+  opts: { pauseMs?: number; sleep?: (ms: number) => Promise<void>; retries?: number } = {},
+): Promise<{ profiles: Map<string, Profile>; stats: ProfileFetchStats }> {
+  const { pauseMs = PROFILE_BATCH_PAUSE_MS, sleep = sleepMs, retries = PROFILE_RETRIES } = opts;
+  const profiles = new Map<string, Profile>();
+  const stats: ProfileFetchStats = { total: symbols.length, fetched: 0, empty: 0, failed: 0, errors: [] };
+  for (let i = 0; i < symbols.length; i += PROFILE_CONCURRENCY) {
+    if (i > 0 && pauseMs > 0) await sleep(pauseMs);
     await Promise.all(
-      symbols.slice(i, i + CONCURRENCY).map(async (sym) => {
+      symbols.slice(i, i + PROFILE_CONCURRENCY).map(async (sym) => {
         try {
-          const summary = await withYahooRetry(() => withYahooTimeout(yahooFinance.quoteSummary(sym, { modules: ["assetProfile"] })), {
-            label: "profile",
-          });
-          const p = summary.assetProfile as Record<string, unknown> | null | undefined;
-          out.set(sym, {
-            sector: typeof p?.sector === "string" ? p.sector : null,
-            industry: typeof p?.industry === "string" ? p.industry : null,
-          });
-        } catch {
-          // non-fatal: sector and industry stay null for this member
+          const summary = (await withYahooRetry(() => fetchSummary(sym), { label: "profile", retries })) as { assetProfile?: unknown } | null;
+          const p = summary?.assetProfile as Record<string, unknown> | null | undefined;
+          const sector = typeof p?.sector === "string" && p.sector ? p.sector : null;
+          const industry = typeof p?.industry === "string" && p.industry ? p.industry : null;
+          if (sector == null && industry == null) {
+            stats.empty++;
+            return;
+          }
+          profiles.set(sym, { sector, industry });
+          stats.fetched++;
+        } catch (err) {
+          stats.failed++;
+          if (stats.errors.length < PROFILE_ERROR_SAMPLES) stats.errors.push(`${sym}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }),
     );
   }
-  return out;
+  return { profiles, stats };
+}
+
+/** `[universe] profiles: n/m fetched, e empty, f failed`; warn under 80%. */
+export function profilesLine(s: ProfileFetchStats): { line: string; warn: boolean } {
+  return {
+    line: `[universe] profiles: ${s.fetched}/${s.total} fetched, ${s.empty} empty, ${s.failed} failed`,
+    warn: s.total > 0 && s.fetched / s.total < PROFILE_WARN_SHARE,
+  };
+}
+
+/** Log the profiles line (a warning under 80%) and the first failure messages. */
+export function logProfileStats(s: ProfileFetchStats, log: Pick<Console, "log" | "warn"> = console): void {
+  const { line, warn } = profilesLine(s);
+  (warn ? log.warn : log.log)(warn ? `${line} (under ${PROFILE_WARN_SHARE * 100}%)` : line);
+  for (const e of s.errors) log.warn(`[universe] profile error: ${e}`);
+}
+
+/** Yahoo quoteSummary assetProfile for one symbol (the live fetcher). */
+export const fetchAssetProfile = (sym: string): Promise<unknown> => withYahooTimeout(yahooFinance.quoteSummary(sym, { modules: ["assetProfile"] }));
+
+/**
+ * P3-0d: Yahoo sector and industry only (assetProfile), for the weekly universe build.
+ * P3-0i4: counted and logged, paced between batches; a failure leaves that symbol out.
+ */
+export async function fetchSectorIndustry(symbols: string[]): Promise<Map<string, Profile>> {
+  const { profiles, stats } = await fetchProfilesWith(symbols, fetchAssetProfile);
+  logProfileStats(stats);
+  return profiles;
 }
 
 export async function fetchFundamentals(

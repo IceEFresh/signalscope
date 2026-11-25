@@ -234,6 +234,8 @@ export interface TradeExit {
   /** Fill prices of the adds, in order. */
   addPrices: number[];
   addGapSkips: number;
+  /** P3-0i4: the position reached MAX_ADDS adds, so no further add was placed. */
+  addCapReached: boolean;
   reached3R: boolean;
   /** Shares at the exit over the initial shares (1, 1.5, 2.2, …). */
   size: number;
@@ -247,6 +249,8 @@ export const costInR = (fill: number, risk: number) => (COST_ROUND_TRIP * fill) 
 /** §1e: costs are 0.10% of traded value per leg (entry, each add, exit). */
 export const COST_PER_LEG = COST_ROUND_TRIP;
 export const ADD_FRACTION = 0.5;
+/** P3-0i4 (Chris, 2026-11-25): Exits B and C stop adding after the 3rd add (largest position 1.5³ = 3.375 units). Set after the first run's blow-up, not tuned on results. */
+export const MAX_ADDS = 3;
 export const TRAIL_AFTER_R = 3;
 export const EXIT_B_CAP = 60;
 /** §1j: every position risks $200 × size (was $100 in §1h). No max-trade-size cap. */
@@ -286,7 +290,7 @@ export function simulateExitA(bars: readonly DailyBar[], f: number, dir: Dir, fi
   const last = Math.min(bars.length - 1, f + maxSessions);
   const legs = [{ qty: initialShares(baseRisk, risk), price: fill }];
   const done = (j: number, exit: number, reason: ExitReason) =>
-    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: 0, addGapSkips: 0, reached3R: dir * (exit - fill) >= 3 * risk });
+    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: 0, addGapSkips: 0, addCapReached: false, reached3R: dir * (exit - fill) >= 3 * risk });
   for (let j = f; j <= last; j++) {
     const b = bars[j];
     if (j > f && b.open != null) {
@@ -307,7 +311,7 @@ export function simulateExitA(bars: readonly DailyBar[], f: number, dir: Dir, fi
  * any add on that bar); adds at fill ± n × addStep (§1j: 2 × ATR14 at the trigger bar),
  * never on the entry day, as stop-limit orders, each
  * floor(50% of current shares) (0 → no add); an add level opened through is skipped and
- * the next level stays live. After an add, the stop moves to the size-weighted breakeven
+ * the next level stays live; after MAX_ADDS (3) fills, no more adds. After an add, the stop moves to the size-weighted breakeven
  * when that's tighter, from the next bar. Once a high (low, short) reaches fill ± 3R, each
  * completed bar can tighten the stop with trailCandidate, from the next bar; the stop
  * never loosens. No target; a 60-session cap exits at that close. R = dollar P&L over the
@@ -344,7 +348,7 @@ export function simulateExitB(
   const mech = isMechanical(type);
 
   const done = (j: number, exit: number, reason: ExitReason) =>
-    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: legs.length - 1, addGapSkips, reached3R });
+    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: legs.length - 1, addGapSkips, addCapReached: legs.length - 1 >= MAX_ADDS, reached3R });
   const stopReason = (): ExitReason => (trailed ? "trail_stop" : movedToBE ? "be_stop" : "stop");
 
   for (let j = f; j <= last; j++) {
@@ -354,7 +358,7 @@ export function simulateExitB(
     // Adds: stop-limit orders at successive 2R levels; a level the bar opened through is skipped.
     // Never on the entry day (Chris, §1e): from f+1 on, a level the fill bar already passed follows the gap rule.
     let pendingStop: number | null = null;
-    for (; j > f; ) {
+    for (; j > f && legs.length - 1 < MAX_ADDS; ) {
       const level = fill + dir * nextAdd * addStep;
       if (b.open != null && (dir === 1 ? b.open > level : b.open < level)) {
         addGapSkips++;
@@ -611,6 +615,8 @@ export interface Trade extends EntryLocation {
   /** Exit B: adds filled, add levels skipped because a bar opened through them, 3R touched, size at exit. */
   adds: number;
   addGapSkips: number;
+  /** P3-0i4: MAX_ADDS adds filled, so no further add was placed. */
+  addCapReached: boolean;
   reached3R: boolean;
   size: number;
   initialUnitR: number;
@@ -753,6 +759,7 @@ export function simulateSymbol(
       holding: x.holding,
       adds: x.adds,
       addGapSkips: x.addGapSkips,
+      addCapReached: x.addCapReached,
       reached3R: x.reached3R,
       size: x.size,
       initialUnitR: x.initialUnitR,
@@ -786,6 +793,8 @@ export interface GroupMetrics {
   avgAdds: number | null;
   maxAdds: number | null;
   addGapSkips: number;
+  /** P3-0i4: trades that reached MAX_ADDS adds. */
+  addCapReached: number;
   reached3RRate: number | null;
   beExitRate: number | null;
   avgRReached3R: number | null;
@@ -912,6 +921,7 @@ export function groupMetrics(trades: readonly Trade[]): GroupMetrics {
     avgAdds: mean(trades.map((t) => t.adds)),
     maxAdds: trades.length ? Math.max(...trades.map((t) => t.adds)) : null,
     addGapSkips: trades.reduce((s, t) => s + t.addGapSkips, 0),
+    addCapReached: trades.filter((t) => t.addCapReached).length,
     reached3RRate: trades.length ? trades.filter((t) => t.reached3R).length / trades.length : null,
     beExitRate: trades.length ? trades.filter((t) => t.reason === "be_stop").length / trades.length : null,
     avgRReached3R: mean(trades.filter((t) => t.reached3R).map((t) => t.netR)),

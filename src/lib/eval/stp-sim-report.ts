@@ -4,7 +4,7 @@
  */
 import { SURVIVORSHIP_NOTE } from "./report";
 import {
-  BASE_RISK_DOLLARS, COST_ROUND_TRIP, CONTROL_SEED, EXIT_RULES,
+  BASE_RISK_DOLLARS, COST_ROUND_TRIP, CONTROL_SEED, EXIT_RULES, MAX_ADDS,
   type ExitRule, type GroupMetrics, type GroupResult, type Overlap, type PortfolioStats, type SymbolCounts, type Trade,
 } from "./stp-sim";
 
@@ -33,6 +33,39 @@ const HEAD = [
   "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
 ];
 
+/** P3-0i4: a trade beyond ±OUTLIER_R gets a WARNING line in the report. */
+export const OUTLIER_R = 50;
+/** P3-0i4: the report lists this many largest dollar losses and gains. */
+export const OUTLIER_TOP = 5;
+
+const outlierRow = (t: Trade) =>
+  `| ${t.variant} | ${t.symbol} | ${t.scanId} | ${t.dir === 1 ? "long" : "short"} | ${t.type} | ${t.adds} | ${t.shares} | ${t.sharesAtExit} | ${usd(t.dollarNet)} | ${r2(t.netR)} | ${t.reason} |`;
+
+/** P3-0i4: the 5 largest dollar losses and gains, plus a WARNING line per trade beyond ±50R. */
+export function outlierLines(trades: readonly Trade[]): string[] {
+  const byDollar = [...trades].sort((a, b) => a.dollarNet - b.dollarNet || a.symbol.localeCompare(b.symbol) || a.scanId.localeCompare(b.scanId));
+  const losses = byDollar.filter((t) => t.dollarNet < 0).slice(0, OUTLIER_TOP);
+  const gains = byDollar.filter((t) => t.dollarNet > 0).reverse().slice(0, OUTLIER_TOP);
+  const head = ["| variant | symbol | trigger date | direction | type | adds | shares | shares at exit | net $ | net R | exit reason |", "|---|---|---|---|---|---|---|---|---|---|---|"];
+  const warn = trades
+    .filter((t) => Math.abs(t.netR) > OUTLIER_R)
+    .sort((a, b) => Math.abs(b.netR) - Math.abs(a.netR) || a.symbol.localeCompare(b.symbol))
+    .map((t) => `WARNING: ${t.symbol} ${t.scanId} (${t.variant}, ${t.type}, ${t.dir === 1 ? "long" : "short"}) net ${r2(t.netR)}R (${usd(t.dollarNet)}), beyond ±${OUTLIER_R}R; ${t.adds} adds, ${t.sharesAtExit} shares at exit.`);
+  return [
+    `**Outliers (P3-0i4):** ${warn.length} trade(s) beyond ±${OUTLIER_R}R.`,
+    "",
+    ...(warn.length ? [...warn, ""] : []),
+    `Largest ${OUTLIER_TOP} dollar losses:`,
+    "",
+    ...(losses.length ? [...head, ...losses.map(outlierRow)] : ["none"]),
+    "",
+    `Largest ${OUTLIER_TOP} dollar gains:`,
+    "",
+    ...(gains.length ? [...head, ...gains.map(outlierRow)] : ["none"]),
+    "",
+  ];
+}
+
 function countsLine(label: string, counts: SymbolCounts): string {
   const fillRate = counts.filled + counts.cancelled > 0 ? counts.filled / (counts.filled + counts.cancelled) : null;
   return (
@@ -60,6 +93,8 @@ export function simMarkdownReport(
     sectorProfiles?: { tradesWith: number; trades: number };
     /** §1i caveat: ATR > $1.50 favours high-priced stocks. */
     finvizPrice?: { base: number | null; all: number | null };
+    /** P3-0i4: this exit's trades, for the outlier lines. */
+    trades?: readonly Trade[];
   },
 ): string {
   const rule = EXIT_RULES[meta.exit];
@@ -72,7 +107,7 @@ export function simMarkdownReport(
     "",
     meta.exit !== "A"
       ? `Exit ${meta.exit} (${meta.exit === "B" ? "primary, verdicts" : "the §1j choppy variant, descriptive, no verdicts"}): STP management. Stop-limit entry (no fill on a gap through it); ` +
-        `adds every ${meta.exit === "B" ? 2 : 1} × ATR14 of the trigger bar, never on the entry day, each floor(50%) of the current shares, stop to the ` +
+        `adds every ${meta.exit === "B" ? 2 : 1} × ATR14 of the trigger bar, never on the entry day, each floor(50%) of the current shares, at most ${MAX_ADDS} adds, stop to the ` +
         `size-weighted breakeven after each; no target; trailing from the bar after ${meta.exit === "B" ? 3 : 2}R is touched (mech1/mech2: mX; others: bar stop while close is more ` +
         `than 1 ATR from sma10, else pmX; per-bar fudge); 60-session cap. Size = stock factor × pyramid, floored at 0.25; risk ${usd(BASE_RISK_DOLLARS)} × size. ` +
         `R = dollar P&L over the base risk. Costs ${(COST_ROUND_TRIP * 100).toFixed(2)}% of each leg's value. Control seed ${CONTROL_SEED}.`
@@ -106,6 +141,7 @@ export function simMarkdownReport(
           "",
         ]
       : []),
+    ...(meta.trades ? outlierLines(meta.trades) : []),
     ...(meta.sizeSkipByType && Object.keys(meta.sizeSkipByType).length
       ? [`size_skip by pattern (calendar): ${Object.entries(meta.sizeSkipByType).map(([t, c]) => `${t} ${c}`).join(", ")}.`, ""]
       : []),
@@ -131,11 +167,11 @@ export function simMarkdownReport(
       ? [
           "Management (all trades in the group):",
           "",
-          "| group | add rate | avg adds | max adds | add gap skips | reached 3R | BE exits | avg R reached 3R | avg R not | 60-session caps | initial-unit R |",
-          "|---|---|---|---|---|---|---|---|---|---|---|",
+          `| group | add rate | avg adds | max adds | add cap (${MAX_ADDS}) reached | add gap skips | reached 3R | BE exits | avg R reached 3R | avg R not | 60-session caps | initial-unit R |`,
+          "|---|---|---|---|---|---|---|---|---|---|---|---|",
           ...prim.map(
             (r) =>
-              `| ${r.group} | ${pct(r.all.addRate)} | ${r2(r.all.avgAdds)} | ${r.all.maxAdds ?? "n/a"} | ${r.all.addGapSkips} | ${pct(r.all.reached3RRate)} | ${pct(r.all.beExitRate)} | ` +
+              `| ${r.group} | ${pct(r.all.addRate)} | ${r2(r.all.avgAdds)} | ${r.all.maxAdds ?? "n/a"} | ${r.all.addCapReached} | ${r.all.addGapSkips} | ${pct(r.all.reached3RRate)} | ${pct(r.all.beExitRate)} | ` +
               `${r2(r.all.avgRReached3R)} | ${r2(r.all.avgRNot3R)} | ${r.all.timeCaps} | ${r2(r.all.avgInitialUnitR)} |`,
           ),
           "",
@@ -160,11 +196,11 @@ const csvCell = (v: unknown) => {
 };
 
 export function tradesCsv(trades: readonly Trade[]): string {
-  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "adds", "size_at_exit", "shares", "shares_at_exit", "base_risk", "dollar_net", "size_mult", "stock_factor", "size_combined", "floor_hit", "abs_full_fixed_half",
+  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "adds", "add_cap_reached", "size_at_exit", "shares", "shares_at_exit", "base_risk", "dollar_net", "size_mult", "stock_factor", "size_combined", "floor_hit", "abs_full_fixed_half",
     "layer_market", "layer_sector", "layer_industry", "size_mult_industry", "size_mult_opens", "size_mult_trend",
     "finviz_base", "finviz_screens", "k1.5_rally_used", "k1.5_room_3r", "k2_rally_used", "k2_room_3r", "k3_rally_used", "k3_room_3r", "reached_3r", "initial_unit_r_net", "control_r_net", "htf_alignment", "week_used", "month_used", "room_w", "regime", "quarter"];
   const rows = trades.map((t) =>
-    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.adds, t.size, t.shares, t.sharesAtExit, t.baseRisk, t.dollarNet, t.sizeMult, t.stockFactor, t.sizeCombined, t.floorHit, t.absFullFixedHalf,
+    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.adds, t.addCapReached, t.size, t.shares, t.sharesAtExit, t.baseRisk, t.dollarNet, t.sizeMult, t.stockFactor, t.sizeCombined, t.floorHit, t.absFullFixedHalf,
       t.layerMarket, t.layerSector, t.layerIndustry, t.sizeMultIndustry, t.sizeMultOpens, t.sizeMultTrend,
       t.finvizBase, t.finvizScreens.join(" "), t.swing["1.5"]?.rallyUsed, t.swing["1.5"]?.room3R, t.swing["2"]?.rallyUsed, t.swing["2"]?.room3R, t.swing["3"]?.rallyUsed, t.swing["3"]?.room3R, t.reached3R, t.initialUnitR, t.controlNetR, t.alignment, t.weekUsed, t.monthUsed, t.roomW, t.regime, t.quarter]
       .map(csvCell)
