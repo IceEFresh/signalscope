@@ -64,6 +64,9 @@ services:
     environment:
       # `web` is reachable by service name inside the Compose network.
       HARVEST_ENDPOINT_URL: ${COMPOSE_HARVEST_ENDPOINT_URL:-http://web:3000/api/harvest/ingest}
+    # P3-0i2b: persistent daily-bar store for the live swing keys (seed once with scripts/seed-bar-store.ts)
+    volumes:
+      - ./data/bar-store:/app/data/bar-store
     depends_on:
       - web
     profiles:
