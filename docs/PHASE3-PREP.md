@@ -500,6 +500,29 @@ It's read-only on the DB. Use the same NAS command pattern as validate-features 
 
 Log only. No score, stage, label or rule changes. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
 
+## P3-0i4: max 3 adds, sector profiles, rerun (reviewer, from the first P3-0i run, 2026-11-25)
+**1. Max 3 adds** (Chris, 2026-11-25). This amends §1e and §1j.
+- Exits B and C stop adding after the 3rd add, so the largest position is 1 × 1.5³ = 3.375 units. The stop still moves to the size-weighted breakeven after each add.
+- Why: in the first run, ASST (rolling, 2025-04-29) added 40 times, reached 130 × 1.5⁴⁰ shares, and lost $11.0B on a gap through its breakeven. ABVX added 12 times for −$36k (≈ −180R).
+- Report "add cap reached" counts per group.
+- Test: a 6-level run fills 3 adds and no 4th.
+- The pre-registration is unchanged (49). Add one line to PHASE3-PREREG.md, before the rerun, saying the cap was set after the first run's blow-up, not tuned on results.
+
+**2. Sector and industry profiles are empty.** The universe from 2026-11-24 has 0 of 1,485 stocks with a sector, even though `quoteSummary('AAPL', {modules:['assetProfile']})` works on the NAS.
+- `fetchSectorIndustry` swallows every error (`catch { /* non-fatal */ }`), so the cause is invisible.
+- **Fix:**
+  - Count failures and log the first 3 error messages plus `[universe] profiles: n/m fetched`.
+  - Add a pause between batches and respect `withYahooRetry` backoff on 429s.
+  - Warn when fewer than 80% are fetched.
+- **One-off script, `scripts/backfill-profiles.ts`:** fills `sector`/`industry` on the latest universe's members where null. It updates existing rows only; no schema change. Show the run's summary line in the PR.
+- **Tests:** a stub that throws for some symbols gives correct counts and logged messages; a 429 is retried; the script only updates null rows.
+
+**3. Simulation outlier visibility.**
+- The report lists the 5 largest dollar losses and gains per exit (symbol, date, adds, shares, dollar P&L, R).
+- Any trade beyond ±50R gets a WARNING line.
+
+**4. Rerun.** After 1–3 are merged, Chris runs `backfill-profiles.ts`, then `simulate-stp.ts`.
+
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
 
