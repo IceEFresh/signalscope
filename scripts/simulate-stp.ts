@@ -85,10 +85,9 @@ function main() {
     const { trades, counts } = byExit[exit];
     const results = evaluateGroups(trades, { verdicts: exit === PRIMARY_EXIT });
     const prim = results.filter((r) => r.primary);
-    console.log(
-      `P3-0i exit ${exit}: ${trades.length} trades (${counts.calendar.filled} calendar, ${counts.rolling.filled} rolling); primary groups ${prim.filter((r) => r.verdict === "KEEP").length} KEEP, ` +
-        `${prim.filter((r) => r.verdict === "DROP").length} DROP, ${prim.filter((r) => r.verdict === "INSUFFICIENT").length} INSUFFICIENT`,
-    );
+    const n = (v: string) => prim.filter((r) => r.verdict === v).length;
+    const verdictText = exit === PRIMARY_EXIT ? `primary groups ${n("KEEP")} KEEP, ${n("DROP")} DROP, ${n("INSUFFICIENT")} INSUFFICIENT` : "reference exit, no verdicts";
+    console.log(`P3-0i exit ${exit}: ${trades.length} trades (${counts.calendar.filled} calendar, ${counts.rolling.filled} rolling); ${verdictText}`);
     for (const r of prim.filter((x) => x.verdict === "KEEP")) console.log(`  KEEP ${r.group}: ${r.reason}`);
     if (dryRun) continue;
     mkdirSync("scripts/output", { recursive: true });
