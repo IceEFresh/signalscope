@@ -9,6 +9,9 @@
 //   npx tsx scripts/backfill-snapshot.ts --symbols AMD,NVDA  # specific symbols
 // Raw charts are cached under scripts/output/backfill-bars/, so a rerun doesn't refetch,
 // and a rerun after a partial run writes only the missing rows.
+//   --warmup-days N   calendar days before the window (default 300, P3-0k2; was 120)
+//   --refresh         refetch every chart even when cached (a failed fetch keeps the cached file);
+//                     DB rows already written are never overwritten
 
 import "dotenv/config";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -21,7 +24,7 @@ import { loadUniverse } from "@/lib/harvester/universe/store";
 import { BENCHMARK_SYMBOL, chunk, type SnapshotRow } from "@/lib/harvester/universe/snapshot";
 import {
   BACKFILL_SCAN_ERROR,
-  WARMUP_DAYS,
+  warmupDaysArg,
   backfillRowsForSymbol,
   backfillScanId,
   backfillScanStartedAt,
@@ -39,14 +42,15 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-async function loadBars(symbol: string, period1: number, period2: number, now: Date): Promise<{ bars: DailyBar[]; fetched: boolean }> {
+async function loadBars(symbol: string, period1: number, period2: number, now: Date, refresh = false): Promise<{ bars: DailyBar[]; fetched: boolean }> {
   const path = join(CACHE_DIR, `${symbol.replace(/[^A-Za-z0-9.^=-]/g, "_")}.json`);
-  if (existsSync(path)) return { bars: parseChartBars(JSON.parse(readFileSync(path, "utf8")), now), fetched: false };
+  const cached = () => ({ bars: parseChartBars(JSON.parse(readFileSync(path, "utf8")), now), fetched: true });
+  if (existsSync(path) && !refresh) return { ...cached(), fetched: false };
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&period1=${period1}&period2=${period2}`;
   const res = await fetchYahooChart(url);
   if (!res.ok) {
-    console.warn(`[backfill] ${symbol}: chart failed (status ${res.status ?? "network"}${res.rateLimited ? ", 429" : ""})`);
-    return { bars: [], fetched: true };
+    console.warn(`[backfill] ${symbol}: chart failed (status ${res.status ?? "network"}${res.rateLimited ? ", 429" : ""})${existsSync(path) ? "; keeping the cached file" : ""}`);
+    return existsSync(path) ? cached() : { bars: [], fetched: true };
   }
   writeFileSync(path, JSON.stringify(res.json));
   return { bars: parseChartBars(res.json, now), fetched: true };
@@ -73,12 +77,15 @@ async function main() {
   symbols = [BENCHMARK_SYMBOL, ...symbols.filter((s) => s !== BENCHMARK_SYMBOL)];
 
   const period2 = Math.floor(now.getTime() / 1000);
-  const period1 = Math.floor((now.getTime() - (years * 365 + WARMUP_DAYS) * DAY) / 1000);
+  const warmupDays = warmupDaysArg(process.argv);
+  const refresh = process.argv.includes("--refresh");
+  const period1 = Math.floor((now.getTime() - (years * 365 + warmupDays) * DAY) / 1000);
+  console.log(`[backfill] warm-up ${warmupDays} days${refresh ? ", refreshing every cached chart" : ""}`);
   const since = etParts(new Date(now.getTime() - years * 365 * DAY)).date;
   const until = etParts(now).date;
 
   const started = Date.now();
-  const spy = await loadBars(BENCHMARK_SYMBOL, period1, period2, now);
+  const spy = await loadBars(BENCHMARK_SYMBOL, period1, period2, now, refresh);
   if (spy.bars.length === 0) throw new Error("SPY chart unavailable; nothing to backfill against");
   const sessions = backfillSessions(spy.bars, since, until);
   console.log(`[backfill] ${symbols.length} symbols (incl. SPY), ${sessions.length} sessions ${sessions[0]}..${sessions.at(-1)}`);
@@ -102,7 +109,7 @@ async function main() {
   let bytes = 0;
   let failed = 0;
   for (const [i, symbol] of symbols.entries()) {
-    const { bars, fetched } = symbol === BENCHMARK_SYMBOL ? spy : await loadBars(symbol, period1, period2, now);
+    const { bars, fetched } = symbol === BENCHMARK_SYMBOL ? spy : await loadBars(symbol, period1, period2, now, refresh);
     if (bars.length === 0) {
       failed++;
       continue;
