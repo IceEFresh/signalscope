@@ -158,6 +158,94 @@ Branch `plan/p3-0h-categorical-lowcard`.
 
 **Not in this fix:** the backfill showed a U-shape in `return_20d`, `rsi14_max_20d` and `sma20_vs_sma50`, where both extremes beat the middle. That points to volatility or beta, not direction. Testing it would be a **new hypothesis** (for example, excess return vs a beta-adjusted benchmark, or |feature| buckets). It gets pre-registered separately and tested on the live universe dataset, not on the backfill that suggested it.
 
+## P3-0i: STP trigger trade simulation (Chris, 2026-11-25)
+
+**Why:** the backfill run tested STP *states* against plain 7-day returns, and all 4 came out DROP. STP is traded as a **trigger**, with a stop-order entry, a stop, targets and exits. This item tests that, as trades measured in R.
+
+Branch `plan/p3-0i-stp-trade-sim`.
+
+### 1. Pre-register first
+Add a section to `docs/PHASE3-PREREG.md`, **merged before the first real run**, that fixes everything below: the rules, metrics, KEEP rule, cost assumption and comparison count.
+
+### 2. Trades
+Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
+
+- **Trigger:** run `computeStp` on the bars up to and including day D (the same slicing as P3-0g). Every `stp_trigger ≠ 0` is one setup, using the trigger's own `entry` and `stop`. Record its `triggerType` and `firedRules`.
+- **Entry:** a stop order valid for **1 session** (D+1).
+  - **Long:** fills if the D+1 high ≥ entry, at `max(entry, open)`, so a gap through the entry fills at the open (the worse price).
+  - **Short:** mirrored.
+  - If it isn't filled on D+1, the setup is cancelled. Count cancellations.
+- **Risk:** `R = |fill − stop|`. Skip a setup if the gap leaves R ≤ 0 or the open is past the stop. Count those.
+- **Exit A (primary): fixed.**
+  - Stop at the stop level, target at 2R, and a time exit at the close of session 10 after the fill.
+  - **Same-bar ambiguity:** if one bar touches both the stop and the target, take the stop (conservative). That includes the fill bar.
+  - **Gaps:** a gap through the stop exits at the open.
+- **Exit B (secondary): the STP exits from docs/STP-SIGNALS.md.**
+  - The mechanical exit, profit-maximizer trailing and the bar stop, as specified there.
+  - Initial stop as in exit A, a 3R target, and a 20-session time exit.
+  - Same conservative rules for ambiguity and gaps.
+- **Costs:** charge 0.10% of price round trip, converted into R for each trade (`0.001 × fill / R`). Report both gross and **net**. Net is primary.
+- **One position per ticker at a time:** a new trigger while a trade is open on the same ticker is skipped. Count those.
+
+### 3. Control: does the trigger beat the mechanics alone?
+For each filled trade, build a **matched control**: the same ticker, a random non-trigger session within ±20 sessions, and the same direction. Its entry is `high + fudge` (or `low − fudge` for shorts) and its stop is the mirror level, from that control bar. Then run the same fill, exit and cost rules.
+
+Use a fixed RNG seed and write it into the pre-registration. The trigger's edge is **trigger net expectancy minus control net expectancy**.
+
+### 4. Metrics, per group
+- trades, fill rate, win rate;
+- average R and median R (net);
+- expectancy and profit factor;
+- average holding sessions;
+- max drawdown in R, on equal-R sequential trades;
+- the matched-control expectancy, and the difference.
+
+Groups:
+- all trades;
+- by direction (long, short);
+- by `triggerType` (inside, butn, brutn, mech1, mech2, egop);
+- by direction × type;
+- by market regime on the trigger day: SPY above or below its SMA20, from the backfill SPY rows;
+- by calendar quarter, for stability.
+
+### 5. Split and verdict
+The same time split and folds as the harness: the newest 30% of trigger dates held out, plus 3 walk-forward folds.
+
+**KEEP for a group**, only when all three hold:
+- net expectancy > 0 **and** above its matched control in the held-out split;
+- the same is true in at least 2 of 3 folds;
+- there are ≥ 100 held-out trades.
+
+Fewer than 100 trades is INSUFFICIENT.
+
+The KEEP rule applies only to the primary groups:
+- all trades;
+- long;
+- short;
+- each `triggerType` × direction.
+
+That's about 14 comparisons, and the pre-registration states the exact count. The regime and quarter groups are descriptive only.
+
+### 6. Output
+`scripts/simulate-stp.ts --dataset backfill [--exit A|B]` writes:
+- a report to `scripts/output/`;
+- one experiment-log row per exit;
+- a trades CSV: ticker, dates, direction, type, fill, stop, exit, R gross and net, exit reason, control R.
+
+It's read-only on the DB. Use the same NAS command pattern as validate-features (volume mounts, `GIT_COMMIT`, heap flag).
+
+### 7. Tests (fixtures only)
+- The fill rules: no fill, normal fill, a gap through the entry, a gap past the stop.
+- Ambiguous stop-and-target on the same bar, including the fill bar.
+- The time exit, and each STP exit rule (B) on synthetic bars.
+- Cost conversion into R.
+- One position per ticker.
+- The control is deterministic with the seed.
+- **No look-ahead:** a planted future bar can't change whether a trigger fires, and the entry decision uses only D+1's own bar.
+- The KEEP and INSUFFICIENT verdicts.
+
+Log only. No score, stage, label or rule changes. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
+
 ## P3-0e: liquid crypto universe, log only (Chris, 2026-11-24)
 
 **Goal:** test whether bar features and STP carry over to liquid crypto, as a separate dataset. Insider, Congress, earnings, sector and options features don't exist for crypto, and none are faked.
