@@ -11,9 +11,9 @@
 //   npx tsx scripts/validate-features.ts --dry-run             # print the summary only, write nothing
 
 import "dotenv/config";
-import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { prisma } from "@/lib/prisma";
+import { commitId } from "@/lib/eval/commit";
 import { fetchYahooChart } from "@/lib/harvester/yahoo-chart";
 import { etParts, parseChartBars } from "@/lib/harvester/universe/bar-metrics";
 import { buildEvalRows, type SpyClose, type StoredTickerRow } from "@/lib/eval/dataset";
@@ -92,21 +92,6 @@ async function loadSnapshots(dataset: "universe" | "backfill" | "crypto"): Promi
     regimeFeatures: (s.scan.regimeFeatures as Record<string, unknown> | null) ?? null,
     assetClass: s.assetClass,
   }));
-}
-
-/**
- * Short commit for the report and log row. The harvester image has no git, so on the NAS pass
- * GIT_COMMIT (see the run command at the top); otherwise ask git; "unknown" rather than failing
- * a run after the work is done.
- */
-function commitId(): string {
-  const env = process.env.GIT_COMMIT?.trim();
-  if (env) return env.slice(0, 12);
-  try {
-    return execFileSync("git", ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-  } catch {
-    return "unknown";
-  }
 }
 
 async function main() {
