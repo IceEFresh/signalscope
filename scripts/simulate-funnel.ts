@@ -60,6 +60,7 @@ const arg = (name: string) => {
 const RUNS: ReadonlyArray<[Population, EntryArm]> = [
   ...(["all", "funnel", "top5", "top3"] as const).flatMap((p) => (["stop", "pullback"] as const).map((a): [Population, EntryArm] => [p, a])),
   ["top5", "pullback_low"],
+  ["top5_noair", "stop"], // P3-0j3 descriptive: the ranking with open_air left out
 ];
 
 async function main() {

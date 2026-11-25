@@ -297,6 +297,11 @@ Spec: `docs/PHASE3-PREP.md` §P3-0j. Code: `src/lib/eval/funnel.ts`, `src/lib/ev
 
 **Amendment 2026-11-25 (P3-0j2), control definition, made before any P3-0j run:** an EGOP setup's matched control is drawn only from sessions after the gap day (c > i), in P3-0i and P3-0j alike; a control before the gap could hold through the earnings gap itself (a look-ahead that put EGOP's control at +1.25R). Every other pattern keeps ±20 sessions; the reports show control expectancy before vs after the trigger as descriptive.
 
+**Amendments 2026-11-25 (P3-0j3), made AFTER the first P3-0i and P3-0j runs** (the comparisons stay at 10; spec `docs/PHASE3-PREP.md` §P3-0j3):
+- **Pullback sizing bug fixed.** Shares and the R unit come from the planned risk, limit − stop, set when the order is placed; a better fill at the open keeps those shares. The first run sized from fill − stop (an open a cent above the stop gave ≈ $200 / $0.01 shares). **Every pullback verdict from the first run is void.**
+- **Matched controls only after the trigger, every pattern (P3-0i and P3-0j).** In the first run the ±20 control was +0.38R before the trigger vs −1.08R after for inside bars (n = 569 / 570), and +0.30 vs −0.25 for mech2: a day before a trigger is chosen knowing it comes. This is a validity fix made after seeing results, so **any KEEP that holds only under the after-only control and not under the ±20 control is provisional** and needs live confirmation; the reports mark it and show the ±20 control alongside.
+- **Descriptive only:** the event stop rule counterfactual (each top-5 trade rerun with the rule off, per tier), R/R quintiles, the median stop distance in ATR (top 5 vs all), and a ranking with `open_air` left out. The ranking rule itself is unchanged.
+
 **Pre-registered, KEEP rule as P3-0i** (held-out newest 30% by trigger date, ≥ the minimum held-out trades, net expectancy > 0 and above the baseline, and the same in ≥ 2 of 3 walk-forward folds):
 
 | # | comparison | baseline |

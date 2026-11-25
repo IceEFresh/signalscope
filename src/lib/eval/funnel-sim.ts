@@ -23,6 +23,9 @@ import {
   CONTROL_TRIES,
   atrSeries,
   controlPoolRange,
+  passesWindow,
+  PROVISIONAL_AFTER_ONLY,
+  type ControlMode,
   controlSeed,
   entryOnNextBar,
   groupMetrics,
@@ -59,7 +62,8 @@ import {
   type RiskReward,
 } from "./funnel";
 
-export type Population = "all" | "funnel" | "top5" | "top3";
+/** P3-0j3: top5_noair is the descriptive ranking with open_air candidates left out. */
+export type Population = "all" | "funnel" | "top5" | "top3" | "top5_noair";
 
 export interface SymbolInput {
   symbol: string;
@@ -91,6 +95,10 @@ export interface Candidate {
   /** null: no EDGAR dates for the symbol (not blocked). */
   earnings5: boolean | null;
   rank: number | null;
+  /** P3-0j3 descriptive: rank among the day's passing candidates that aren't open_air. */
+  rankNoAir: number | null;
+  /** P3-0j3: entry − stop over ATR14 on D. */
+  stopAtr: number | null;
 }
 
 /** Step 1 + 3 for one symbol: every calendar trigger with its gates and R/R. */
@@ -106,7 +114,11 @@ export function symbolCandidates(input: SymbolInput, ctx: FunnelContext): Candid
     const gates = funnelGates({ dir: s.dir, finvizBase: screensOn(bars, s.i, atr).base, earnings5, rr: rr.rr, marketLong });
     const risk = s.dir * (s.entry - s.stop);
     const rallyUsed = risk > 0 ? swingEntry(bars, s.i, s.entry, risk, s.dir, LEVEL_SWING_K, pivots).rallyUsed : null;
-    out.push({ symbol, setup: s, date: s.date, dir: s.dir, rr, gates, rallyUsed, eventHalf: !!outOfHoursWithin(s.date, ctx.events, ctx.sessions), earnings5, rank: null });
+    const a = atr[s.i];
+    out.push({
+      symbol, setup: s, date: s.date, dir: s.dir, rr, gates, rallyUsed, eventHalf: !!outOfHoursWithin(s.date, ctx.events, ctx.sessions), earnings5,
+      rank: null, rankNoAir: null, stopAtr: a != null && a > 0 && risk > 0 ? risk / a : null,
+    });
   }
   return out;
 }
@@ -118,11 +130,21 @@ export function rankCandidates(cands: readonly Candidate[]): void {
   for (const day of byDate.values()) {
     const ranks = rankDay(day.map((c) => ({ c, rr: c.rr.rr!, rallyUsed: c.rallyUsed, symbol: c.symbol })));
     for (const [k, r] of ranks) k.c.rank = r;
+    const noAir = rankDay(day.filter((c) => !c.rr.openAir).map((c) => ({ c, rr: c.rr.rr!, rallyUsed: c.rallyUsed, symbol: c.symbol })));
+    for (const [k, r] of noAir) k.c.rankNoAir = r;
   }
 }
 
 export const inPopulation = (c: Candidate, p: Population) =>
-  p === "all" ? true : p === "funnel" ? c.gates.pass : p === "top5" ? c.rank != null && c.rank <= FUNNEL_TOP : c.rank != null && c.rank <= FUNNEL_TOP3;
+  p === "all"
+    ? true
+    : p === "funnel"
+      ? c.gates.pass
+      : p === "top5"
+        ? c.rank != null && c.rank <= FUNNEL_TOP
+        : p === "top3"
+          ? c.rank != null && c.rank <= FUNNEL_TOP3
+          : c.rankNoAir != null && c.rankNoAir <= FUNNEL_TOP;
 
 export interface FunnelTrade extends Trade {
   population: Population;
@@ -138,6 +160,9 @@ export interface FunnelTrade extends Trade {
   earningsSession: string | null;
   earningsSoon: boolean;
   earningsUnknown: boolean;
+  /** P3-0j3: the same trade with the event stop rule off (top5 only; null elsewhere). */
+  netRNoEvent: number | null;
+  stopAtr: number | null;
 }
 
 function entryFor(arm: EntryArm, bars: readonly DailyBar[], i: number, dir: Dir, entry: number, stop: number, fudge: number): EntryOutcome {
@@ -167,9 +192,10 @@ export function funnelControl(
   baseRisk: number,
   eventBefore: ReadonlySet<number>,
   earnings: ReadonlySet<string> | undefined,
+  mode: ControlMode = "after",
 ): { i: number; netR: number } | null {
   const pool: number[] = [];
-  const range = controlPoolRange(c.setup.i, c.setup.type, bars.length);
+  const range = controlPoolRange(c.setup.i, c.setup.type, bars.length, mode);
   for (let k = range.lo; k <= range.hi; k++) {
     if (k === c.setup.i) continue;
     if (info[k]?.trigger === 0 && info[k].fudge != null) pool.push(k);
@@ -240,7 +266,10 @@ export function simulateFunnelSymbol(
     const x = simulateExit(bars, closes, atr, f, s.dir, e.fill, e.risk, s.stop, s.fudge, s.type, "B", baseRisk, extra);
     openUntil = x.exitIndex;
     const control = funnelControl(c, bars, closes, atr, dates, scanned.info, arm, baseRisk, eventBefore, earnings);
+    const controlW = funnelControl(c, bars, closes, atr, dates, scanned.info, arm, baseRisk, eventBefore, earnings, "window");
     if (control == null) counts.noControl++;
+    // P3-0j3 counterfactual: the same top-5 trade with the event stop rule off
+    const noEvent = population === "top5" ? simulateExit(bars, closes, atr, f, s.dir, e.fill, e.risk, s.stop, s.fudge, s.type, "B", baseRisk, { ...extra, eventBefore: new Set() }).netR : null;
     const fillDate = dates[f] ?? "";
     const soonIdx = earnSession ? dates.findIndex((d, k) => k >= f && d >= earnSession) : -1;
     trades.push({
@@ -255,6 +284,10 @@ export function simulateFunnelSymbol(
       exit: x.exit, risk: e.risk, grossR: x.grossR, netR: x.netR, reason: x.reason, holding: x.holding, adds: x.adds, addGapSkips: x.addGapSkips,
       addCapReached: x.addCapReached, reached3R: x.reached3R, size: x.size, initialUnitR: x.initialUnitR, controlNetR: control?.netR ?? null,
       controlPost: control ? control.i > s.i : null,
+      controlWindowNetR: controlW?.netR ?? null,
+      controlWindowPost: controlW ? controlW.i > s.i : null,
+      netRNoEvent: noEvent,
+      stopAtr: c.stopAtr,
       regime: ctx.regime?.get(s.date) ?? null, quarter: quarterOf(s.date),
     });
   }
@@ -343,6 +376,12 @@ export function evaluateFunnel(trades: readonly FunnelTrade[], comparisons: read
     } else {
       verdict = "KEEP";
       reason = `passes held out and ${foldsPassed} of ${WALK_FORWARD_FOLDS} folds` + (c.provisional ? "; PROVISIONAL until confirmed on ≥ 6 months of live data" : "");
+      // P3-0j3: a control-kind KEEP must also hold against the ±20 control, or it's provisional
+      if (c.kind === "control") {
+        const wHeld = passesWindow(heldOut, MIN_HELDOUT_ROWS);
+        const wFolds = folds.filter((f) => passesWindow(f, MIN_FOLD_ROWS)).length;
+        if (!(wHeld && wFolds >= FOLDS_REQUIRED)) reason += `; ${PROVISIONAL_AFTER_ONLY}`;
+      }
     }
     return {
       id: c.id, group: c.label, kind: c.kind, provisional: c.provisional, primary: true, all: groupMetrics(sel), heldOut, folds, foldsPassed, verdict, reason,

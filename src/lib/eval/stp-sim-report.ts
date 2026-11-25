@@ -69,22 +69,25 @@ export function outlierLines(trades: readonly Trade[]): string[] {
 const meanOf = (xs: readonly number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null);
 
 /**
- * P3-0j2 descriptive: matched-control expectancy split by whether the control day fell
- * before or after the trigger, per pattern. EGOP controls are drawn after the gap only.
+ * Descriptive: the ±20-session control (the pre-P3-0j3 definition) split by whether its day
+ * fell before or after the trigger, per pattern, next to the after-trigger control the
+ * verdicts use (P3-0j3).
  */
 export function controlSplitLines(trades: readonly Trade[]): string[] {
   const types = [...new Set(trades.map((t) => t.type))].sort();
   const rows = types.map((type) => {
-    const ts = trades.filter((t) => t.type === type && t.controlNetR != null);
-    const pre = ts.filter((t) => t.controlPost === false).map((t) => t.controlNetR!);
-    const post = ts.filter((t) => t.controlPost === true).map((t) => t.controlNetR!);
-    return `| ${type} | ${pre.length} | ${r2(meanOf(pre))} | ${post.length} | ${r2(meanOf(post))} |`;
+    const ts = trades.filter((t) => t.type === type);
+    const w = ts.filter((t) => t.controlWindowNetR != null);
+    const pre = w.filter((t) => t.controlWindowPost === false).map((t) => t.controlWindowNetR!);
+    const post = w.filter((t) => t.controlWindowPost === true).map((t) => t.controlWindowNetR!);
+    const after = ts.filter((t) => t.controlNetR != null).map((t) => t.controlNetR!);
+    return `| ${type} | ${pre.length} | ${r2(meanOf(pre))} | ${post.length} | ${r2(meanOf(post))} | ${after.length} | ${r2(meanOf(after))} |`;
   });
   return [
-    "**Matched controls before vs after the trigger (descriptive; EGOP controls only after the gap day, P3-0j2):**",
+    "**Matched controls (descriptive): the ±20 control split before vs after the trigger, and the after-trigger control the verdicts use (P3-0j3):**",
     "",
-    "| pattern | controls before | control exp R before | controls after | control exp R after |",
-    "|---|---|---|---|---|",
+    "| pattern | ±20 controls before | exp R before | ±20 controls after | exp R after | verdict controls (after only) | exp R |",
+    "|---|---|---|---|---|---|---|",
     ...rows,
     "",
   ];
@@ -207,9 +210,9 @@ export function simMarkdownReport(
           "",
         ]
       : []),
-    "| group | verdict | held-out trades | held-out net exp R | held-out control exp R | folds passed | reason |",
-    "|---|---|---|---|---|---|---|",
-    ...prim.map((r) => `| ${r.group} | ${r.verdict} | ${r.heldOut.trades} | ${r2(r.heldOut.expectancy)} | ${r2(r.heldOut.controlExpectancy)} | ${r.foldsPassed} | ${cell(r.reason)} |`),
+    "| group | verdict | held-out trades | held-out net exp R | held-out control exp R (after trigger) | held-out ±20 control exp R (descriptive) | folds passed | reason |",
+    "|---|---|---|---|---|---|---|---|",
+    ...prim.map((r) => `| ${r.group} | ${r.verdict} | ${r.heldOut.trades} | ${r2(r.heldOut.expectancy)} | ${r2(r.heldOut.controlExpectancy)} | ${r2(r.heldOut.controlWindowExpectancy)} | ${r.foldsPassed} | ${cell(r.reason)} |`),
     "",
   ];
   for (const r of results) {
