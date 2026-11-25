@@ -121,7 +121,7 @@ The stock regime (`regime.*`) is not attached to crypto rows. The regime is stoc
 - **Log:** both backfill runs stay in `scripts/backtesting-experiments.md`. The first run's row is kept, and the rerun after this fix gets its own row.
 - **Not covered by this amendment:** the U-shape the first backfill run showed in `return_20d`, `rsi14_max_20d` and `sma20_vs_sma50` (both extremes beat the middle). Testing that would be a new hypothesis, such as beta-adjusted excess or |feature| buckets. It needs its own pre-registration and a test on the live universe dataset, not on the backfill that suggested it.
 
-## STP trigger trades (P3-0i): 25 comparisons on exit B (STP management); exit A is a reference
+## STP trigger trades (P3-0i): 49 comparisons on exit B (STP management); exit A is a reference
 Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulates STP triggers as trades on the P3-0g backfill bars, the chart cache in `scripts/output/backfill-bars/`. It runs on every cached symbol except SPY, with trigger dates in the backfill's last 2 years of SPY sessions. The survivorship bias is the same as the backfill's: current members only, so results are optimistic.
 
 **Setups.** `computeStp` on each day D's live-window slice, the same slicing as P3-0g: bars dated on or before D, after D minus 3 months. Every `trigger ≠ 0` is one setup, with its own `entry`, `stop`, `fudge`, `triggerType` and `firedRules`. The backfill has no earnings dates, so `egop` never fires, and its groups will be INSUFFICIENT.
@@ -135,7 +135,8 @@ Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulat
 
 **Exit B: STP management, the primary exit and the only one with verdicts (§1e).**
 1. 1 unit at `entry`, stop = the trigger bar's `low − fudge` (`high + fudge` short).
-2. **Pyramid every 2R:** add levels at entry + 2R, 4R, 6R, … (shorts mirrored), each a stop-limit order for **50% of the current size** (1 → 1.5 → 2.25 → 3.375 …), with no limit on the count.
+2. **Pyramid every 2R:** add levels at entry + 2R, 4R, 6R, … (shorts mirrored), each a stop-limit order for **50% of the current size** (rounded down to whole shares under §1h), with no limit on the count.
+   - **Never on the entry day (Chris).** From the next bar on, a level the fill bar already passed follows the gap rule: a bar that opens beyond it skips it.
    - A bar that opens through an add level skips that add (counted). The next level stays live.
    - A bar that touches the stop exits at the stop before any add on that bar.
 3. After each add, the stop for the whole position moves to its **size-weighted breakeven** (no allowance for costs), if that's tighter. It takes effect from the next bar.
@@ -143,7 +144,7 @@ Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulat
 5. **Once 3R has been touched,** each completed bar can tighten the stop, applied from the next bar. The stop never loosens and never goes below BE.
    - **mech1 and mech2: mX only.** The close crosses below sma20, or sma10 crosses below sma20 → that bar's `low − fudge`.
    - **All other types:** if `close − sma10 > 1 × ATR14`, the bar stop → that bar's `low − fudge`. Otherwise **pmX:** trendDirection at t−1 ≥ 1 and the close crosses below sma10 → that bar's `low − fudge`.
-   - `fudge` is the trigger bar's. ATR14 is Wilder's, over the symbol's full bar history up to t. Shorts mirror all of these.
+   - The trailing levels use **bar t's fudge**, max(0.11 × ATR14[t], 0.02), as Pine computes `fudgeFactor` per bar (stp.pine:231, `mechSL` :724). The entry and the initial stop keep the trigger bar's fudge. ATR14 is Wilder's, over the symbol's full bar history up to t. Shorts mirror all of these.
 6. A **60-session cap** exits at that session's close (counted).
 7. **R** is the total P&L over all units divided by the initial 1-unit R. The **initial unit's R** is reported separately, to show the pyramid's effect.
 8. **Costs:** 0.10% of notional per leg (the entry, each add and the exit), converted into R.
@@ -237,13 +238,28 @@ Costs are 0.10% round trip. Exit A's report shows the same groups without verdic
 - The control uses the trade's size_mult.
 - **Account view,** no cap applied: total dollar P&L, max dollar drawdown (in exit-date order), trades per session, and the peak open positions and peak open risk (shares × per-share risk) on any day.
 
-**Primary groups, 25, exit B:**
+**Chris's Finviz screens as filters (§1i).** The definitions are in docs/FINVIZ-SCREENS.md (F01 to F28), computed from our own bars on day D. Nothing is pulled from Finviz.
+- **Base filter:** 3-month average volume > 2M shares (the mean of the 63 sessions before D) and Wilder ATR14 > $1.50. Every screen also requires the base filter.
+- **Measures:** change from open = (close − open) / open; relvol = volume D / that average; 1-week and 4-week performance against the close 5 and 20 sessions earlier; "crossed sma20" means the close changes side of sma20 from D−1 to D; a new 20-day high means high D ≥ the max high of D−19..D (lows mirrored).
+- **Test, base filter, 2 comparisons:** base-filter trades vs all calendar trades of the same direction, long and short.
+- **Test, screens, 22 comparisons:** each OHLCV screen ∩ trades vs all calendar trades of the screen's direction, in the directions set 2026-11-24.
+  - Short: F03, F05, F08–F15 (10). Long: F04, F06, F20–F27 (10). F28 long and short (2).
+  - Same KEEP rule plus beating that direction. A screen with **fewer than 30 trades in any fold** is reported and marked INSUFFICIENT, never judged.
+- **Pending:** F01 and F02 (earnings) are pre-registered now as long and short, +4. They get verdicts only once P3-0i3 supplies earnings dates, so they're not in today's count.
+- **Live only:** the short-float screens (F07, F16–F19) are null on the backfill (unknown, never false), with no verdicts.
+- **Caveat:** ATR > $1.50 is in dollars, so it favours higher-priced stocks. The report gives the median fill of base-filter trades vs all trades.
+
+**NOT_RUN.** When the run has no stored sector or industry profiles (no DB), the two §1g groups are reported as NOT_RUN instead of being judged on market-only layers. The report header gives the count of calendar trades with a stored sector.
+
+**Primary groups, 49, exit B:**
 - calendar triggers: all, long, short, inside+, inside−, butn+, brutn−, mech1+, mech1−, mech2+, mech2−, egop+, egop− (13);
 - rolling triggers: rolling inside+, rolling inside−, rolling butn+, rolling brutn− (4);
 - swing-structure early entry (§1f): k = 1.5, 2, 3 × long, short (6);
-- Power Pyramid all agree (§1g): long, short (2).
+- Power Pyramid all agree (§1g): long, short (2);
+- Finviz base filter (§1i): long, short (2);
+- Finviz screens (§1i): the 22 above.
 
-§1f replaces §1d's two early-entry comparisons, so they aren't counted. The reviewer's count of 27 added §1f and §1g to §1d's 19; with §1d's 2 removed, it's 25.
+§1f replaces §1d's two early-entry comparisons, so they aren't counted. At a nominal 5%, about 2–3 KEEPs could come from chance before the fold rule.
 
 "all", "long" and "short" cover calendar triggers only. `butn` is bullish only and `brutn` bearish only. EGOP stays INSUFFICIENT until P3-0i3 adds historical earnings dates. At a nominal 5%, about 1 KEEP could come from chance before the fold rule.
 
@@ -252,11 +268,10 @@ Costs are 0.10% round trip. Exit A's report shows the same groups without verdic
 - **step 1b:** mech1, mech2 and egop, each split by `stp_htf_opens` alignment with the trade direction: aligned (htf × direction = +1), against (−1), partial (±0.5 or 0). This shows whether the weekly and monthly opens add anything on top of each pattern's own criteria;
 - §1d: net expectancy and 3R-hit rate by `week_used` and `month_used` bucket (< 0.25, 0.25–0.5, 0.5–0.75, 0.75–1, ≥ 1) and by `room_w` (< 1, ≥ 1);
 - §1f and §1g descriptive groups as listed above;
-- exit B adds on the fill bar itself (same-bar adds) are counted, because the intraday order of entry and +2R isn't knowable from daily bars;
 - SPY above or below its SMA20 on the trigger day, from the backfill SPY bars;
 - calendar quarter.
 
-**Output.** One report, one trades CSV (with adds, same-bar adds, shares, base risk, dollar P&L, size_mult and the layer states, the swing scores per k, reached 3R, initial-unit R, `week_used`, `month_used` and `room_w`) and one experiment-log row per exit: exit B with its verdicts, exit A marked as a reference. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
+**Output.** One report, one trades CSV (with adds, shares, base risk, dollar P&L, size_mult and the layer states, the swing scores per k, reached 3R, initial-unit R, `week_used`, `month_used` and `room_w`) and one experiment-log row per exit: exit B with its verdicts, exit A marked as a reference. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
 
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

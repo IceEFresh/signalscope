@@ -56,6 +56,10 @@ export function simMarkdownReport(
     portfolio?: { calendar: PortfolioStats; rolling: PortfolioStats };
     sizeSkipByType?: Record<string, number>;
     profiles?: readonly ProfileSummary[];
+    /** §1g coverage: calendar trades whose stock has a stored sector. */
+    sectorProfiles?: { tradesWith: number; trades: number };
+    /** §1i caveat: ATR > $1.50 favours high-priced stocks. */
+    finvizPrice?: { base: number | null; all: number | null };
   },
 ): string {
   const rule = EXIT_RULES[meta.exit];
@@ -72,7 +76,9 @@ export function simMarkdownReport(
         `than 1 ATR from sma10, else pmX); 60-session cap. R = all units over the initial 1-unit R. Costs ${(COST_ROUND_TRIP * 100).toFixed(2)}% of notional per leg. Control seed ${CONTROL_SEED}.`
       : `Exit A (reference, no verdicts): stop, ${rule.targetR}R target as a limit (a gap through it exits at the open), time exit at session ${rule.maxSessions}. Costs ${(COST_ROUND_TRIP * 100).toFixed(2)}% round trip. Control seed ${CONTROL_SEED}.`,
     "",
-    `${meta.symbols} symbols.`,
+    `${meta.symbols} symbols.` +
+      (meta.sectorProfiles ? ` Calendar trades with a stored sector (§1g): ${meta.sectorProfiles.tradesWith} of ${meta.sectorProfiles.trades}.` : "") +
+      (meta.finvizPrice ? ` Median fill price: Finviz base-filter trades ${usd(meta.finvizPrice.base)} vs all trades ${usd(meta.finvizPrice.all)} (ATR > $1.50 favours higher-priced stocks).` : ""),
     "",
     countsLine("Calendar opens (computeStp)", counts),
     "",
@@ -111,18 +117,18 @@ export function simMarkdownReport(
         ]
       : []),
     meta.exit === "B"
-      ? `**Primary groups (${prim.length} comparisons): ${n("KEEP")} KEEP, ${n("DROP")} DROP, ${n("INSUFFICIENT")} INSUFFICIENT.** A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.`
+      ? `**Primary groups (${prim.length} comparisons): ${n("KEEP")} KEEP, ${n("DROP")} DROP, ${n("INSUFFICIENT")} INSUFFICIENT, ${n("NOT_RUN")} NOT_RUN.** A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.`
       : `**Reference exit: the ${prim.length} pre-registered groups are shown without verdicts.**`,
     "",
     ...(meta.exit === "B"
       ? [
           "Management (all trades in the group):",
           "",
-          "| group | add rate | avg adds | max adds | same-bar adds | add gap skips | reached 3R | BE exits | avg R reached 3R | avg R not | 60-session caps | initial-unit R |",
-          "|---|---|---|---|---|---|---|---|---|---|---|---|",
+          "| group | add rate | avg adds | max adds | add gap skips | reached 3R | BE exits | avg R reached 3R | avg R not | 60-session caps | initial-unit R |",
+          "|---|---|---|---|---|---|---|---|---|---|---|",
           ...prim.map(
             (r) =>
-              `| ${r.group} | ${pct(r.all.addRate)} | ${r2(r.all.avgAdds)} | ${r.all.maxAdds ?? "n/a"} | ${r.all.sameBarAdds} | ${r.all.addGapSkips} | ${pct(r.all.reached3RRate)} | ${pct(r.all.beExitRate)} | ` +
+              `| ${r.group} | ${pct(r.all.addRate)} | ${r2(r.all.avgAdds)} | ${r.all.maxAdds ?? "n/a"} | ${r.all.addGapSkips} | ${pct(r.all.reached3RRate)} | ${pct(r.all.beExitRate)} | ` +
               `${r2(r.all.avgRReached3R)} | ${r2(r.all.avgRNot3R)} | ${r.all.timeCaps} | ${r2(r.all.avgInitialUnitR)} |`,
           ),
           "",
@@ -147,13 +153,13 @@ const csvCell = (v: unknown) => {
 };
 
 export function tradesCsv(trades: readonly Trade[]): string {
-  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "adds", "same_bar_adds", "size_at_exit", "shares", "shares_at_exit", "base_risk", "dollar_net", "size_mult",
+  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "adds", "size_at_exit", "shares", "shares_at_exit", "base_risk", "dollar_net", "size_mult",
     "layer_market", "layer_sector", "layer_industry", "size_mult_industry", "size_mult_opens", "size_mult_trend",
-    "k1.5_rally_used", "k1.5_room_3r", "k2_rally_used", "k2_room_3r", "k3_rally_used", "k3_room_3r", "reached_3r", "initial_unit_r_net", "control_r_net", "htf_alignment", "week_used", "month_used", "room_w", "regime", "quarter"];
+    "finviz_base", "finviz_screens", "k1.5_rally_used", "k1.5_room_3r", "k2_rally_used", "k2_room_3r", "k3_rally_used", "k3_room_3r", "reached_3r", "initial_unit_r_net", "control_r_net", "htf_alignment", "week_used", "month_used", "room_w", "regime", "quarter"];
   const rows = trades.map((t) =>
-    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.adds, t.sameBarAdds, t.size, t.shares, t.sharesAtExit, t.baseRisk, t.dollarNet, t.sizeMult,
+    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.adds, t.size, t.shares, t.sharesAtExit, t.baseRisk, t.dollarNet, t.sizeMult,
       t.layerMarket, t.layerSector, t.layerIndustry, t.sizeMultIndustry, t.sizeMultOpens, t.sizeMultTrend,
-      t.swing["1.5"]?.rallyUsed, t.swing["1.5"]?.room3R, t.swing["2"]?.rallyUsed, t.swing["2"]?.room3R, t.swing["3"]?.rallyUsed, t.swing["3"]?.room3R, t.reached3R, t.initialUnitR, t.controlNetR, t.alignment, t.weekUsed, t.monthUsed, t.roomW, t.regime, t.quarter]
+      t.finvizBase, t.finvizScreens.join(" "), t.swing["1.5"]?.rallyUsed, t.swing["1.5"]?.room3R, t.swing["2"]?.rallyUsed, t.swing["2"]?.room3R, t.swing["3"]?.rallyUsed, t.swing["3"]?.room3R, t.reached3R, t.initialUnitR, t.controlNetR, t.alignment, t.weekUsed, t.monthUsed, t.roomW, t.regime, t.quarter]
       .map(csvCell)
       .join(","),
   );

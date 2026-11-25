@@ -183,10 +183,13 @@ async function main() {
   const commit = commitId();
   for (const exit of exits) {
     const { trades, counts, sizeSkipByType } = byExit[exit];
-    const results = evaluateGroups(trades, { verdicts: exit === PRIMARY_EXIT });
+    // §1g needs each stock's sector: without profiles (no DB), its groups are NOT_RUN rather than judged on market-only data.
+    const withSector = trades.filter((t) => t.variant === "calendar" && !!profiles[t.symbol]?.sector).length;
+    const notRun = Object.keys(profiles).length === 0 ? [{ prefix: "pyramid:", reason: "no sector/industry profiles this run (DB unavailable)" }] : [];
+    const results = evaluateGroups(trades, { verdicts: exit === PRIMARY_EXIT, notRun });
     const prim = results.filter((r) => r.primary);
     const v = (x: string) => prim.filter((r) => r.verdict === x).length;
-    const verdictText = exit === PRIMARY_EXIT ? `primary groups ${v("KEEP")} KEEP, ${v("DROP")} DROP, ${v("INSUFFICIENT")} INSUFFICIENT` : "reference exit, no verdicts";
+    const verdictText = exit === PRIMARY_EXIT ? `primary groups ${v("KEEP")} KEEP, ${v("DROP")} DROP, ${v("INSUFFICIENT")} INSUFFICIENT, ${v("NOT_RUN")} NOT_RUN` : "reference exit, no verdicts";
     console.log(`P3-0i exit ${exit}: ${trades.length} trades (${counts.calendar.filled} calendar, ${counts.rolling.filled} rolling); ${verdictText}`);
     for (const r of prim.filter((x) => x.verdict === "KEEP")) console.log(`  KEEP ${r.group}: ${r.reason}`);
     if (dryRun) continue;
@@ -200,6 +203,11 @@ async function main() {
       reportPath,
       simMarkdownReport(results, counts.calendar, {
         date, commit, exit, symbols: symbols.length, rollingCounts: counts.rolling, overlap, portfolio, sizeSkipByType, profiles: profilesSummary,
+        sectorProfiles: { tradesWith: withSector, trades: counts.calendar.filled },
+        finvizPrice: {
+          base: median(trades.filter((t) => t.variant === "calendar" && t.finvizBase === true).map((t) => t.fill)),
+          all: median(trades.filter((t) => t.variant === "calendar").map((t) => t.fill)),
+        },
       }),
     );
     writeFileSync(`scripts/output/stp-sim-backfill-exit${exit}-${date}-trades.csv`, tradesCsv(trades));

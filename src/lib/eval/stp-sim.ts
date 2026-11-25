@@ -13,6 +13,7 @@ import { barDateOf, windowStart } from "@/lib/harvester/universe/backfill";
 import { computeStpRolling, ROLLING_WINDOWS, type RollingWindows } from "@/lib/harvester/universe/stp-rolling";
 import { SWING_KS, swingEntry, zigzag, type Pivot } from "@/lib/harvester/universe/swings";
 import { pyramidLayers, type LayerState, type PyramidInputs } from "@/lib/harvester/universe/pyramid";
+import { BACKFILL_SCREEN_TESTS, passingScreens, screensOn, type ScreenId } from "@/lib/harvester/universe/finviz-screens";
 import { timeSplit, walkForwardFolds, FOLDS_REQUIRED, MIN_FOLD_ROWS, MIN_HELDOUT_ROWS, WALK_FORWARD_FOLDS } from "./rules";
 
 export const SIM_VERSION = 1;
@@ -152,6 +153,9 @@ export function entryOnNextBar(next: DailyBar | undefined, dir: Dir, entry: numb
 const crossesBelow = (p: number | null, pl: number | null, c: number | null, cl: number | null) => p != null && pl != null && c != null && cl != null && p >= pl && c < cl;
 const crossesAbove = (p: number | null, pl: number | null, c: number | null, cl: number | null) => p != null && pl != null && c != null && cl != null && p <= pl && c > cl;
 
+/** STP fudge on a bar: max(0.11 × ATR14, 0.02), as computeStp; null without an ATR. */
+export const barFudge = (atr: number | null | undefined) => (atr == null ? null : Math.max(0.11 * atr, 0.02));
+
 /** Mechanical trades trail with mX only (§1e). */
 export const isMechanical = (type: string) => type === "mech1" || type === "mech2";
 
@@ -167,7 +171,9 @@ export function atrSeries(bars: readonly DailyBar[]): Array<number | null> {
  * - mech1/mech2: mX only. Close crosses below sma20, or sma10 crosses below sma20 → low[t] − fudge.
  * - others: if close − sma10 > 1 × ATR14 → low[t] − fudge (bar stop); otherwise pmX:
  *   trendDirection[t−1] ≥ 1 and close crosses below sma10 → low[t] − fudge.
- * Short mirrored. Null when no rule fires. Uses bars ≤ t only.
+ * Short mirrored. `fudge` is bar t's (max(0.11 × ATR14[t], 0.02), as Pine computes it per
+ * bar); the trigger bar's fudge is only a fallback before ATR exists. Null when no rule
+ * fires. Uses bars ≤ t only.
  */
 export function trailCandidate(
   bars: readonly DailyBar[],
@@ -175,10 +181,12 @@ export function trailCandidate(
   atr: ReadonlyArray<number | null>,
   t: number,
   dir: Dir,
-  fudge: number,
+  fallbackFudge: number,
   mechanical: boolean,
 ): number | null {
   if (t < 1) return null;
+  // Pine's fudgeFactor is a series: max(0.11 × ATR14, 0.02) on the current bar (stp.pine:231, mechSL :724).
+  const fudge = barFudge(atr[t]) ?? fallbackFudge;
   const s10 = sma(closes, 10, t);
   const s20 = sma(closes, 20, t);
   const s10p = sma(closes, 10, t - 1);
@@ -208,8 +216,6 @@ export interface TradeExit {
   initialUnitR: number;
   holding: number;
   adds: number;
-  /** Adds that filled on the entry bar itself (intraday order unknowable from daily bars). */
-  sameBarAdds: number;
   addGapSkips: number;
   reached3R: boolean;
   /** Shares at the exit over the initial shares (1, 1.5, 2.2, …). */
@@ -262,7 +268,7 @@ export function simulateExitA(bars: readonly DailyBar[], f: number, dir: Dir, fi
   const last = Math.min(bars.length - 1, f + maxSessions);
   const legs = [{ qty: initialShares(baseRisk, risk), price: fill }];
   const done = (j: number, exit: number, reason: ExitReason) =>
-    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: 0, sameBarAdds: 0, addGapSkips: 0, reached3R: dir * (exit - fill) >= 3 * risk });
+    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: 0, addGapSkips: 0, reached3R: dir * (exit - fill) >= 3 * risk });
   for (let j = f; j <= last; j++) {
     const b = bars[j];
     if (j > f && b.open != null) {
@@ -310,14 +316,13 @@ export function simulateExitB(
   let trailed = false;
   let nextAdd = 1; // the next add level is fill ± nextAdd × 2R
   let addGapSkips = 0;
-  let sameBarAdds = 0;
   let reached3R = false;
   const threeR = fill + dir * TRAIL_AFTER_R * risk;
   const last = Math.min(bars.length - 1, f + EXIT_B_CAP);
   const mech = isMechanical(type);
 
   const done = (j: number, exit: number, reason: ExitReason) =>
-    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: legs.length - 1, sameBarAdds, addGapSkips, reached3R });
+    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: legs.length - 1, addGapSkips, reached3R });
   const stopReason = (): ExitReason => (trailed ? "trail_stop" : movedToBE ? "be_stop" : "stop");
 
   for (let j = f; j <= last; j++) {
@@ -325,10 +330,11 @@ export function simulateExitB(
     if (j > f && b.open != null && (dir === 1 ? b.open <= stop : b.open >= stop)) return done(j, b.open, "stop_gap");
     if (dir === 1 ? b.low <= stop : b.high >= stop) return done(j, stop, stopReason());
     // Adds: stop-limit orders at successive 2R levels; a level the bar opened through is skipped.
+    // Never on the entry day (Chris, §1e): from f+1 on, a level the fill bar already passed follows the gap rule.
     let pendingStop: number | null = null;
-    for (;;) {
+    for (; j > f; ) {
       const level = fill + dir * nextAdd * ADD_EVERY_R * risk;
-      if (j > f && b.open != null && (dir === 1 ? b.open > level : b.open < level)) {
+      if (b.open != null && (dir === 1 ? b.open > level : b.open < level)) {
         addGapSkips++;
         nextAdd++;
         continue;
@@ -338,7 +344,6 @@ export function simulateExitB(
       const qty = Math.floor(size() * ADD_FRACTION);
       if (qty < 1) continue; // §1h: an add rounding to 0 is no add
       legs.push({ qty, price: level });
-      if (j === f) sameBarAdds++;
       const be = avgCost();
       if (tighter(stop, be) === be && be !== stop) pendingStop = be;
     }
@@ -532,13 +537,15 @@ export interface Trade extends EntryLocation {
   sizeMultIndustry: number;
   sizeMultOpens: number;
   sizeMultTrend: number;
+  /** §1i Finviz screens on the trigger day: the base filter, and the screens that passed. */
+  finvizBase: boolean | null;
+  finvizScreens: ScreenId[];
   /** §1h dollar sizing. */
   baseRisk: number;
   shares: number;
   sharesAtExit: number;
   dollarGross: number;
   dollarNet: number;
-  sameBarAdds: number;
   alignment: Alignment | null;
   symbol: string;
   /** Trigger date: the time key for the split. */
@@ -658,7 +665,10 @@ export function simulateSymbol(
     openUntil = x.exitIndex;
     const control = matchedControl(s, bars, closes, info, rule, CONTROL_SEED, atr, baseRisk);
     if (!control) counts.noControl++;
+    const screen = screensOn(bars, s.i, atr);
     trades.push({
+      finvizBase: screen.base,
+      finvizScreens: passingScreens(screen),
       swing: Object.fromEntries(SWING_KS.map((k) => [String(k), swingEntry(bars, s.i, e.fill, e.risk, s.dir, k, pivots[String(k)])])),
       layerMarket: layers.market,
       layerSector: layers.sector,
@@ -672,7 +682,6 @@ export function simulateSymbol(
       sharesAtExit: x.sharesAtExit,
       dollarGross: x.dollarGross,
       dollarNet: x.dollarNet,
-      sameBarAdds: x.sameBarAdds,
       ...entryLocation(bars, s.i, e.fill, s.dir, e.risk, TRAIL_AFTER_R),
       variant,
       alignment: htfAlignment(s.htf, s.dir),
@@ -734,7 +743,6 @@ export interface GroupMetrics {
   avgRNot3R: number | null;
   timeCaps: number;
   avgInitialUnitR: number | null;
-  sameBarAdds: number;
   /** §1h: total dollar P&L (net) and its max drawdown, trades in exit-date order. */
   dollarNet: number;
   maxDrawdownDollar: number | null;
@@ -861,7 +869,6 @@ export function groupMetrics(trades: readonly Trade[]): GroupMetrics {
     avgRNot3R: mean(trades.filter((t) => !t.reached3R).map((t) => t.netR)),
     timeCaps: trades.filter((t) => t.reason === "time_cap").length,
     avgInitialUnitR: mean(trades.map((t) => t.initialUnitR)),
-    sameBarAdds: trades.reduce((s, t) => s + (t.sameBarAdds ?? 0), 0),
     dollarNet: trades.reduce((s, t) => s + (t.dollarNet ?? 0), 0),
     maxDrawdownDollar: maxDrawdownDollar(trades),
     sizeWeightedR: trades.reduce((s, t) => s + t.netR * (t.sizeMult ?? 1), 0),
@@ -873,7 +880,7 @@ export function passes(m: GroupMetrics, min: number): boolean {
   return m.trades >= min && m.expectancy != null && m.expectancy > 0 && m.controlExpectancy != null && m.expectancy > m.controlExpectancy;
 }
 
-export type SimVerdict = "KEEP" | "DROP" | "INSUFFICIENT";
+export type SimVerdict = "KEEP" | "DROP" | "INSUFFICIENT" | "NOT_RUN";
 
 export interface GroupResult {
   group: string;
@@ -905,7 +912,7 @@ export const THIRDS: ReadonlyArray<{ label: string; lo: number; hi: number }> = 
 export const TRIGGER_TYPES = ["inside", "butn", "brutn", "mech1", "mech2", "egop"] as const;
 
 /** The pre-registered primary groups: all, long, short, and each type × direction the rules allow. */
-type GroupKey = Pick<Trade, "dir" | "type" | "variant" | "swing" | "layerMarket" | "layerSector">;
+type GroupKey = Pick<Trade, "dir" | "type" | "variant" | "swing" | "layerMarket" | "layerSector" | "finvizBase" | "finvizScreens">;
 /** §1f pre-registered selection: rally_used < 0.5 and room_3r ≥ 1 at zigzag threshold k. */
 export const SWING_RALLY_MAX = 0.5;
 const earlySwing = (t: GroupKey, k: string) => {
@@ -917,13 +924,15 @@ const allAgree = (t: GroupKey) => t.layerMarket === "agree" && t.layerSector ===
 const cal = (t: GroupKey) => t.variant === "calendar";
 
 /**
- * The pre-registered primary groups, 25: all, long, short and each type × direction on
+ * The pre-registered primary groups, 49: all, long, short and each type × direction on
  * the calendar triggers (13); inside± and the U-turns with rolling opens (4, step 1c);
  * swing-structure early entries for k = 1.5, 2, 3 × long/short (6, §1f, replacing §1d's
- * 2); and Power Pyramid "all agree" long/short (2, §1g). The §1f and §1g groups must also
- * beat all calendar trades of their direction (`benchmark`).
+ * 2); Power Pyramid "all agree" long/short (2, §1g); the Finviz base filter long/short
+ * (2, §1i) and the 22 OHLCV screens in their set directions (§1i). The §1f, §1g and §1i
+ * groups must also beat all calendar trades of their direction (`benchmark`); screen
+ * groups with fewer than 30 trades in any fold are reported but not judged.
  */
-export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey) => boolean; benchmark?: (t: GroupKey) => boolean }> = [
+export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey) => boolean; benchmark?: (t: GroupKey) => boolean; foldMinimum?: boolean }> = [
   { group: "all", match: cal },
   { group: "long", match: (t) => cal(t) && t.dir === 1 },
   { group: "short", match: (t) => cal(t) && t.dir === -1 },
@@ -946,18 +955,32 @@ export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey)
     match: (t: GroupKey) => cal(t) && t.dir === dir && allAgree(t),
     benchmark: (t: GroupKey) => cal(t) && t.dir === dir,
   })),
+  ...([1, -1] as const).map((dir) => ({
+    group: `finviz:base:${dir === 1 ? "long" : "short"}`,
+    match: (t: GroupKey) => cal(t) && t.dir === dir && t.finvizBase === true,
+    benchmark: (t: GroupKey) => cal(t) && t.dir === dir,
+  })),
+  ...BACKFILL_SCREEN_TESTS.map(({ id, dir }) => ({
+    group: `finviz:${id}:${dir === 1 ? "long" : "short"}`,
+    match: (t: GroupKey) => cal(t) && t.dir === dir && (t.finvizScreens ?? []).includes(id),
+    benchmark: (t: GroupKey) => cal(t) && t.dir === dir,
+    foldMinimum: true,
+  })),
 ];
 
 /**
  * Split once over every trade (newest 30% of trigger dates held out; 3 expanding folds
  * by trigger date) and apply the same date cut to each group, so groups share one split.
  */
-export function evaluateGroups(trades: readonly Trade[], opts: { verdicts?: boolean } = {}): GroupResult[] {
+export function evaluateGroups(
+  trades: readonly Trade[],
+  opts: { verdicts?: boolean; /** Primary groups whose inputs are missing this run: reported as NOT_RUN. */ notRun?: { prefix: string; reason: string }[] } = {},
+): GroupResult[] {
   const verdicts = opts.verdicts ?? true;
   const { test } = timeSplit(trades);
   const heldIds = new Set(test.map((t) => t.scanId));
   const foldIds = walkForwardFolds(trades).map((f) => new Set(f.test.map((t) => t.scanId)));
-  const judge = (group: string, sel: Trade[], primary: boolean, bench?: Trade[]): GroupResult => {
+  const judge = (group: string, sel: Trade[], primary: boolean, bench?: Trade[], foldMinimum = false): GroupResult => {
     const heldOut = groupMetrics(sel.filter((t) => heldIds.has(t.scanId)));
     const folds = foldIds.map((ids) => groupMetrics(sel.filter((t) => ids.has(t.scanId))));
     // §1d early-entry groups must also beat all trades of their direction in the same split.
@@ -970,10 +993,17 @@ export function evaluateGroups(trades: readonly Trade[], opts: { verdicts?: bool
     const foldsPassed = folds.filter((f, k) => passes(f, MIN_FOLD_ROWS) && beatsBench(f, foldIds[k])).length;
     let verdict: SimVerdict | null = null;
     let reason = primary && !verdicts ? "reference exit: no verdict" : "descriptive only";
-    if (primary && verdicts) {
-      if (heldOut.trades < MIN_HELDOUT_ROWS) {
+    const notRun = primary && verdicts ? opts.notRun?.find((n) => group.startsWith(n.prefix)) : undefined;
+    const thinFold = foldMinimum && folds.some((f) => f.trades < MIN_FOLD_ROWS);
+    if (notRun) {
+      verdict = "NOT_RUN";
+      reason = notRun.reason;
+    } else if (primary && verdicts) {
+      if (heldOut.trades < MIN_HELDOUT_ROWS || thinFold) {
         verdict = "INSUFFICIENT";
-        reason = `${heldOut.trades} held-out trades (need ${MIN_HELDOUT_ROWS})`;
+        reason = heldOut.trades < MIN_HELDOUT_ROWS
+          ? `${heldOut.trades} held-out trades (need ${MIN_HELDOUT_ROWS})`
+          : `a fold has fewer than ${MIN_FOLD_ROWS} trades (screens are reported, not judged)`;
       } else if (!heldOutPasses) {
         verdict = "DROP";
         reason = bench
@@ -989,7 +1019,7 @@ export function evaluateGroups(trades: readonly Trade[], opts: { verdicts?: bool
     }
     return { group, primary, all: groupMetrics(sel), heldOut, folds, foldsPassed, verdict, reason };
   };
-  const out: GroupResult[] = PRIMARY_GROUPS.map((g) => judge(g.group, trades.filter(g.match), true, g.benchmark ? trades.filter(g.benchmark) : undefined));
+  const out: GroupResult[] = PRIMARY_GROUPS.map((g) => judge(g.group, trades.filter(g.match), true, g.benchmark ? trades.filter(g.benchmark) : undefined, g.foldMinimum));
   const calendar = trades.filter((t) => t.variant === "calendar");
   for (const type of TRIGGER_TYPES) out.push(judge(`type:${type}`, calendar.filter((t) => t.type === type), false));
   // Step 1b: do the weekly/monthly opens add anything on top of the MA- and catalyst-based patterns?
