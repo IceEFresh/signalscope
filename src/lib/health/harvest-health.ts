@@ -36,7 +36,9 @@ const CRYPTO_BAR_KEYS = new Set(["btc_return_20d", "rs_vs_btc_20d"]);
 export function isLiveStpKey(key: string): boolean {
   return (
     /^stp_(htf_opens_rolling|trigger_rolling|trigger_type_rolling|size_factor_long|size_factor_short)$/.test(key) ||
-    /^(size_combined_|pyramid_|finviz_|swing_k)/.test(key)
+    /^(size_combined_|pyramid_|finviz_|swing_k)/.test(key) ||
+    // P3-0j funnel keys (log only, not pre-registered as candidates)
+    /^(funnel_pass|funnel_rank|gate_finviz|gate_earnings5|gate_rr|event_half|event_today_inhours|rr|rr_level|open_air|countertrend|next_event|next_event_days)$/.test(key)
   );
 }
 

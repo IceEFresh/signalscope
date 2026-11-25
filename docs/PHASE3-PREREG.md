@@ -282,5 +282,34 @@ Costs are 0.10% of each leg's value. Exit A's report shows the same groups witho
 
 **Output.** One report, one trades CSV (with adds, shares, base risk, dollar P&L, size_mult and the layer states, the swing scores per k, reached 3R, initial-unit R, `week_used`, `month_used` and `room_w`) and one experiment-log row per exit: exit B with its verdicts, exit A marked as a reference. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
 
+## Selection funnel (P3-0j): 10 comparisons, written before any run
+
+Spec: `docs/PHASE3-PREP.md` §P3-0j. Code: `src/lib/eval/funnel.ts`, `src/lib/eval/funnel-sim.ts`, `scripts/simulate-funnel.ts`. Dataset: the backfill (P3-0g bars), calendar STP triggers, exit B management as amended by P3-0i4 (max 3 adds).
+
+**Funnel, fixed before the run:**
+- **Gates:** Finviz base (avg vol > 2M, ATR > $1.50); no own EDGAR earnings session on any of the 5 sessions after D (symbols without EDGAR dates aren't blocked; the report counts them); R/R ≥ 3, or ≥ 4 for a counter-trend short (a short while the market layer agrees with a long).
+- **R/R:** room to the nearest level beyond the entry over entry − stop. Long levels: zigzag k = 2 swing highs confirmed by D within 250 sessions, sma20/50/200, the weekly and monthly opens, the 20- and 60-session highs; short mirrored. Levels within 0.25 ATR14 of the entry are ignored; none within 10 ATR gives 10 ATR (`open_air`).
+- **Ranking:** per day across the universe by R/R, ties by k = 2 `rally_used` (lower first), then symbol. Top 5 (top 3 and all-passing are descriptive).
+- **Entry arms:** (a) stop entry as P3-0i; (b) a limit at the trigger bar's midpoint, D+1 only, same stop. A D+1 open at or through the stop isn't filled; an open beyond the limit fills at the open; a bar touching the limit and the stop is filled and stopped (−1R plus costs). Descriptive: a limit at low + fudge.
+- **Size:** stock factor × pyramid × 0.5 when an out-of-hours macro event (08:30 ET CPI, PPI, NFP, PCE, GDP advance, retail sales) falls on one of the 5 sessions after D; floored at 0.25; $200 × size.
+- **Exits:** exit B plus (i) the event stop rule at the close before every macro event (open profit ≥ 2R → bar stop; ≥ 1 ATR14 → breakeven; else unchanged; never loosens) and (ii) the earnings rule (bar stop on E−2 and E−1, sold at the close of E−1).
+- **Calendar:** `src/lib/harvester/macro-calendar.json`, every row with its official source URL.
+
+**Pre-registered, KEEP rule as P3-0i** (held-out newest 30% by trigger date, ≥ the minimum held-out trades, net expectancy > 0 and above the baseline, and the same in ≥ 2 of 3 walk-forward folds):
+
+| # | comparison | baseline |
+|---|---|---|
+| 1–2 | stop entry: funnel top-5 vs all trades, long / short | all triggers, same arm, management and sizing, no gates |
+| 3–4 | stop entry: funnel top-5 vs its matched random-day control, long / short | P3-0i control, same arm |
+| 5–6 | pullback entry: funnel top-5 vs all trades, long / short | as 1–2 with the pullback arm |
+| 7–8 | pullback entry: funnel top-5 vs its matched control, long / short | as 3–4 with the pullback arm |
+| 9–10 | funnel top-5: pullback vs stop entry, long / short | the stop arm on the same top-5 |
+
+At a nominal 5%, about 0.5 KEEP could come from chance before the fold rule.
+
+**Honesty note.** The funnel rules are Chris's existing method, stated before these results. The pullback entry was proposed after seeing P3-0i's control gap, so comparisons 5–10 are provisional: a KEEP on them only counts once it is confirmed on ≥ 6 months of live universe data. The earnings dates use EDGAR history, a mild look-ahead (dates are usually announced 2–4 weeks ahead); the report counts trades whose next earnings fell < 10 sessions after entry.
+
+**Descriptive only:** top-3 and all-passing populations; the low + fudge limit; event-halved vs not; `open_air` vs a level; counter-trend shorts and their size distribution; trades by event tier and how each exited; earnings exits; account view (peak open positions and open risk, no cap); the 5 largest losses and gains.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

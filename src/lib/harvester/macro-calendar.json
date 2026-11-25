@@ -1,0 +1,5 @@
+{
+  "about": "P3-0j scheduled US macro releases. One row per release: event (FOMC, CPI, PPI, NFP, PCE, GDP_ADV, RETAIL), date (YYYY-MM-DD), time (ET, HH:MM) and the official page it was read from (federalreserve.gov, bls.gov, bea.gov, census.gov). Actual release dates, including the late-2025 shutdown reschedules. Weekly jobless claims are excluded. Keep at least 60 days ahead; the harvest health report warns otherwise.",
+  "updated": null,
+  "events": []
+}

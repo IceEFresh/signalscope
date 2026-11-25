@@ -7,7 +7,8 @@ import { chunk, computeSnapshotRows, type SnapshotRow } from "../src/lib/harvest
 import { computeCryptoSnapshotRows } from "../src/lib/harvester/crypto/universe.js";
 import { fetchDailyChart, peekDailyChart } from "../src/lib/harvester/yahoo-chart.js";
 import { parseChartBars } from "../src/lib/harvester/universe/bar-metrics.js";
-import { liveStpKeys } from "../src/lib/harvester/universe/stp-live.js";
+import { applyFunnelRanks, liveStpKeys } from "../src/lib/harvester/universe/stp-live.js";
+import { calendarExpiry, macroCalendar } from "../src/lib/harvester/macro-calendar.js";
 import { barStoreLine, updateBarStore } from "../src/lib/harvester/universe/bar-store.js";
 import { fsBarStoreIO } from "../src/lib/harvester/universe/bar-store-fs.js";
 import { PYRAMID_SECTOR_MIN_SHARE, pyramidCoverage, pyramidCoverageLine } from "../src/lib/health/harvest-health.js";
@@ -165,6 +166,11 @@ async function main() {
     }
   }
   console.log(`[stp-live] layer ETFs cached: ${liveEtfStates.size}; live keys on ${liveTickers} signal tickers`);
+  // P3-0j: rank today's funnel candidates across the universe; warn when the macro calendar runs short
+  const funnelCandidates = applyFunnelRanks(snapshot.rows);
+  const cal = calendarExpiry(macroCalendar(), new Date().toISOString().slice(0, 10));
+  console.log(`[funnel] ${funnelCandidates} candidates passed the gates today`);
+  (cal.warn ? console.warn : console.log)(cal.line);
   const pyr = pyramidCoverage(
     snapshot.rows.map((r) => r.features),
     Object.values(prep.profiles).filter((p) => p.sector).length,
