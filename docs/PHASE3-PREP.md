@@ -368,6 +368,18 @@ Every position risks the same dollars. **Base risk = $100 × size_mult** (so $10
 - **Report:** total dollar P&L, max drawdown in dollars, trades per day, and the largest number of open positions and total open risk on any day (no cap is applied; this sizes the account the method needs).
 - **Tests:** floor rounding, a wide stop giving 0 shares (`size_skip`), an add rounding to 0, a short.
 
+### 1i. Chris's Finviz screens as candidate filters (Chris, 2026-11-24)
+Definitions are in `docs/FINVIZ-SCREENS.md` (F01 to F28). All of them are computed from our own bars on day D. Nothing is pulled from Finviz.
+- **New module `src/lib/harvester/universe/finviz-screens.ts`:** `screensOn(bars, D) → { base: bool, F03: bool, ... }`, using bars ≤ D only.
+  - F01 and F02 need earnings dates (P3-0i3), so they're null until that lands.
+  - F07 and F16–F19 need short float, which has no history, so they're null on the backfill and logged live only.
+- **Simulation:** each trade gets `finviz_base` and `finviz_screens` (the list of IDs passing on D).
+- **Pre-registered:** the base filter vs all trades, long and short: +2 per exit. Base = avg vol > 2M and ATR > $1.50.
+- **Per-screen comparisons are descriptive until Chris sets each screen's direction in FINVIZ-SCREENS.md.** After that, one comparison per screen in its direction (screen ∩ trades vs all trades of that direction). Those comparisons are added to PHASE3-PREREG.md before any run. Screens with fewer than 30 trades per fold are reported, never judged.
+- **Caveat:** ATR > $1.50 is in dollars, so it favours high-priced stocks. Report the base filter's median price vs all trades.
+- **Live (P3-0i2):** log `finviz_base` and `finviz_screens` per ticker per harvest, including the short-float and earnings screens.
+- **Tests:** each filter on a hand-built series at its edge (≥2% vs 1.99%, a new 20-day high on exactly the 20th bar); the cross-below-sma20 case; a null short float gives null, not false; and look-ahead (a planted D+1 bar changes nothing).
+
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
 
