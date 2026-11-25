@@ -187,3 +187,19 @@ describe("EGOP on the backfill", () => {
     expect(hit[0]).toMatchObject({ date: d, i: 70, dir: 1 });
   });
 });
+
+describe("during-session releases (Chris, 2026-11-25)", () => {
+  it("are excluded from EGOP's sessions but kept for the earnings gate and exit rule", async () => {
+    const { egopSessionsFromFile } = await import("@/lib/harvester/edgar-earnings");
+    const file = {
+      events: [
+        { session: "2026-01-13", timing: "pre" },
+        { session: "2026-02-03", timing: "during" },
+        { session: "2026-04-15", timing: "post" },
+      ],
+    };
+    expect([...egopSessionsFromFile(file)]).toEqual(["2026-01-13", "2026-04-15"]);
+    expect([...earningsSessionsFromFile(file)]).toEqual(["2026-01-13", "2026-02-03", "2026-04-15"]);
+    expect(egopSessionsFromFile(null).size).toBe(0);
+  });
+});

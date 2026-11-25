@@ -665,7 +665,7 @@ Branch `plan/p3-0i3-edgar-earnings`.
    - Take the rows where `form == "8-K"` and `items` contains `2.02`. Record `filingDate` and `acceptanceDateTime`.
    - Ticker → CIK comes from `https://www.sec.gov/files/company_tickers.json`.
    - Use `SEC_USER_AGENT`, stay ≤ 8 requests per second, cache per CIK on disk, and use the shared retry helper.
-2. **Before or after the open:** an acceptance time before 09:30 ET means the release came before the open, so the gap is that day. At or after 16:00 ET, the gap is the next session. Anything in between counts as during the session and is flagged.
+2. **Before or after the open:** an acceptance time before 09:30 ET means the release came before the open, so the gap is that day. At or after 16:00 ET, the gap is the next session. Anything in between counts as during the session and is flagged. **During-session releases are excluded from EGOP** (Chris, 2026-11-25); the P3-0j earnings gate and exit rule still use them.
 3. **Output:** a per-ticker list of earnings sessions, written next to the backfill bar cache (`scripts/output/backfill-earnings/`). `simulate-stp` feeds it to `computeStp` as `earningsTs`, so EGOP can fire on the backfill.
 4. **Coverage:** foreign filers (20-F / 6-K) and some ADRs don't file 8-K 2.02. Report the share of the universe with earnings dates, and leave the others null. Don't guess.
 5. **Tests:** saved fixtures for the submissions JSON and the ticker map; parsing item lists; the before/after-open mapping across DST; older pages; a missing CIK.

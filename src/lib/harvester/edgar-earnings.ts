@@ -263,8 +263,22 @@ export async function buildEarnings(
   return { bySymbol, coverage };
 }
 
-/** The per-ticker output file (scripts/output/backfill-earnings/<SYMBOL>.json) → earnings sessions. */
-export function earningsSessionsFromFile(json: unknown): Set<string> {
+/**
+ * The per-ticker output file (scripts/output/backfill-earnings/<SYMBOL>.json) → earnings sessions.
+ * `excludeDuring` drops releases accepted during the session (09:30–16:00 ET): Chris, 2026-11-25,
+ * they don't count for EGOP, whose gap must be at the open. The funnel's earnings gate and
+ * exit rule keep them (they're still earnings).
+ */
+export function earningsSessionsFromFile(json: unknown, opts: { excludeDuring?: boolean } = {}): Set<string> {
   const ev = (json as { events?: unknown } | null)?.events;
-  return new Set(Array.isArray(ev) ? ev.map((e) => (e as { session?: unknown })?.session).filter((s): s is string => typeof s === "string") : []);
+  if (!Array.isArray(ev)) return new Set();
+  return new Set(
+    ev
+      .filter((e) => !(opts.excludeDuring && (e as { timing?: unknown })?.timing === "during"))
+      .map((e) => (e as { session?: unknown })?.session)
+      .filter((s): s is string => typeof s === "string"),
+  );
 }
+
+/** EGOP's earnings sessions: pre-open and after-close releases only. */
+export const egopSessionsFromFile = (json: unknown) => earningsSessionsFromFile(json, { excludeDuring: true });
