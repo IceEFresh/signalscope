@@ -295,6 +295,8 @@ Spec: `docs/PHASE3-PREP.md` §P3-0j. Code: `src/lib/eval/funnel.ts`, `src/lib/ev
 - **Exits:** exit B plus (i) the event stop rule at the close before every macro event (open profit ≥ 2R → bar stop; ≥ 1 ATR14 → breakeven; else unchanged; never loosens) and (ii) the earnings rule (bar stop on E−2 and E−1, sold at the close of E−1).
 - **Calendar:** `src/lib/harvester/macro-calendar.json`, every row with its official source URL.
 
+**Amendment 2026-11-25 (P3-0j2), control definition, made before any P3-0j run:** an EGOP setup's matched control is drawn only from sessions after the gap day (c > i), in P3-0i and P3-0j alike; a control before the gap could hold through the earnings gap itself (a look-ahead that put EGOP's control at +1.25R). Every other pattern keeps ±20 sessions; the reports show control expectancy before vs after the trigger as descriptive.
+
 **Pre-registered, KEEP rule as P3-0i** (held-out newest 30% by trigger date, ≥ the minimum held-out trades, net expectancy > 0 and above the baseline, and the same in ≥ 2 of 3 walk-forward folds):
 
 | # | comparison | baseline |

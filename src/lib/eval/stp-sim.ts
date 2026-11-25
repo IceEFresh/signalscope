@@ -499,8 +499,17 @@ export interface ControlResult {
 }
 
 /**
+ * P3-0j2: the sessions a matched control may be drawn from. ±CONTROL_WINDOW around the
+ * trigger, except EGOP: only after the gap day (c > i). A control before the gap could hold
+ * through the earnings gap itself, a look-ahead that inflated EGOP's control.
+ */
+export function controlPoolRange(i: number, type: string, n: number): { lo: number; hi: number } {
+  return { lo: Math.max(0, type === "egop" ? i + 1 : i - CONTROL_WINDOW), hi: Math.min(n - 2, i + CONTROL_WINDOW) };
+}
+
+/**
  * Matched control for a filled trade: a random non-trigger session within ±CONTROL_WINDOW
- * of the trigger, same direction, entry high + fudge (low − fudge short) and the mirror
+ * of the trigger (EGOP: only after the gap day, see controlPoolRange), same direction, entry high + fudge (low − fudge short) and the mirror
  * stop from that bar, then the same entry, management (the trade's type decides mX vs
  * pmX), base risk (the trade's size_mult) and cost rules. Up to CONTROL_TRIES sessions are tried until one fills; null if
  * none does.
@@ -516,8 +525,9 @@ export function matchedControl(
   baseRisk = BASE_RISK_DOLLARS,
 ): ControlResult | null {
   const pool: number[] = [];
-  for (let c = setup.i - CONTROL_WINDOW; c <= setup.i + CONTROL_WINDOW; c++) {
-    if (c === setup.i || c < 0 || c + 1 >= bars.length) continue;
+  const range = controlPoolRange(setup.i, setup.type, bars.length);
+  for (let c = range.lo; c <= range.hi; c++) {
+    if (c === setup.i) continue;
     const trig = setup.variant === "rolling" ? info[c]?.triggerRolling : info[c]?.trigger;
     if (trig === 0 && info[c].fudge != null) pool.push(c);
   }
@@ -683,6 +693,8 @@ export interface Trade extends EntryLocation {
   size: number;
   initialUnitR: number;
   controlNetR: number | null;
+  /** P3-0j2: the control's day is after the trigger (descriptive pre/post split); null without a control. */
+  controlPost?: boolean | null;
   /** SPY close vs its SMA20 on the trigger day. */
   regime: "spy_above_sma20" | "spy_below_sma20" | null;
   quarter: string;
@@ -826,6 +838,7 @@ export function simulateSymbol(
       size: x.size,
       initialUnitR: x.initialUnitR,
       controlNetR: control?.netR ?? null,
+      controlPost: control ? control.i > s.i : null,
       regime: opts.regime?.get(s.date) ?? null,
       quarter: quarterOf(s.date),
     });

@@ -66,6 +66,30 @@ export function outlierLines(trades: readonly Trade[]): string[] {
   ];
 }
 
+const meanOf = (xs: readonly number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null);
+
+/**
+ * P3-0j2 descriptive: matched-control expectancy split by whether the control day fell
+ * before or after the trigger, per pattern. EGOP controls are drawn after the gap only.
+ */
+export function controlSplitLines(trades: readonly Trade[]): string[] {
+  const types = [...new Set(trades.map((t) => t.type))].sort();
+  const rows = types.map((type) => {
+    const ts = trades.filter((t) => t.type === type && t.controlNetR != null);
+    const pre = ts.filter((t) => t.controlPost === false).map((t) => t.controlNetR!);
+    const post = ts.filter((t) => t.controlPost === true).map((t) => t.controlNetR!);
+    return `| ${type} | ${pre.length} | ${r2(meanOf(pre))} | ${post.length} | ${r2(meanOf(post))} |`;
+  });
+  return [
+    "**Matched controls before vs after the trigger (descriptive; EGOP controls only after the gap day, P3-0j2):**",
+    "",
+    "| pattern | controls before | control exp R before | controls after | control exp R after |",
+    "|---|---|---|---|---|",
+    ...rows,
+    "",
+  ];
+}
+
 function countsLine(label: string, counts: SymbolCounts): string {
   const fillRate = counts.filled + counts.cancelled > 0 ? counts.filled / (counts.filled + counts.cancelled) : null;
   return (
@@ -147,6 +171,7 @@ export function simMarkdownReport(
         ]
       : []),
     ...(meta.trades ? outlierLines(meta.trades) : []),
+    ...(meta.trades ? controlSplitLines(meta.trades.filter((t) => t.variant === "calendar")) : []),
     ...(meta.sizeSkipByType && Object.keys(meta.sizeSkipByType).length
       ? [`size_skip by pattern (calendar): ${Object.entries(meta.sizeSkipByType).map(([t, c]) => `${t} ${c}`).join(", ")}.`, ""]
       : []),
