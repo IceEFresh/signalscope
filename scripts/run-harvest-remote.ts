@@ -8,6 +8,8 @@ import { computeCryptoSnapshotRows } from "../src/lib/harvester/crypto/universe.
 import { fetchDailyChart, peekDailyChart } from "../src/lib/harvester/yahoo-chart.js";
 import { parseChartBars } from "../src/lib/harvester/universe/bar-metrics.js";
 import { liveStpKeys } from "../src/lib/harvester/universe/stp-live.js";
+import { barStoreLine, updateBarStore } from "../src/lib/harvester/universe/bar-store.js";
+import { fsBarStoreIO } from "../src/lib/harvester/universe/bar-store-fs.js";
 import { PYRAMID_SECTOR_MIN_SHARE, pyramidCoverage, pyramidCoverageLine } from "../src/lib/health/harvest-health.js";
 import {
   computeIngestExtras,
@@ -127,8 +129,27 @@ async function main() {
   // (P3-0c / P3-0d, log only, no new requests)
   // P3-0i2: live log-only STP keys (rolling opens, size factors, Power Pyramid, Finviz screens, swings)
   const liveEtfStates = await loadLiveEtfStates();
+  // P3-0i2b: persistent bar store for the swing keys (append this run's charts; never stops the harvest)
+  let storeHistories = new Map<string, ReturnType<typeof parseChartBars>>();
+  try {
+    const store = await updateBarStore(
+      prep.scanSymbols,
+      async (sym) => {
+        const p = peekDailyChart(sym);
+        const res = p ? await p.catch(() => null) : null;
+        return res?.ok ? parseChartBars(res.json) : null;
+      },
+      fsBarStoreIO(),
+    );
+    storeHistories = store.histories;
+    const { line, warn } = barStoreLine(store.stats);
+    if (warn) console.warn(`${line}; WARNING: under 80% of members have 250 sessions, swing keys will often be null`);
+    else console.log(line);
+  } catch (err) {
+    console.warn(`[bar-store] update failed, swing keys use the chart only: ${err instanceof Error ? err.message : err}`);
+  }
   const liveKeys = (s: string, bars: Parameters<typeof liveStpKeys>[0], r: Parameters<typeof liveStpKeys>[1]) =>
-    liveStpKeys(bars, r, liveContextFor(s, prep.profiles, liveEtfStates));
+    liveStpKeys(bars, r, { ...liveContextFor(s, prep.profiles, liveEtfStates), history: storeHistories.get(s) });
   const snapshot = await computeSnapshotRows(prep.scanSymbols, stp, undefined, { profiles: prep.profiles, rotation: sectorRotation }, liveKeys);
   // The same keys on the signal tickers' features (no new requests: their charts are cached)
   let liveTickers = 0;

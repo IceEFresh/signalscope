@@ -28,6 +28,7 @@ import { passingScreens, screensOn } from "./finviz-screens";
 import { SWING_KS, swingEntry, swingProfile, zigzag } from "./swings";
 import { combinedSize, stockFactor } from "@/lib/eval/stp-sim";
 import { wilderAtr } from "./bar-features";
+import { swingHistory } from "./bar-store";
 
 export type LiveValue = number | string | boolean | null;
 
@@ -39,6 +40,8 @@ export interface LiveContext {
   sectorStates?: ReadonlyMap<string, EtfState> | null;
   industryEtf?: string | null;
   industryStates?: ReadonlyMap<string, EtfState> | null;
+  /** P3-0i2b: the symbol's stored bar history; the swing keys use it plus this run's chart (≤ D). */
+  history?: readonly DailyBar[];
 }
 
 /** P3-0i2 keys, all logged for every row (null when not computable), so the health report sees each family. */
@@ -108,11 +111,14 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
   const dir: 1 | -1 = trig ? (trig.trigger as 1 | -1) : 1;
   const price = trig ? trig.entry! : last?.close ?? null;
   const risk = trig ? Math.abs(trig.entry! - trig.stop!) : null;
+  // Swings alone read the longer stored history (P3-0i2b); every other key keeps the chart, matching the backfill.
+  const sb = ctx.history ? swingHistory(ctx.history, bars) : bars;
+  const st = sb.length - 1;
   for (const k of SWING_KS) {
     const pref = `swing_k${k}`;
-    const piv = bars.length ? zigzag(bars, k) : [];
-    const e = price != null && bars.length ? swingEntry(bars, t, price, risk ?? 1, dir, k, piv) : null;
-    const p = bars.length ? swingProfile(bars, t, k, piv) : { rally: null, pullback: null };
+    const piv = sb.length ? zigzag(sb, k) : [];
+    const e = price != null && sb.length ? swingEntry(sb, st, price, risk ?? 1, dir, k, piv) : null;
+    const p = sb.length ? swingProfile(sb, st, k, piv) : { rally: null, pullback: null };
     out[`${pref}_rally_used`] = e?.rallyUsed ?? null;
     out[`${pref}_rally_age`] = e?.rallyAge ?? null;
     out[`${pref}_room_3r_at_entry`] = risk != null ? e?.room3R ?? null : null;

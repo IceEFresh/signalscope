@@ -68,6 +68,8 @@ __pycache__/
 
 # scripts
 scripts/output/
+# P3-0i2b bar store (NAS only)
+data/
 
 # Git worktrees
 .worktrees/
