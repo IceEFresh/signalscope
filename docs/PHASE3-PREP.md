@@ -167,18 +167,13 @@ Branch `plan/p3-0i-stp-trade-sim`.
 ### 1. Pre-register first
 Add a section to `docs/PHASE3-PREREG.md`, **merged before the first real run**, that fixes everything below: the rules, metrics, KEEP rule, cost assumption and comparison count.
 
-### 1b. Trend gate: weekly and monthly opens (Chris, 2026-11-25)
-STP is a way to find entries **after** a stock meets the trend criteria. For a swing trade, that means price beyond **both** the weekly and the monthly open, in the trade's direction.
+### 1b. Trend criteria per pattern (Chris, 2026-11-25)
+STP finds entries **after** a stock meets its trend criteria. Each pattern has its own criteria, and `computeStp` already applies them. **The triggers as computed are the primary population. No extra gate.**
+- **Inside candle and U-turns (BUTN/BRUTN):** the trend is price against **both** the weekly and the monthly open (`trendDirection ≥ 1`, or `trendDirection[3]` for U-turns).
+- **Mechanical I and II:** the trend comes from the moving averages (sma20 vs sma50, then the price or sma10 cross).
+- **EGOP:** a catalyst trade (the earnings gap), with no trend gate.
 
-- **Primary population, "trend-qualified":** a long trigger counts only if `stp_htf_opens = +1` on the trigger day (close above both the weekly and the monthly open); a short only if it's −1. Every KEEP verdict in step 5 uses this population.
-- **Secondary, descriptive only, no verdicts:**
-  - all triggers ungated, as computed today;
-  - the triggers the gate removes.
-
-  These show what the gate itself is worth.
-- **Note:** in the Pine code (v1974, lines 557–566) and in SignalScope's port, only inside candles (`trendDirection ≥ 1`) and U-turns (`trendDirection[3]`) are gated on the opens. Mechanical I and II and EGOP fire without that gate. The simulation applies the gate on top; don't change `computeStp` or the live `StpSignal` trigger in this PR.
-  - The report states how many mech1, mech2 and EGOP triggers the gate removes.
-  - Whether to gate the live trigger, or the Pine alerts, is Chris's decision after the results.
+**Descriptive only, no verdicts:** split the Mechanical and EGOP results by `stp_htf_opens` alignment (aligned, partial, against), to see whether the weekly/monthly opens add anything on top of each pattern's own criteria.
 
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
