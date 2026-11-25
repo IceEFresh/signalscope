@@ -234,9 +234,10 @@ Besides the calendar weekly and monthly opens, test **rolling** opens for the tw
    - From then on, the stop is the **greater** of the current breakeven and any trailing stop, for longs. The stop never loosens.
 4. **Before 3R is reached** (a high ≥ `entry + 3R`), the stop is the initial stop, or BE once the add has filled. No trailing, and no exit at the target.
 5. **Once 3R has been touched,** trail on each completed bar and apply the new stop from the next bar. The stop only tightens, and never goes below BE (or the initial stop if there was no add):
-   - **Bar stop:** when `close − sma10 > 1 × ATR14` (the 10-day SMA is more than 1 ATR away), stop = that bar's `low − fudge`.
-   - **Otherwise, for mech1 and mech2 trades: mX.** When the close crosses below sma20, or sma10 crosses below sma20, stop = that bar's `low − fudge`.
-   - **Otherwise, for every other trade type: pmX.** When the trend direction on the prior bar is ≥ 1 and the close crosses below sma10, stop = that bar's `low − fudge`.
+   - **Mechanical trades (mech1, mech2): mX only, as documented in docs/STP-SIGNALS.md.** When the close crosses below sma20, or sma10 crosses below sma20, stop = that bar's `low − fudge`. No bar stop.
+   - **All other trades: pmX, with the bar stop in its place when price is extended.**
+     - If `close − sma10 > 1 × ATR14` (the 10-day SMA is more than 1 ATR away), stop = that bar's `low − fudge` (the bar stop).
+     - Otherwise, pmX: when the trend direction on the prior bar is ≥ 1 and the close crosses below sma10, stop = that bar's `low − fudge`.
    - Shorts mirror all of the above.
 6. **No target exit.** A safety time cap of **60 sessions** exits at that close. Report how many trades hit it.
 7. **P&L in R:** total P&L over all units divided by the initial 1-unit risk R. Costs are 0.10% of notional per leg (the entry, every add and the exit), converted into R. Also report the R of the initial unit alone, so the pyramid's effect can be seen separately.
