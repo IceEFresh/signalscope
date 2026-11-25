@@ -375,7 +375,10 @@ Definitions are in `docs/FINVIZ-SCREENS.md` (F01 to F28). All of them are comput
   - F07 and F16–F19 need short float, which has no history, so they're null on the backfill and logged live only.
 - **Simulation:** each trade gets `finviz_base` and `finviz_screens` (the list of IDs passing on D).
 - **Pre-registered:** the base filter vs all trades, long and short: +2 per exit. Base = avg vol > 2M and ATR > $1.50.
-- **Per-screen comparisons are descriptive until Chris sets each screen's direction in FINVIZ-SCREENS.md.** After that, one comparison per screen in its direction (screen ∩ trades vs all trades of that direction). Those comparisons are added to PHASE3-PREREG.md before any run. Screens with fewer than 30 trades per fold are reported, never judged.
+- **Per-screen, pre-registered** (directions set 2026-11-24 in FINVIZ-SCREENS.md): screen ∩ trades vs all trades of that direction.
+  - On the backfill: 20 one-direction OHLCV screens, plus F28 long and short. That's **+22 per exit**, so **51 per exit** in total. At a nominal 5%, about 2–3 KEEPs could come from chance before the fold rule.
+  - F01 and F02 add 4 (long and short) once P3-0i3 lands. They're pre-registered now.
+  - Short-float screens (F07, F16–F19) are live only, with no backfill verdict. Screens with fewer than 30 trades per fold are reported, never judged.
 - **Caveat:** ATR > $1.50 is in dollars, so it favours high-priced stocks. Report the base filter's median price vs all trades.
 - **Live (P3-0i2):** log `finviz_base` and `finviz_screens` per ticker per harvest, including the short-float and earnings screens.
 - **Tests:** each filter on a hand-built series at its edge (≥2% vs 1.99%, a new 20-day high on exactly the 20th bar); the cross-below-sma20 case; a null short float gives null, not false; and look-ahead (a planted D+1 bar changes nothing).

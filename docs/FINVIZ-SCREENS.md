@@ -13,38 +13,38 @@ These are Chris's stock-selection screens, recreated from free data. No Finviz A
 
 Finviz screens run intraday. We use the completed bar, so a screen hit on D leads to an STP entry on D+1.
 
-**Dir:** the trade direction Chris uses each screen for. Chris fills this in; until he does, screens are descriptive only.
+**Dir** (set 2026-11-24, reviewer's proposal accepted by Chris): F14 (up 2% in a downtrend) is short, a U-turn into resistance. F21 (down 2% in an uptrend) is long, a pullback. "both" screens are tested long and short.
 
 | ID | Filters beyond the base | Data | Dir |
 |---|---|---|---|
-| F01 | earnings in last 5 days | earnings (P3-0i3) | ? |
-| F02 | earnings yesterday | earnings (P3-0i3) | ? |
-| F03 | close < open; close crossed below sma20; sma50 > sma20 | OHLCV | ? |
-| F04 | close > open; close crossed above sma20; sma50 < sma20 | OHLCV | ? |
-| F05 | relvol > 0.75; close ≤ open −1%; 4-wk perf < 0; close < sma20 | OHLCV | ? |
-| F06 | relvol > 0.75; close ≥ open +1%; 4-wk perf > 0; close > sma20 | OHLCV | ? |
-| F07 | relvol > 1.5; short float > 20% | short interest (live only) | ? |
-| F08 | close ≤ open −2%; new 20-day low | OHLCV | ? |
-| F09 | close ≤ open −2%; new 20-day low; close < sma20 | OHLCV | ? |
-| F10 | close ≤ open −2%; close < sma20 | OHLCV | ? |
-| F11 | close ≤ open −2% | OHLCV | ? |
-| F12 | close ≤ open −2%; 4-wk perf < 0; 1-wk perf < 0 | OHLCV | ? |
-| F13 | relvol > 0.75; close < open; new 20-day low | OHLCV | ? |
-| F14 | close ≥ open +2%; 4-wk perf < 0; close < sma20; close < sma50 | OHLCV | ? |
-| F15 | close ≤ open −2%; 4-wk perf < 0; close < sma20; close < sma50 | OHLCV | ? |
-| F16 | short float > 20% | short interest (live only) | ? |
-| F17 | short float > 20%; 1-wk perf > 0; 4-wk perf > 0 | short interest (live only) | ? |
-| F18 | short float > 20%; close > sma20; close > sma50 | short interest (live only) | ? |
-| F19 | short float > 20%; new 20-day high | short interest (live only) | ? |
-| F20 | close ≥ open +2%; 4-wk perf > 0; close > sma20; close > sma50 | OHLCV | ? |
-| F21 | close ≤ open −2%; 4-wk perf > 0; close > sma20; close > sma50 | OHLCV | ? |
-| F22 | relvol > 0.75; close > open; new 20-day high | OHLCV | ? |
-| F23 | close ≥ open +2%; 4-wk perf > 0; 1-wk perf > 0 | OHLCV | ? |
-| F24 | close ≥ open +2%; new 20-day high; close > sma20 | OHLCV | ? |
-| F25 | close > prior close; close ≥ open +2%; new 20-day high | OHLCV | ? |
-| F26 | close ≥ open +2%; close > sma20 | OHLCV | ? |
-| F27 | close ≥ open +2% | OHLCV | ? |
-| F28 | relvol > 2 | OHLCV | ? |
+| F01 | earnings in last 5 days | earnings (P3-0i3) | both |
+| F02 | earnings yesterday | earnings (P3-0i3) | both |
+| F03 | close < open; close crossed below sma20; sma50 > sma20 | OHLCV | short |
+| F04 | close > open; close crossed above sma20; sma50 < sma20 | OHLCV | long |
+| F05 | relvol > 0.75; close ≤ open −1%; 4-wk perf < 0; close < sma20 | OHLCV | short |
+| F06 | relvol > 0.75; close ≥ open +1%; 4-wk perf > 0; close > sma20 | OHLCV | long |
+| F07 | relvol > 1.5; short float > 20% | short interest (live only) | both |
+| F08 | close ≤ open −2%; new 20-day low | OHLCV | short |
+| F09 | close ≤ open −2%; new 20-day low; close < sma20 | OHLCV | short |
+| F10 | close ≤ open −2%; close < sma20 | OHLCV | short |
+| F11 | close ≤ open −2% | OHLCV | short |
+| F12 | close ≤ open −2%; 4-wk perf < 0; 1-wk perf < 0 | OHLCV | short |
+| F13 | relvol > 0.75; close < open; new 20-day low | OHLCV | short |
+| F14 | close ≥ open +2%; 4-wk perf < 0; close < sma20; close < sma50 | OHLCV | short |
+| F15 | close ≤ open −2%; 4-wk perf < 0; close < sma20; close < sma50 | OHLCV | short |
+| F16 | short float > 20% | short interest (live only) | both |
+| F17 | short float > 20%; 1-wk perf > 0; 4-wk perf > 0 | short interest (live only) | both |
+| F18 | short float > 20%; close > sma20; close > sma50 | short interest (live only) | both |
+| F19 | short float > 20%; new 20-day high | short interest (live only) | both |
+| F20 | close ≥ open +2%; 4-wk perf > 0; close > sma20; close > sma50 | OHLCV | long |
+| F21 | close ≤ open −2%; 4-wk perf > 0; close > sma20; close > sma50 | OHLCV | long |
+| F22 | relvol > 0.75; close > open; new 20-day high | OHLCV | long |
+| F23 | close ≥ open +2%; 4-wk perf > 0; 1-wk perf > 0 | OHLCV | long |
+| F24 | close ≥ open +2%; new 20-day high; close > sma20 | OHLCV | long |
+| F25 | close > prior close; close ≥ open +2%; new 20-day high | OHLCV | long |
+| F26 | close ≥ open +2%; close > sma20 | OHLCV | long |
+| F27 | close ≥ open +2% | OHLCV | long |
+| F28 | relvol > 2 | OHLCV | both |
 
 ## Appendix: raw Finviz filters
 ```
