@@ -268,6 +268,8 @@ The control uses the same management.
 - the 60-session cap;
 - R across a pyramided position, and initial-unit R.
 
+**No add on the entry day** (Chris, 2026-11-24). Add orders go live from the session after the fill. If the fill bar already reached an add level, that level is checked from the next session under the gap rule above: a next-day open through it is a skipped add, and the next level stays live. Test: a fill bar that trades through +2R adds nothing that day.
+
 ### 1f. Entry location by swing structure (Chris, 2026-11-25). Replaces the weekly/monthly `week_used` / `month_used` test in §1d.
 Chris's selection rule: how far into a stock's *typical move* the entry sits. A late entry in a rally has less room to reach 3R before the rally ends. Measure it from each stock's own swing history.
 
