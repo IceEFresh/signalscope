@@ -121,5 +121,59 @@ The stock regime (`regime.*`) is not attached to crypto rows. The regime is stoc
 - **Log:** both backfill runs stay in `scripts/backtesting-experiments.md`. The first run's row is kept, and the rerun after this fix gets its own row.
 - **Not covered by this amendment:** the U-shape the first backfill run showed in `return_20d`, `rsi14_max_20d` and `sma20_vs_sma50` (both extremes beat the middle). Testing that would be a new hypothesis, such as beta-adjusted excess or |feature| buckets. It needs its own pre-registration and a test on the live universe dataset, not on the backfill that suggested it.
 
+## STP trigger trades (P3-0i): 13 comparisons per exit, reported separately
+Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulates STP triggers as trades on the P3-0g backfill bars, the chart cache in `scripts/output/backfill-bars/`. It runs on every cached symbol except SPY, with trigger dates in the backfill's last 2 years of SPY sessions. The survivorship bias is the same as the backfill's: current members only, so results are optimistic.
+
+**Setups.** `computeStp` on each day D's live-window slice, the same slicing as P3-0g: bars dated on or before D, after D minus 3 months. Every `trigger ≠ 0` is one setup, with its own `entry`, `stop`, `fudge`, `triggerType` and `firedRules`. The backfill has no earnings dates, so `egop` never fires, and its groups will be INSUFFICIENT.
+
+**Entry.** A stop order valid for session D+1 only.
+- Long fills if the D+1 high is at or above the entry, at max(entry, open); short is mirrored.
+- Not filled on D+1 means cancelled (counted).
+- An open at or past the stop, or R = |fill − stop| ≤ 0, skips the setup (counted).
+
+**Exits.** Both exits use the trigger's stop and these bar rules, in this order on each bar:
+1. From the bar after the fill: a gap through the stop exits at the open. A gap through the target exits **at the target**, not the better open (conservative).
+2. A bar that touches both the stop and the target exits at the stop. This includes the fill bar.
+3. Otherwise the target.
+4. Otherwise the time exit at that session's close.
+
+If the data ends first, the trade exits at the last close (`end_of_data`). Exit-specific rules:
+- **Exit A (primary):** target 2R, time exit at the close of the 10th session after the fill.
+- **Exit B (secondary):** target 3R, time exit at the 20th session, plus the STP trailing exits from docs/STP-SIGNALS.md, evaluated on each completed bar and applied from the next bar. The stop only tightens. `fudge` is the trigger bar's.
+  - **mX:** the close, or sma10, crosses below sma20 → stop to low − fudge.
+  - **pmX:** trendDirection at t−1 ≥ 1 and the close crosses below sma10 → stop to low − fudge.
+  - **Bar stop:** trendDirection ≥ 1 and close > low[t−1] → stop to low[t−1] − fudge.
+  - Shorts mirror all three.
+
+**Costs.** 0.10% of price round trip, as `0.001 × fill / R` per trade. Net R is primary; gross is reported too.
+
+**One position per ticker.** A trigger dated before the open trade's exit bar is skipped (counted). A trigger on the exit day itself is allowed. Cancelled and skipped setups don't block.
+
+**Matched control.** For each filled trade, draw a random non-trigger session within ±20 sessions of the trigger, same ticker, same direction.
+- Entry is high + fudge (low − fudge for shorts); the stop is the mirror level; both come from that control bar's own `computeStp` fudge.
+- The same fill, exit and cost rules apply. Controls don't block positions.
+- Up to 5 sessions are tried, without replacement, until one fills; otherwise the trade has no control (counted).
+- RNG: mulberry32, base seed **20261125**, hashed with ticker and trigger date, so a control doesn't depend on run order.
+- Control expectancy is the mean net R of the controls found. **Edge = trigger net expectancy − control net expectancy.**
+
+**Metrics per group.** Trades, win rate (net R > 0), mean and median net R (mean = expectancy), mean gross R, profit factor, average holding sessions, max drawdown in R (equal-R trades in fill-date order), control count, control expectancy, and edge. The setup, fill, cancel and skip counts are reported for the whole run.
+
+**Split.** Computed once over all trades by trigger date, and applied to every group: the newest 30% of trigger dates are held out, plus 3 expanding walk-forward folds (the same rule code as the harness).
+
+**Verdict, primary groups only:**
+- **INSUFFICIENT:** fewer than 100 held-out trades.
+- **KEEP:** held-out net expectancy > 0 **and** above its matched control, **and** the same is true in at least 2 of 3 folds. A fold needs at least 30 trades to count.
+- **DROP:** anything else.
+
+**Primary groups, 13 per exit:**
+- all, long, short;
+- inside+, inside−, butn+, brutn−, mech1+, mech1−, mech2+, mech2−, egop+, egop−.
+
+`butn` is bullish only and `brutn` bearish only. Exit A's 13 are the primary test; exit B's 13 are reported separately and never pooled with exit A. At a nominal 5%, about 1 KEEP per exit could come from chance before the fold rule.
+
+**Descriptive only, no verdict:** by `triggerType` (both directions), SPY above or below its SMA20 on the trigger day (from the backfill SPY bars), and calendar quarter.
+
+**Output.** One report, one trades CSV and one experiment-log row per exit. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

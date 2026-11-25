@@ -53,8 +53,14 @@ export function metrics(rows: readonly EvalRow[], h: Horizon): Metrics {
   };
 }
 
+/** Anything the time split can order: one scan (or trigger date) id and its time. */
+export interface TimeKeyed {
+  scanId: string;
+  scanStart: Date;
+}
+
 /** Distinct scans in time order. A scan is never split across train and test. */
-function scanOrder(rows: readonly EvalRow[]): string[] {
+function scanOrder(rows: readonly TimeKeyed[]): string[] {
   const first = new Map<string, number>();
   for (const r of rows) {
     const t = r.scanStart.getTime();
@@ -64,7 +70,7 @@ function scanOrder(rows: readonly EvalRow[]): string[] {
 }
 
 /** Train on the oldest scans, test on the newest TEST_FRACTION of scans. */
-export function timeSplit(rows: readonly EvalRow[], testFraction = TEST_FRACTION): { train: EvalRow[]; test: EvalRow[] } {
+export function timeSplit<T extends TimeKeyed = EvalRow>(rows: readonly T[], testFraction = TEST_FRACTION): { train: T[]; test: T[] } {
   const scans = scanOrder(rows);
   const cut = Math.floor(scans.length * (1 - testFraction));
   const testScans = new Set(scans.slice(cut));
@@ -72,11 +78,11 @@ export function timeSplit(rows: readonly EvalRow[], testFraction = TEST_FRACTION
 }
 
 /** Expanding-window walk-forward: k+1 time blocks of scans; fold i tests block i+1. */
-export function walkForwardFolds(rows: readonly EvalRow[], k = WALK_FORWARD_FOLDS): Array<{ train: EvalRow[]; test: EvalRow[] }> {
+export function walkForwardFolds<T extends TimeKeyed = EvalRow>(rows: readonly T[], k = WALK_FORWARD_FOLDS): Array<{ train: T[]; test: T[] }> {
   const scans = scanOrder(rows);
   const blocks = k + 1;
   const blockOf = new Map(scans.map((id, i) => [id, Math.min(blocks - 1, Math.floor((i * blocks) / Math.max(1, scans.length)))]));
-  const folds: Array<{ train: EvalRow[]; test: EvalRow[] }> = [];
+  const folds: Array<{ train: T[]; test: T[] }> = [];
   for (let i = 0; i < k; i++) {
     folds.push({
       train: rows.filter((r) => blockOf.get(r.scanId)! <= i),
