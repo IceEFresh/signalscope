@@ -2,7 +2,7 @@
  * P3-0k report output (pure): markdown, trades CSV and one experiment-log row.
  */
 import { SURVIVORSHIP_NOTE } from "./report";
-import { BASE_RISK_DOLLARS, CONTROL_SEED, groupMetrics, type GroupMetrics } from "./stp-sim";
+import { BASE_RISK_DOLLARS, CONTROL_SEED, groupMetrics, stoppedEarly, STOPPED_EARLY_SESSIONS, type GroupMetrics } from "./stp-sim";
 import { controlSplitLines, outlierLines } from "./stp-sim-report";
 import { funnelTradesCsv } from "./funnel-report";
 import type { ComparisonResult, FunnelCounts, FunnelTrade } from "./funnel-sim";
@@ -80,6 +80,7 @@ export function alignedMarkdownReport(results: readonly ComparisonResult[], trad
     ["aligned + optimal, rolling trigger (stop)", p3k.filter((t) => t.setupVariant === "rolling")],
   ];
   out.push(...desc.map(([l, ts]) => row(l, groupMetrics(ts))), "");
+  out.push(...stoppedEarlyLines(trades));
   const states = ["aligned", "mixed", "against", null] as const;
   out.push("**Layer states of the candidates passing every gate:**", "", "| layer | aligned | mixed | against | no data |", "|---|---|---|---|---|");
   for (const layer of ["industry", "sector", "market"] as const)
@@ -91,6 +92,26 @@ export function alignedMarkdownReport(results: readonly ComparisonResult[], trad
     out.push("");
   }
   return out.join("\n");
+}
+
+/**
+ * P3-0k2 descriptive: share of trades stopped out at the initial stop within 3 sessions (fill
+ * day = session 1), p3k vs p3k_all vs p3k_noopt, stop entry. Do support-based stops survive the
+ * first days better?
+ */
+export function stoppedEarlyLines(trades: readonly FunnelTrade[]): string[] {
+  const out = [
+    `**Stopped out within ${STOPPED_EARLY_SESSIONS} sessions (initial stop or a gap through it; fill day = session 1; stop entry; descriptive):**`,
+    "",
+    "| population | trades | stopped within 3 sessions | share | net exp R of the rest |",
+    "|---|---|---|---|---|",
+  ];
+  for (const [p, label] of [["p3k", "aligned + optimal entry"], ["p3k_all", "all STP trades"], ["p3k_noopt", "aligned, no optimal-entry gate"]] as const) {
+    const ts = trades.filter((t) => t.population === p && t.arm === "stop");
+    const early = ts.filter(stoppedEarly);
+    out.push(`| ${label} (${p}) | ${ts.length} | ${early.length} | ${pct(ts.length ? early.length / ts.length : null)} | ${r2(groupMetrics(ts.filter((t) => !stoppedEarly(t))).expectancy)} |`);
+  }
+  return [...out, ""];
 }
 
 export const alignedTradesCsv = funnelTradesCsv;
