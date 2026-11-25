@@ -84,6 +84,33 @@ describe("updateBarStore", () => {
     expect(r.histories.get("NEW")).toHaveLength(30);
   });
 
+  it("a re-adjusted symbol whose 2-year fetch fails keeps its file byte-identical; the run uses the chart alone", async () => {
+    const adjusted = base.map((b) => ({ ...b, close: b.close / 2, high: b.high / 2, low: b.low / 2, open: b.open! / 2 }));
+    const original = toChartJson(base.slice(0, 20));
+    const before = JSON.stringify(original);
+    const files: Record<string, unknown> = { AAA: original };
+    const write = vi.fn((s: string, j: unknown) => {
+      files[s] = j;
+    });
+    const r = await updateBarStore(["AAA"], async () => adjusted.slice(15), { read: (s) => files[s], write, fetch2y: async () => null }, NOW);
+    expect(write).not.toHaveBeenCalled();
+    expect(JSON.stringify(files.AAA)).toBe(before);
+    expect(r.stats).toMatchObject({ readjusted: 0, readjustDeferred: 1, fetchErrors: 1 });
+    expect(r.histories.get("AAA")!.map((b) => b.close)).toEqual(adjusted.slice(15).map((b) => b.close));
+  });
+
+  it("caps 2-year fetches at 100 per run: 150 new symbols → 100 fetches, 50 deferred, no file for the deferred", async () => {
+    const files: Record<string, unknown> = {};
+    const fetch2y = vi.fn(async () => toChartJson(base));
+    const syms = Array.from({ length: 150 }, (_, i) => `N${i}`);
+    const r = await updateBarStore(syms, async () => base.slice(-3), { read: (s) => files[s] ?? null, write: (s, j) => { files[s] = j; }, fetch2y }, NOW);
+    expect(fetch2y).toHaveBeenCalledTimes(100);
+    expect(r.stats).toMatchObject({ seededNew: 100, deferred: 50 });
+    expect(Object.keys(files)).toHaveLength(100);
+    expect(r.histories.get("N149")).toHaveLength(3); // deferred: chart only this run
+    expect(barStoreLine(r.stats).line).toContain("50 deferred (fetch cap 100)");
+  });
+
   it("a write error is counted and the next symbol still updates", async () => {
     const files: Record<string, unknown> = { AAA: toChartJson(base), BBB: toChartJson(base) };
     const x: BarStoreIO = {
@@ -97,7 +124,9 @@ describe("updateBarStore", () => {
     const r = await updateBarStore(["AAA", "BBB"], async () => base.slice(-3), x, NOW);
     expect(r.stats.writeErrors).toBe(1);
     expect(r.histories.get("BBB")).toHaveLength(30);
-    expect(barStoreLine(r.stats).line).toBe("[bar-store] 0/2 members with ≥250 sessions, 0 re-adjusted, 0 seeded new, 1 write errors, 0 fetch errors");
+    expect(barStoreLine(r.stats).line).toBe(
+      "[bar-store] 0/2 members with ≥250 sessions, 0 re-adjusted, 0 seeded new, 0 deferred (fetch cap 100), 0 re-adjust deferred, 1 write errors, 0 fetch errors",
+    );
     expect(barStoreLine(r.stats).warn).toBe(true);
   });
 });

@@ -10,7 +10,10 @@
  * - a date in both takes the chart's values;
  * - if a close on a shared date differs by more than 1%, Yahoo has re-adjusted the history
  *   (split or dividend), so a 2-year chart is fetched and the file rewritten;
- * - a symbol with no file gets one 2-year chart (new universe members).
+ * - a symbol with no file gets one 2-year chart (new universe members), and only then a file;
+ * - at most MAX_STORE_FETCHES 2-year fetches per run; the rest are deferred to the next run;
+ * - stored history is never overwritten without a fresh 2-year chart (a failed or deferred
+ *   re-adjust fetch leaves the file untouched; the run uses the chart alone for that symbol).
  * A failed read, write or fetch is counted and logged; it never stops the harvest.
  */
 import { etParts, parseChartBars, type DailyBar } from "./bar-metrics";
@@ -19,6 +22,8 @@ export const STORE_SESSIONS = 600;
 export const READJUST_TOLERANCE = 0.01;
 export const MIN_SWING_SESSIONS = 250;
 export const STORE_COVERAGE_WARN = 0.8;
+/** At most this many 2-year fetches (new members + re-adjustments) per run; the rest wait for the next run. */
+export const MAX_STORE_FETCHES = 100;
 
 const dateOf = (b: DailyBar): string | null => (b.time != null ? etParts(new Date(b.time * 1000)).date : null);
 
@@ -85,8 +90,13 @@ export interface BarStoreIO {
 export interface BarStoreStats {
   members: number;
   withMinSessions: number;
+  /** Files rewritten from a fresh 2-year chart after a >1% close mismatch. */
   readjusted: number;
+  /** Re-adjustments found but not rewritten this run (fetch failed or over the cap); the file is left untouched. */
+  readjustDeferred: number;
   seededNew: number;
+  /** 2-year fetches not attempted because the run hit MAX_STORE_FETCHES (new members and re-adjustments). */
+  deferred: number;
   writeErrors: number;
   fetchErrors: number;
 }
@@ -100,45 +110,62 @@ export async function updateBarStore(
   chartBars: (symbol: string) => Promise<DailyBar[] | null>,
   io: BarStoreIO,
   now: Date = new Date(),
+  maxFetches = MAX_STORE_FETCHES,
 ): Promise<{ histories: Map<string, DailyBar[]>; stats: BarStoreStats }> {
   const sessionDate = etParts(now).date;
   const histories = new Map<string, DailyBar[]>();
-  const stats: BarStoreStats = { members: symbols.length, withMinSessions: 0, readjusted: 0, seededNew: 0, writeErrors: 0, fetchErrors: 0 };
+  const stats: BarStoreStats = {
+    members: symbols.length, withMinSessions: 0, readjusted: 0, readjustDeferred: 0, seededNew: 0, deferred: 0, writeErrors: 0, fetchErrors: 0,
+  };
+  let fetches = 0;
+  const record = (sym: string, bars: DailyBar[]) => {
+    histories.set(sym, bars);
+    if (bars.length >= MIN_SWING_SESSIONS) stats.withMinSessions++;
+  };
+  const write = (sym: string, bars: DailyBar[]) => {
+    try {
+      io.write(sym, toChartJson(bars));
+    } catch {
+      stats.writeErrors++;
+    }
+  };
   for (const sym of symbols) {
     try {
       const chart = (await chartBars(sym)) ?? [];
-      let stored: DailyBar[] = [];
       let raw: unknown | null = null;
       try {
         raw = io.read(sym);
       } catch {
-        raw = null; // unreadable: treated like a missing file
+        raw = null; // unreadable: treated like a missing file (and never overwritten unless a fresh chart arrives)
       }
-      let refetch = raw == null;
-      if (raw != null) {
-        stored = parseChartBars(raw, now);
-        if (isReadjusted(stored, chart)) {
-          refetch = true;
-          stats.readjusted++;
-        }
+      const stored = raw != null ? parseChartBars(raw, now) : [];
+      const readjusted = raw != null && isReadjusted(stored, chart);
+      if (raw != null && !readjusted) {
+        // Normal path: append this run's chart, no request
+        const merged = mergeBars(stored, chart, sessionDate);
+        record(sym, merged);
+        write(sym, merged);
+        continue;
       }
-      if (refetch) {
-        const json = await io.fetch2y(sym).catch(() => null);
-        if (json) {
-          stored = parseChartBars(json, now);
-          if (raw == null) stats.seededNew++;
-        } else {
-          stats.fetchErrors++;
-          if (raw != null) stored = []; // re-adjusted but no fresh history: start over from the chart
-        }
+      // A new member, or a re-adjusted history: a 2-year chart, within the per-run cap
+      let fresh: unknown | null = null;
+      if (fetches < maxFetches) {
+        fetches++;
+        fresh = await io.fetch2y(sym).catch(() => null);
+        if (!fresh) stats.fetchErrors++;
+      } else {
+        stats.deferred++;
       }
-      const merged = mergeBars(stored, chart, sessionDate);
-      histories.set(sym, merged);
-      if (merged.length >= MIN_SWING_SESSIONS) stats.withMinSessions++;
-      try {
-        io.write(sym, toChartJson(merged));
-      } catch {
-        stats.writeErrors++;
+      if (fresh) {
+        const merged = mergeBars(parseChartBars(fresh, now), chart, sessionDate);
+        if (readjusted) stats.readjusted++;
+        else stats.seededNew++;
+        record(sym, merged);
+        write(sym, merged);
+      } else {
+        // Never overwrite stored history without a fresh chart: this run uses the chart alone, the next run retries.
+        if (readjusted) stats.readjustDeferred++;
+        record(sym, mergeBars([], chart, sessionDate));
       }
     } catch (err) {
       stats.writeErrors++;
@@ -151,7 +178,9 @@ export async function updateBarStore(
 export function barStoreLine(s: BarStoreStats): { line: string; warn: boolean } {
   const warn = s.members > 0 && s.withMinSessions / s.members < STORE_COVERAGE_WARN;
   return {
-    line: `[bar-store] ${s.withMinSessions}/${s.members} members with ≥${MIN_SWING_SESSIONS} sessions, ${s.readjusted} re-adjusted, ${s.seededNew} seeded new, ${s.writeErrors} write errors, ${s.fetchErrors} fetch errors`,
+    line:
+      `[bar-store] ${s.withMinSessions}/${s.members} members with ≥${MIN_SWING_SESSIONS} sessions, ${s.readjusted} re-adjusted, ${s.seededNew} seeded new, ` +
+      `${s.deferred} deferred (fetch cap ${MAX_STORE_FETCHES}), ${s.readjustDeferred} re-adjust deferred, ${s.writeErrors} write errors, ${s.fetchErrors} fetch errors`,
     warn,
   };
 }
