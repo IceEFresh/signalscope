@@ -167,6 +167,30 @@ Branch `plan/p3-0i-stp-trade-sim`.
 ### 1. Pre-register first
 Add a section to `docs/PHASE3-PREREG.md`, **merged before the first real run**, that fixes everything below: the rules, metrics, KEEP rule, cost assumption and comparison count.
 
+### 1b. Trend criteria per pattern (Chris, 2026-11-25)
+STP finds entries **after** a stock meets its trend criteria. Each pattern has its own criteria, and `computeStp` already applies them. **The triggers as computed are the primary population. No extra gate.**
+- **Inside candle and U-turns (BUTN/BRUTN):** the trend is price against **both** the weekly and the monthly open (`trendDirection ≥ 1`, or `trendDirection[3]` for U-turns).
+- **Mechanical I and II:** the trend comes from the moving averages (sma20 vs sma50, then the price or sma10 cross).
+- **EGOP:** a catalyst trade (the earnings gap), with no trend gate.
+
+**Descriptive only, no verdicts:** split the Mechanical and EGOP results by `stp_htf_opens` alignment (aligned, partial, against), to see whether the weekly/monthly opens add anything on top of each pattern's own criteria.
+
+### 1c. Rolling opens as a second trend definition for inside and U-turn (Chris, 2026-11-25)
+Besides the calendar weekly and monthly opens, test **rolling** opens for the two patterns that use them, inside candles and U-turns:
+- **Stocks:** the rolling "week" open is the open of the bar **5 trading sessions** back, counting today as session 1, so bar t−4. The rolling "month" open is the open of the bar **20 sessions** back (t−19).
+- **Crypto:** **7** and **30** daily bars (t−6 and t−29).
+- `stp_htf_opens_rolling` uses the same formula as `stp_htf_opens` (±1 or ±0.5), with the rolling opens in place of the calendar ones. U-turns use the value at t−3, exactly as the calendar version does.
+
+**Simulation.** Run the inside and U-turn triggers twice, once per trend definition, under the same trade rules and control.
+- This adds pre-registered comparisons: rolling inside long and short, rolling U-turn long and short. Add them to the count.
+- Also report the overlap between the two definitions: how many triggers both fire, and how many only one fires.
+
+**Live logging, log only, no migration.**
+- Add `stp_htf_opens_rolling`, `stp_trigger_rolling` and `stp_trigger_type_rolling` (inside and U-turn only) to the STP features stored in `UniverseSnapshot.features` and the ticker features JSON.
+- Use 5/20 for stocks and 7/30 for crypto rows.
+- The `StpSignal` table and the calendar-based trigger stay unchanged.
+- **Tests:** 5/20 vs 7/30 window selection by asset class; a rolling open exactly at the window edge; U-turn at t−3.
+
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
 
