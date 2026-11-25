@@ -191,6 +191,27 @@ Besides the calendar weekly and monthly opens, test **rolling** opens for the tw
 - The `StpSignal` table and the calendar-based trigger stay unchanged.
 - **Tests:** 5/20 vs 7/30 window selection by asset class; a rolling open exactly at the window edge; U-turn at t−3.
 
+### 1d. Changes from Chris, 2026-11-25 (these replace anything below that conflicts)
+- **Target is 3R** for exit A as well. Exit A is now: stop, **3R target**, time exit at session 10. Exit B keeps 3R.
+- **Gaps fill at the open, on both sides:**
+  - a gap through the entry fills at the open (already the rule);
+  - a gap through the **target** exits at the **open** (the better price, which a resting limit order gets);
+  - a gap through the stop exits at the open (already the rule).
+- **Entry location vs the normal move (a selection rule).** A late entry in a move has less room to reach 3R before the move ends. Measure it for each trade.
+
+  **Reviewer's working definition (Chris to correct):**
+  - The normal weekly move `W` is the mean high−low range of the prior 10 completed calendar weeks.
+  - The normal monthly move `M` is the same over the prior 6 completed calendar months.
+  - **Long:**
+    - `week_used = (fill − lowest low since the week's open) / W`
+    - `month_used = (fill − lowest low since the month's open) / M`
+  - **Short:** mirrored, using the highest high.
+  - **Room to 3R:** `room_w = (W × (1 − week_used)) / (3R distance)`, so a value ≥ 1 means a normal week still has room for 3R.
+  - **Pre-registered test (adds 2 comparisons per exit):** trades with `week_used < 0.5` **and** `month_used < 0.5` versus all trades, long and short. KEEP needs the same rule as the other groups, and also to beat all trades of that direction.
+  - **Descriptive only:** expectancy and 3R-hit rate by bucket (`< 0.25`, `0.25–0.5`, `0.5–0.75`, `0.75–1`, `> 1`) for both measures, and by `room_w` (`< 1`, `≥ 1`).
+  - No look-ahead: W, M and the lows/highs use completed bars up to the trigger day, plus the fill bar's price only.
+- **Exit B (STP exits) is on hold** until Chris confirms the trade management (see the open question on #57). Build exit A now. Keep exit B's code, but don't run it or register it until the question is answered.
+
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
 
@@ -269,6 +290,25 @@ It's read-only on the DB. Use the same NAS command pattern as validate-features 
 - The KEEP and INSUFFICIENT verdicts.
 
 Log only. No score, stage, label or rule changes. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
+
+## P3-0i3: historical earnings dates from SEC EDGAR (Chris, 2026-11-25)
+
+**Why:** EGOP needs earnings dates, and the backfill has none. Yahoo gives only the next date. The NAS can't use TradingView (no API, and its terms forbid it). SEC EDGAR is free and complete: a US company's earnings release is furnished on **Form 8-K, Item 2.02** ("Results of Operations"), usually the same day or the next.
+
+Branch `plan/p3-0i3-edgar-earnings`.
+
+1. **Source:**
+   - `https://data.sec.gov/submissions/CIK##########.json` per company (plus the `filings.files[]` older pages when 2 years need them).
+   - Take the rows where `form == "8-K"` and `items` contains `2.02`. Record `filingDate` and `acceptanceDateTime`.
+   - Ticker → CIK comes from `https://www.sec.gov/files/company_tickers.json`.
+   - Use `SEC_USER_AGENT`, stay ≤ 8 requests per second, cache per CIK on disk, and use the shared retry helper.
+2. **Before or after the open:** an acceptance time before 09:30 ET means the release came before the open, so the gap is that day. At or after 16:00 ET, the gap is the next session. Anything in between counts as during the session and is flagged.
+3. **Output:** a per-ticker list of earnings sessions, written next to the backfill bar cache (`scripts/output/backfill-earnings/`). `simulate-stp` feeds it to `computeStp` as `earningsTs`, so EGOP can fire on the backfill.
+4. **Coverage:** foreign filers (20-F / 6-K) and some ADRs don't file 8-K 2.02. Report the share of the universe with earnings dates, and leave the others null. Don't guess.
+5. **Tests:** saved fixtures for the submissions JSON and the ticker map; parsing item lists; the before/after-open mapping across DST; older pages; a missing CIK.
+6. **Live use, optional and log only:** keep Yahoo's next date for `days_to_earnings`, and add `last_earnings_session` from EDGAR to the features.
+
+After it merges, rerun `simulate-stp`. The EGOP groups then get real trades.
 
 ## P3-0e: liquid crypto universe, log only (Chris, 2026-11-24)
 
