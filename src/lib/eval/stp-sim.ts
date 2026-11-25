@@ -91,8 +91,17 @@ export interface Scanned {
 /**
  * computeStp and computeStpRolling for every bar (dated in `sessions`, when given) on the
  * live-window slice ending at it. `windows` is the rolling window (5/20 stocks, 7/30 crypto).
+ * P3-0i3: `earningsSessions` (EDGAR 8-K 2.02, the session whose open first reflects the
+ * release) lets EGOP fire: on such a bar computeStp gets that bar's own time as earningsTs,
+ * which isFirstBarAfterEarnings reads as "released after the prior bar, by this open".
  */
-export function scanSymbol(symbol: string, bars: readonly DailyBar[], sessions?: ReadonlySet<string>, windows: RollingWindows = ROLLING_WINDOWS.stock): Scanned {
+export function scanSymbol(
+  symbol: string,
+  bars: readonly DailyBar[],
+  sessions?: ReadonlySet<string>,
+  windows: RollingWindows = ROLLING_WINDOWS.stock,
+  earningsSessions?: ReadonlySet<string>,
+): Scanned {
   const dates = bars.map((b) => barDateOf(b) ?? "");
   const info: BarInfo[] = [];
   const setups: Setup[] = [];
@@ -107,7 +116,7 @@ export function scanSymbol(symbol: string, bars: readonly DailyBar[], sessions?:
     const ws = windowStart(d);
     while (start < i && dates[start] <= ws) start++;
     const slice = bars.slice(start, i + 1);
-    const s = computeStp(slice);
+    const s = computeStp(slice, earningsSessions?.has(d) ? bars[i].time ?? null : null);
     const r = computeStpRolling(slice, windows);
     info.push({ date: d, trigger: s.trigger, triggerRolling: r.trigger, fudge: s.fudge });
     if ((s.trigger === 1 || s.trigger === -1) && s.entry != null && s.stop != null && s.fudge != null && s.triggerType) {

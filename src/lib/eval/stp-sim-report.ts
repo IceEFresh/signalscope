@@ -93,6 +93,8 @@ export function simMarkdownReport(
     sectorProfiles?: { tradesWith: number; trades: number };
     /** §1i caveat: ATR > $1.50 favours high-priced stocks. */
     finvizPrice?: { base: number | null; all: number | null };
+    /** P3-0i3: symbols with EDGAR earnings sessions (EGOP needs them). */
+    earnings?: { withDates: number; symbols: number };
     /** P3-0i4: this exit's trades, for the outlier lines. */
     trades?: readonly Trade[];
   },
@@ -115,6 +117,9 @@ export function simMarkdownReport(
     "",
     `${meta.symbols} symbols.` +
       (meta.sectorProfiles ? ` Calendar trades with a stored sector (§1g): ${meta.sectorProfiles.tradesWith} of ${meta.sectorProfiles.trades}.` : "") +
+      (meta.earnings
+        ? ` EDGAR earnings dates (8-K item 2.02, P3-0i3) for ${meta.earnings.withDates} of ${meta.earnings.symbols} symbols (${pct(meta.earnings.symbols ? meta.earnings.withDates / meta.earnings.symbols : null)}); EGOP can only fire on those, the rest (mostly foreign filers) are left without dates.`
+        : "") +
       " The stock factor (§1j) uses the calendar stp_htf_opens for every trade, rolling-trigger trades included, as specified." +
       (meta.finvizPrice ? ` Median fill price: Finviz base-filter trades ${usd(meta.finvizPrice.base)} vs all trades ${usd(meta.finvizPrice.all)} (ATR > $1.50 favours higher-priced stocks).` : ""),
     "",

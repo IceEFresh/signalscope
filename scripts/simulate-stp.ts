@@ -31,6 +31,7 @@ import { loadUniverse, loadUniverseProfiles, type UniverseProfiles } from "@/lib
 import { etfStates, MARKET_ETFS, type EtfState, type PyramidInputs } from "@/lib/harvester/universe/pyramid";
 import { SWING_KS, swingProfile, zigzag } from "@/lib/harvester/universe/swings";
 import { commitId } from "@/lib/eval/commit";
+import { earningsSessionsFromFile } from "@/lib/harvester/edgar-earnings";
 import { lastExperimentNumber } from "@/lib/eval/report";
 import {
   emptyCounts,
@@ -51,6 +52,8 @@ import { simExperimentRow, simMarkdownReport, tradesCsv, type ProfileSummary } f
 
 const CACHE_DIR = "scripts/output/backfill-bars";
 const ETF_DIR = "scripts/output/backfill-etf-bars";
+/** P3-0i3: per-ticker EDGAR earnings sessions from scripts/backfill-earnings.ts (optional: without them EGOP can't fire). */
+const EARNINGS_DIR = "scripts/output/backfill-earnings";
 const LOG_PATH = "scripts/backtesting-experiments.md";
 const DAY = 86_400_000;
 
@@ -120,6 +123,19 @@ async function main() {
   }
   console.log(`[stp-sim] ${symbols.length} symbols (${Object.keys(profiles).length} with a sector/industry profile), ${sessionList.length} sessions ${sessionList[0]}..${sessionList.at(-1)}, exits ${exits.join(", ")}`);
 
+  // P3-0i3: EDGAR earnings sessions per ticker (EGOP); a symbol without a file gets none, never a guess
+  const earningsFor = (sym: string): Set<string> | undefined => {
+    const f = join(EARNINGS_DIR, `${sym}.json`);
+    if (!existsSync(f)) return undefined;
+    try {
+      return earningsSessionsFromFile(JSON.parse(readFileSync(f, "utf8")));
+    } catch {
+      return undefined;
+    }
+  };
+  const earningsCoverage = { symbols: symbols.length, withDates: symbols.filter((s) => existsSync(join(EARNINGS_DIR, `${s}.json`))).length };
+  console.log(`[stp-sim] EDGAR earnings dates for ${earningsCoverage.withDates}/${earningsCoverage.symbols} symbols${earningsCoverage.withDates ? "" : " (run scripts/backfill-earnings.ts; EGOP can't fire without them)"}`);
+
   const t0 = Date.now();
   const fresh = () => ({
     trades: [] as Trade[],
@@ -140,7 +156,7 @@ async function main() {
       continue;
     }
     if (bars.length < 60) continue;
-    const scanned = scanSymbol(sym, bars, sessions); // once per symbol (stocks: rolling 5/20), shared by both exits
+    const scanned = scanSymbol(sym, bars, sessions, undefined, earningsFor(sym)); // once per symbol (stocks: rolling 5/20), shared by both exits
     const pivots = Object.fromEntries(SWING_KS.map((k) => [String(k), zigzag(bars, k)]));
     for (const k of SWING_KS) {
       const p = swingProfile(bars, bars.length - 1, k, pivots[String(k)]);
@@ -206,6 +222,7 @@ async function main() {
       simMarkdownReport(results, counts.calendar, {
         date, commit, exit, symbols: symbols.length, rollingCounts: counts.rolling, overlap, portfolio, sizeSkipByType, profiles: profilesSummary,
         sectorProfiles: { tradesWith: withSector, trades: counts.calendar.filled },
+        earnings: earningsCoverage,
         finvizPrice: {
           base: median(trades.filter((t) => t.variant === "calendar" && t.finvizBase === true).map((t) => t.fill)),
           all: median(trades.filter((t) => t.variant === "calendar").map((t) => t.fill)),
