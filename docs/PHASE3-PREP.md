@@ -570,7 +570,16 @@ universe ──► 1. selection gates ──► 2. STP trigger ──► 3. R/R 
 The report shows the size distribution of counter-trend shorts.
 
 **6. Exits:** §1e and §1j management (adds every 2 × ATR, max 3, breakeven, trail after 3R), **plus the in-hours event rule and the earnings rule.**
-- **In-hours event day** (FOMC, or any release during market hours): on that session, the stop becomes the bar stop (prior bar low − fudge) if that's tighter. It never loosens afterwards. Counted as `event_tighten`.
+- **Event stop rule** (Chris, 2026-11-25). It applies to open positions before **any** macro event, in-hours or out-of-hours.
+  - Out-of-hours (08:30 ET) releases: set at the close of the session **before** the release, so it's live at the release day's open.
+  - In-hours releases (FOMC 14:00 ET and other market-hours releases): set at the close of the session before, so it's live all of event day.
+  
+  Open profit is measured at that close (close − fill for a long, mirrored for a short):
+  - profit ≥ **2R** → the stop becomes the **bar stop** (prior bar low − fudge);
+  - **1 ATR** ≤ profit < 2R → the stop moves to **breakeven** (the size-weighted average cost);
+  - profit < 1 ATR → **leave the stop as is**.
+  
+  The stop only ever tightens: if the trail or the add-breakeven is already tighter, keep it. Count trades by tier (`event_bar`, `event_be`, `event_hold`) and how each exited.
 - **Never hold through earnings.** From 2 sessions before the stock's next earnings session E, the stop becomes the bar stop (prior bar low − fudge) if that's tighter.
 - At the close of E−1, any open position is sold at market (`exit_reason = earnings`).
 - On the backfill, E comes from EDGAR, which is a mild look-ahead: dates are usually announced 2–4 weeks ahead. The report counts trades whose E was less than 10 sessions after entry.
@@ -595,7 +604,7 @@ The report shows the size distribution of counter-trend shorts.
 **Tests:**
 - each gate at its edge (earnings exactly 5 sessions out vs 6);
 - an out-of-hours event 5 vs 6 sessions out halves the size or doesn't, and 0.5 × 0.25 still floors at 0.25;
-- an in-hours event day tightens to the bar stop and never loosens;
+- the event stop rule at each tier edge (profit just under and at 2R, just under and at 1 ATR), set on the session before for both in-hours and out-of-hours events, and it never loosens an already tighter stop;
 - R/R: the nearest level, the 0.25 ATR ignore rule, `open_air`, and a short mirrored;
 - the ranking tie-break, and top-5 truncation;
 - pullback: filled at the midpoint; no fill; gap below the stop; limit and stop on the same bar give −1R;
