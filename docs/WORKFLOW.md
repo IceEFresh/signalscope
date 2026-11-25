@@ -34,6 +34,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 19. **P3-0e: liquid crypto universe, log only** (spec: docs/PHASE3-PREP.md). Has a migration, so Chris merges.
 19b. **P3-0e2: CoinMarketCap as the second crypto-universe provider** (spec: P3-0e step 1b in docs/PHASE3-PREP.md). No migration.
 20. **P3-0f: macro context fields, log only** (spec: docs/PHASE3-PREP.md). No migration: they go in `Scan.regimeFeatures`.
+21. **P3-0h: harness fix, low-cardinality features are categorical** (spec: docs/PHASE3-PREP.md). No migration.
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.

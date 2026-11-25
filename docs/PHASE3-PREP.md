@@ -141,6 +141,23 @@ Branch `plan/p3-0g-price-backfill`.
 
 Log only. No score or label changes. No new dependencies.
 
+## P3-0h: harness fix, low-cardinality features are categorical (reviewer, 2026-11-25)
+
+**Bug found in the first backfill run:** `stp_well_bid` takes the values −1, 0 and +1. Quintile cuts on it collapse into 2 buckets. Its "q1" held 167,590 test rows, that is −1 and 0 together, against "q4/q5" (+1). So the KEEP compares "not well bid" with "well bid", not well-offered with well-bid. The same applies to every STP state key (`stp_htf_opens`, `stp_ma_state`, `stp_well_bid`, `stp_size_factor`) and to any integer key with few values (`consecutive_up_days`).
+
+Branch `plan/p3-0h-categorical-lowcard`.
+
+1. **Rule:** a numeric key with **≤ 7 distinct non-null values in the training rows** is treated as categorical. Each value is its own bucket, with the same 100-row minimum and the same held-out and fold rules. Above 7 distinct values, quintiles as before.
+2. **Report:** label the buckets by value (`=-1`, `=0`, `=1`), not `q1`.
+3. **Pre-registration:** add this as an amendment dated 2026-11-25, stating plainly that it was found **after** the first backfill run and is a bug fix, not a new hypothesis. The comparison counts don't change.
+4. **Tests:**
+   - a 3-valued feature produces 3 buckets;
+   - an 8-valued feature uses quintiles;
+   - a planted effect in the −1 category alone comes out KEEP for `=-1`.
+5. Rerun the backfill dataset on the NAS after merge. Both runs stay in the log; the old row is kept.
+
+**Not in this fix:** the backfill showed a U-shape in `return_20d`, `rsi14_max_20d` and `sma20_vs_sma50`, where both extremes beat the middle. That points to volatility or beta, not direction. Testing it would be a **new hypothesis** (for example, excess return vs a beta-adjusted benchmark, or |feature| buckets). It gets pre-registered separately and tested on the live universe dataset, not on the backfill that suggested it.
+
 ## P3-0e: liquid crypto universe, log only (Chris, 2026-11-24)
 
 **Goal:** test whether bar features and STP carry over to liquid crypto, as a separate dataset. Insider, Congress, earnings, sector and options features don't exist for crypto, and none are faked.
