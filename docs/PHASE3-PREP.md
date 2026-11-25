@@ -655,6 +655,91 @@ The first `simulate-funnel` run (2026-11-25) turned up one bug, one control prob
 
 **Rerun:** `simulate-funnel.ts`, then `simulate-stp.ts --dataset backfill`.
 
+## P3-0k: aligned-trend setups, the primary track (Chris, 2026-11-25)
+Chris: "We really need to focus on finding good stocks near an optimal entry with at least 3:1 risk reward." **EGOP isn't a primary entry**, and it's descriptive from here on.
+
+**Alignment, one definition for every layer** (stock, its industry ETF, its sector SPDR, and the market by a 2-of-3 vote of SPY, QQQ and DIA), on completed bars ≤ D:
+- **Opens green** for a long: close > the **monthly** open, the **weekly** open, the **rolling 20-session** open and the **rolling 5-session** open. Shorts mirrored. Crypto rows use 30 / 7.
+- **MAs stacked and sloped** for a long:
+  - close > sma10 > sma20 > sma50 > sma200;
+  - each of the four MAs rising: today's value above its value 5 sessions ago.
+  
+  Shorts mirrored.
+- A layer is **aligned** when both hold, **against** when both hold the other way, and **mixed** otherwise.
+
+**Candidate (stock-day):**
+- the Finviz base (avg vol > 2M, ATR > $1.50);
+- the stock is aligned in the trade's direction;
+- no earnings within 5 sessions.
+
+**Entry:**
+- An STP trigger in that direction, either calendar or rolling (inside, U-turn, mech1 or mech2).
+- **R/R ≥ 3** to the nearest level (§P3-0j step 3).
+- **Optimal entry:** the stop is at most 0.5 ATR beyond the nearest support below the entry. Support means sma10, sma20 or sma50, a confirmed k = 2 swing low, or the weekly or monthly open. Shorts mirrored. That is, the trade is entered off support, not in the middle of a move.
+
+**Size:** full (1.0) when the industry, the sector and the market are all aligned with the stock. Each mixed or against layer halves it, with a floor of 0.25. Out-of-hours events × 0.5 and the event stop rule as in §P3-0j. $200 base risk.
+
+**Management:** exit B (adds every 2 × ATR, max 3, breakeven, trail after 3R) plus the event and earnings rules.
+
+**Pre-registered, 4 comparisons, after P3-0j3 merges:**
+1. aligned candidates with an optimal entry vs all STP trades, long;
+2. the same, short;
+3. aligned candidates with an optimal entry vs their matched **after-trigger** control, long;
+4. the same, short.
+
+Same KEEP rule.
+
+**Descriptive:**
+- results by size (1, 0.5, 0.25);
+- without the optimal-entry gate;
+- opens-only and MAs-only alignment;
+- stop entry vs pullback (after the P3-0j3 sizing fix);
+- counts per layer state.
+
+**Expect a small sample.** All 8 conditions on 4 layers at once is strict, so the report prints the funnel counts at each gate. An INSUFFICIENT result means wait for more data, not a rule change.
+
+**Live keys (log-only):** `align_stock`, `align_industry`, `align_sector`, `align_market` (aligned, mixed or against, per direction), `optimal_entry`, `p3k_candidate`, `p3k_size_long`, `p3k_size_short`.
+
+**Tests:**
+- each of the 4 opens and 4 MAs at its edge;
+- a slope that's flat over exactly 5 sessions isn't rising;
+- the 2-of-3 market vote;
+- the optimal-entry edge at 0.5 ATR;
+- the size halving per mixed layer, with the floor;
+- crypto at 7 / 30;
+- look-ahead.
+
+## P3-0l: smart-money and sentiment watchlist, the second track (Chris, 2026-11-25)
+Chris: "The smart money tips its hand at some point, and we want to be ready to follow along." These names often fail the P3-0k criteria, and that's expected. They're watched, not filtered out.
+
+**Watchlist (live, log-only).** A ticker is on the watchlist for 10 sessions after any of these fire, using the sources the harvester already has:
+- Reddit, StockTwits or X/Twitter mention spikes;
+- an SEC Form 4 insider **buy**;
+- a congressional **buy**;
+- a volume spike (`volume-spike.ts`);
+- options flow with net premium in one direction;
+- a Polymarket event tied to the ticker.
+
+Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_direction` (bullish or bearish, from the source).
+
+**Entry readiness (no criteria gates):**
+- `watch_entry_ready` is true when an STP trigger in the watch direction appears with **R/R ≥ 3** (Chris: every trade needs at least 3:1).
+- The Finviz base, the alignment and the opens aren't required.
+- Size follows the P3-0k layer rule, so a name moving against its sector or market gets ½ or ¼ automatically.
+- Log the P3-0k layer states next to it, so we can see later whether alignment still matters for these.
+
+**Evaluation:**
+- **Volume spikes** have price history, so the "volume spike → STP trigger with R/R ≥ 3 within 10 sessions" population can be backfilled now. That's descriptive, not pre-registered, until P3-0k has run.
+- Social, insider, congress, options and Polymarket have no usable history here. They're judged after **6 months of live data**, per source and pooled, against the same after-trigger control. The comparisons will be pre-registered before that read.
+- **Source health:** Reddit and StockTwits were fragile on day 1 (DATA-SOURCES.md). The harvest health report shows each watch source's hit count per run, and warns when one has zero hits for 3 runs in a row.
+
+**Tests:**
+- the 10-session watch window, at its edge;
+- direction per source (an insider sale isn't a buy signal);
+- `watch_entry_ready` needs R/R ≥ 3 and the matching direction;
+- a source with no data is null, not false;
+- the zero-hit health warning.
+
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
 
