@@ -21,8 +21,8 @@ import {
   BASE_RISK_DOLLARS,
   CONTROL_SEED,
   CONTROL_TRIES,
-  CONTROL_WINDOW,
   atrSeries,
+  controlPoolRange,
   controlSeed,
   entryOnNextBar,
   groupMetrics,
@@ -167,10 +167,11 @@ export function funnelControl(
   baseRisk: number,
   eventBefore: ReadonlySet<number>,
   earnings: ReadonlySet<string> | undefined,
-): number | null {
+): { i: number; netR: number } | null {
   const pool: number[] = [];
-  for (let k = c.setup.i - CONTROL_WINDOW; k <= c.setup.i + CONTROL_WINDOW; k++) {
-    if (k === c.setup.i || k < 0 || k + 1 >= bars.length) continue;
+  const range = controlPoolRange(c.setup.i, c.setup.type, bars.length);
+  for (let k = range.lo; k <= range.hi; k++) {
+    if (k === c.setup.i) continue;
     if (info[k]?.trigger === 0 && info[k].fudge != null) pool.push(k);
   }
   const r = rng(controlSeed(c.symbol, `${c.date}|${arm}`, CONTROL_SEED));
@@ -182,7 +183,7 @@ export function funnelControl(
     const e = entryFor(arm, bars, k, c.dir, entry, stop, fudge);
     if (e.status !== "filled" || initialShares(baseRisk, e.risk) < 1) continue;
     const { extra } = extrasFor(k + 1, dates, eventBefore, earnings);
-    return simulateExit(bars, closes, atr, k + 1, c.dir, e.fill, e.risk, stop, fudge, c.setup.type, "B", baseRisk, extra).netR;
+    return { i: k, netR: simulateExit(bars, closes, atr, k + 1, c.dir, e.fill, e.risk, stop, fudge, c.setup.type, "B", baseRisk, extra).netR };
   }
   return null;
 }
@@ -252,7 +253,8 @@ export function simulateFunnelSymbol(
       alignment: null, weekUsed: null, monthUsed: null, roomW: null, symbol, scanId: s.date, scanStart: new Date(`${s.date}T21:00:00Z`),
       fillDate, exitDate: dates[x.exitIndex] ?? "", dir: s.dir, type: s.type, firedRules: s.firedRules, entry: s.entry, fill: e.fill, stop: s.stop,
       exit: x.exit, risk: e.risk, grossR: x.grossR, netR: x.netR, reason: x.reason, holding: x.holding, adds: x.adds, addGapSkips: x.addGapSkips,
-      addCapReached: x.addCapReached, reached3R: x.reached3R, size: x.size, initialUnitR: x.initialUnitR, controlNetR: control,
+      addCapReached: x.addCapReached, reached3R: x.reached3R, size: x.size, initialUnitR: x.initialUnitR, controlNetR: control?.netR ?? null,
+      controlPost: control ? control.i > s.i : null,
       regime: ctx.regime?.get(s.date) ?? null, quarter: quarterOf(s.date),
     });
   }

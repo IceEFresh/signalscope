@@ -3,7 +3,7 @@
  */
 import { SURVIVORSHIP_NOTE } from "./report";
 import { BASE_RISK_DOLLARS, CONTROL_SEED, groupMetrics, portfolioStats, type GroupMetrics } from "./stp-sim";
-import { outlierLines } from "./stp-sim-report";
+import { controlSplitLines, outlierLines } from "./stp-sim-report";
 import { FUNNEL_TOP, RR_MIN, RR_MIN_COUNTERTREND } from "./funnel";
 import type { ComparisonResult, FunnelCounts, FunnelTrade, Population } from "./funnel-sim";
 import type { EntryArm } from "./funnel";
@@ -87,6 +87,19 @@ export function funnelMarkdownReport(results: readonly ComparisonResult[], trade
     `Earnings look-ahead: ${top5.filter((t) => t.earningsSoon).length} top-5 trades had their next EDGAR earnings session < 10 sessions after entry (dates are usually announced 2–4 weeks ahead).`,
     "",
   );
+  // P3-0j2: EDGAR earnings dates vs none (the earnings gate and exit rule can't act without dates)
+  out.push(
+    "**Top 5 by earnings-date coverage (descriptive):**",
+    "",
+    "| arm | earnings dates | trades | net exp R | reached 3R |",
+    "|---|---|---|---|---|",
+  );
+  for (const a of ["stop", "pullback"] as const)
+    for (const unknown of [false, true]) {
+      const m = groupMetrics(pick("top5", a, (t) => t.earningsUnknown === unknown));
+      out.push(`| ${a} | ${unknown ? "none (earnings_unknown)" : "EDGAR"} | ${m.trades} | ${r2(m.expectancy)} | ${pct(m.reached3RRate)} |`);
+    }
+  out.push("", ...controlSplitLines([...top5, ...pick("top5", "pullback")]));
   const acct = (a: EntryArm) => portfolioStats(pick("top5", a), meta.sessions);
   out.push("**Account view (top 5 new per day, no position cap):**", "", "| arm | trades | net $ | max DD $ | peak open positions | peak open risk $ | on |", "|---|---|---|---|---|---|---|");
   for (const a of ["stop", "pullback"] as const) {
