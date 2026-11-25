@@ -523,6 +523,99 @@ Log only. No score, stage, label or rule changes. A KEEP leads to a Phase 4 pape
 
 **4. Rerun.** After 1–3 are merged, Chris runs `backfill-profiles.ts`, then `simulate-stp.ts`.
 
+## P3-0j: stock selection funnel, daily top 3–5, pullback entry, event and earnings rules (Chris, 2026-11-25)
+**Why.** P3-0i showed that taking every STP trigger loses money. On held-out data, all trades made −0.25R against −0.07R for random-day entries with the same management. Long random-day entries under STP management made +0.04R, and +0.14R when market and sector agree. Chris: "The real trick with the STP stuff is stock selection… if it's a bad idea to begin with, there is nothing we can do to dress it up."
+
+This item models the method as Chris trades it:
+
+```
+universe ──► 1. selection gates ──► 2. STP trigger ──► 3. R/R ranking ──► top 5 per day ──► 4. entry ──► 5. size ──► 6. exits
+```
+
+**1. Selection gates.** A stock-day is a candidate only if every gate passes. Each gate is computed on D with completed bars only.
+- **Finviz base:** avg vol > 2M and ATR > $1.50 (§1i).
+- **Direction allowed by the market.** Longs are always allowed. Shorts are allowed in any market, but sized down by step 5. Chris: "why would we take shorts in a roaring bull market unless the R/R is unbelievable". A counter-trend short (market layer agrees with long) also needs R/R ≥ 4 at step 3; the normal gate is 3.
+- **No own earnings within 5 sessions** after D. EDGAR dates (P3-0i3) on the backfill; Yahoo's calendar live.
+- **Macro events don't block entries** (Chris, 2026-11-25). They change size and stops instead; see steps 5 and 6. The calendar is checked in at `src/lib/harvester/macro-calendar.json`. Each event has its date, release time (ET) and a source URL (federalreserve.gov, bls.gov, bea.gov, census.gov), and is tagged:
+  - **out-of-hours** (can gap against us at the open): CPI, PPI, the jobs report (NFP), PCE, the GDP advance estimate and retail sales, all at 08:30 ET. Weekly jobless claims are excluded; they come every Thursday and would halve every trade.
+  - **in-hours:** FOMC statement days (14:00 ET) and any release between 09:30 and 16:00 ET.
+  
+  The health report warns when the calendar has less than 60 days left.
+- **Live only, no history:** social sentiment and insider buys are logged per candidate and not gated in the backfill. They become candidates for the next pre-registration once there are ≥ 6 months of live data.
+
+**2. STP trigger:** the calendar `computeStp` triggers, as in P3-0i.
+
+**3. Risk/reward from nearby support and resistance.**
+- For a long, the levels above the entry are:
+  - zigzag swing highs (k = 2) from the last 250 sessions;
+  - sma20, sma50 and sma200;
+  - the weekly and monthly opens;
+  - the 20- and 60-session highs.
+- **Room** = the nearest level above entry minus entry. **R/R** = room ÷ (entry − stop). Shorts are mirrored.
+- Levels within 0.25 ATR of the entry are ignored, because a level that close is one the breakout is already through.
+- No level within 10 ATR gives R/R = room to 10 ATR, flagged `open_air`.
+- Gate: R/R ≥ 3, or ≥ 4 for a counter-trend short.
+- **Rank** each day's candidates by R/R, ties broken by §1f `rally_used` (lower first). Take the **top 5**.
+- Variants: top 3, and all candidates passing the gates. Each variant is descriptive.
+
+**4. Entry**, two arms on the same top-5 list:
+- **(a) Stop entry:** P3-0i as is.
+- **(b) Pullback entry:** a limit order at the trigger bar's **midpoint**, good for day D+1 only. Same stop (low − fudge), so the risk is smaller and the shares larger at the same dollar risk. A bar that gaps below the stop at D+1's open isn't filled. A bar that trades through both the limit and the stop on D+1 is filled and stopped the same day, at −1R plus costs; that's conservative.
+- Descriptive variant: a limit at the trigger bar's low + fudge.
+
+**5. Size:** §1j, stock factor × pyramid, **× 0.5 when an out-of-hours event falls within the 5 sessions after D**, floored at 0.25, at $200. The report shows the share of trades halved and their results. This already matches Chris's counter-trend rule:
+- a short in a strong uptrend, with the market disagreeing and the sector disagreeing, gets 0.25;
+- if the sector or the MAs agree with the short, it gets 0.5.
+
+The report shows the size distribution of counter-trend shorts.
+
+**6. Exits:** §1e and §1j management (adds every 2 × ATR, max 3, breakeven, trail after 3R), **plus the in-hours event rule and the earnings rule.**
+- **Event stop rule** (Chris, 2026-11-25). It applies to open positions before **any** macro event, in-hours or out-of-hours.
+  - Out-of-hours (08:30 ET) releases: set at the close of the session **before** the release, so it's live at the release day's open.
+  - In-hours releases (FOMC 14:00 ET and other market-hours releases): set at the close of the session before, so it's live all of event day.
+  
+  Open profit is measured at that close (close − fill for a long, mirrored for a short):
+  - profit ≥ **2R** → the stop becomes the **bar stop** (prior bar low − fudge);
+  - **1 ATR** ≤ profit < 2R → the stop moves to **breakeven** (the size-weighted average cost);
+  - profit < 1 ATR → **leave the stop as is**.
+  
+  The stop only ever tightens: if the trail or the add-breakeven is already tighter, keep it. Count trades by tier (`event_bar`, `event_be`, `event_hold`) and how each exited.
+- **Never hold through earnings.** From 2 sessions before the stock's next earnings session E, the stop becomes the bar stop (prior bar low − fudge) if that's tighter.
+- At the close of E−1, any open position is sold at market (`exit_reason = earnings`).
+- On the backfill, E comes from EDGAR, which is a mild look-ahead: dates are usually announced 2–4 weeks ahead. The report counts trades whose E was less than 10 sessions after entry.
+
+**Evaluation.**
+- Backfill exit B management, the newest 30% held out, plus 3 walk-forward folds, with the existing KEEP rule. Each comparison uses its own matched random-day control.
+- Account view: peak open positions and open risk under "top 5 new per day". No position cap is applied; the peak is reported.
+- **Pre-registered, 4 per entry arm, 8 in all:**
+  1. funnel top-5 vs all trades, long;
+  2. the same, short;
+  3. funnel top-5 vs its matched random-day control, long;
+  4. the same, short.
+  
+  Plus **2 arm comparisons**: pullback vs stop entry on the funnel top-5, long and short. **10 in all.**
+- **Honesty note for PREREG:** the funnel rules are Chris's existing method, stated before these results. The pullback entry was proposed **after** seeing P3-0i's control gap, so its backfill verdict is provisional. A KEEP on it only counts once it's confirmed on ≥ 6 months of live universe data.
+
+**Live logging (log-only):**
+- `funnel_pass` and its gate reasons (`gate_finviz`, `gate_earnings5`, `gate_rr`), `event_half` (an out-of-hours event within 5 sessions), `event_today_inhours`, plus `rr`, `rr_level` (which level), `open_air`, `funnel_rank`, and `countertrend`;
+- `next_event` and `next_event_days`, and `days_to_earnings` (Yahoo);
+- `sentiment_*` and `insider_*`, copied from the existing Phase 2 sources onto candidate rows.
+
+**Tests:**
+- each gate at its edge (earnings exactly 5 sessions out vs 6);
+- an out-of-hours event 5 vs 6 sessions out halves the size or doesn't, and 0.5 × 0.25 still floors at 0.25;
+- the event stop rule at each tier edge (profit just under and at 2R, just under and at 1 ATR), set on the session before for both in-hours and out-of-hours events, and it never loosens an already tighter stop;
+- R/R: the nearest level, the 0.25 ATR ignore rule, `open_air`, and a short mirrored;
+- the ranking tie-break, and top-5 truncation;
+- pullback: filled at the midpoint; no fill; gap below the stop; limit and stop on the same bar give −1R;
+- the earnings rule: the bar stop from E−2 and the forced exit at the close of E−1;
+- the counter-trend short gate at 4R and its size;
+- calendar look-ahead: an event dated after D+5 doesn't halve D;
+- the calendar-expiry warning.
+
+No migration; the macro calendar is a JSON file. No dependency.
+
+
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
 
