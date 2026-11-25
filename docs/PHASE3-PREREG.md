@@ -276,6 +276,8 @@ Costs are 0.10% of each leg's value. Exit A's report shows the same groups witho
 - SPY above or below its SMA20 on the trigger day, from the backfill SPY bars;
 - calendar quarter.
 
+**Amendment 2026-11-25 (P3-0i3): EGOP earnings dates.** EGOP's earnings sessions on the backfill come from SEC EDGAR 8-K Item 2.02 acceptance times (`scripts/backfill-earnings.ts`): before 09:30 ET → that day's session, at or after 16:00 ET → the next session, in between → that day's session, flagged and counted. Symbols without an 8-K 2.02 (mostly foreign filers) get no dates and can't produce EGOP trades; the report states the coverage. The groups and rules are unchanged.
+
 **Amendment 2026-11-25 (P3-0i4): max 3 adds.** Exits B and C stop adding after the 3rd add (largest position 1.5³ = 3.375 units); the stop still moves to the size-weighted breakeven after each add. Chris set this cap after the first run's blow-up (ASST, 40 adds, −$11.0B on a gap through its breakeven), not by tuning on results; no other value was tried. The 49 groups, KEEP rule and splits are unchanged. The report adds "add cap reached" per group, the 5 largest dollar losses and gains per exit, and a WARNING line for any trade beyond ±50R.
 
 **Output.** One report, one trades CSV (with adds, shares, base risk, dollar P&L, size_mult and the layer states, the swing scores per k, reached 3R, initial-unit R, `week_used`, `month_used` and `room_w`) and one experiment-log row per exit: exit B with its verdicts, exit A marked as a reference. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
