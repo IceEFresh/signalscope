@@ -31,7 +31,7 @@ import { loadUniverse, loadUniverseProfiles, type UniverseProfiles } from "@/lib
 import { etfStates, MARKET_ETFS, type EtfState, type PyramidInputs } from "@/lib/harvester/universe/pyramid";
 import { SWING_KS, swingProfile, zigzag } from "@/lib/harvester/universe/swings";
 import { commitId } from "@/lib/eval/commit";
-import { earningsSessionsFromFile } from "@/lib/harvester/edgar-earnings";
+import { egopSessionsFromFile } from "@/lib/harvester/edgar-earnings";
 import { lastExperimentNumber } from "@/lib/eval/report";
 import {
   emptyCounts,
@@ -128,7 +128,7 @@ async function main() {
     const f = join(EARNINGS_DIR, `${sym}.json`);
     if (!existsSync(f)) return undefined;
     try {
-      return earningsSessionsFromFile(JSON.parse(readFileSync(f, "utf8")));
+      return egopSessionsFromFile(JSON.parse(readFileSync(f, "utf8"))); // during-session releases excluded (Chris)
     } catch {
       return undefined;
     }

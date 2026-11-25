@@ -25,7 +25,7 @@ import { SECTOR_ETFS, industryEtfFor } from "@/lib/harvester/universe/sector-rot
 import { loadUniverse, loadUniverseProfiles, type UniverseProfiles } from "@/lib/harvester/universe/store";
 import { etfStates, MARKET_ETFS, type EtfState } from "@/lib/harvester/universe/pyramid";
 import { zigzag } from "@/lib/harvester/universe/swings";
-import { earningsSessionsFromFile } from "@/lib/harvester/edgar-earnings";
+import { earningsSessionsFromFile, egopSessionsFromFile } from "@/lib/harvester/edgar-earnings";
 import { calendarExpiry, macroCalendar } from "@/lib/harvester/macro-calendar";
 import { commitId } from "@/lib/eval/commit";
 import { lastExperimentNumber } from "@/lib/eval/report";
@@ -103,7 +103,10 @@ async function main() {
     }
     if (bars.length < 60) continue;
     const ef = join(EARNINGS_DIR, `${symbol}.json`);
-    const earnings = existsSync(ef) ? earningsSessionsFromFile(JSON.parse(readFileSync(ef, "utf8"))) : undefined;
+    const efJson = existsSync(ef) ? (JSON.parse(readFileSync(ef, "utf8")) as unknown) : null;
+    // The earnings gate and exit rule use every release; EGOP only pre-open and after-close ones (Chris)
+    const earnings = efJson ? earningsSessionsFromFile(efJson) : undefined;
+    const egop = efJson ? egopSessionsFromFile(efJson) : undefined;
     if (earnings) earningsSymbols++;
     const prof = profiles[symbol];
     const sectorEtf = prof?.sector ? SECTOR_ETFS[prof.sector] ?? null : null;
@@ -111,7 +114,7 @@ async function main() {
     const input: SymbolInput = {
       symbol,
       bars,
-      scanned: scanSymbol(symbol, bars, sessions, undefined, earnings),
+      scanned: scanSymbol(symbol, bars, sessions, undefined, egop),
       pivots: zigzag(bars, LEVEL_SWING_K),
       pyramid: {
         market: MARKET_ETFS.map((e) => states.get(e) ?? null),
