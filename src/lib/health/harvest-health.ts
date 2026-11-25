@@ -29,7 +29,19 @@ export const CONDITIONAL_FAMILIES: ReadonlySet<TickerFamily> = new Set(["opt", "
 /** P3-0e: crypto rows carry the SPY-comparison bar keys under BTC names. */
 const CRYPTO_BAR_KEYS = new Set(["btc_return_20d", "rs_vs_btc_20d"]);
 
+/**
+ * P3-0i2 live keys: log-only and not pre-registered, so they belong to no tested family
+ * (candidateKeys skips them) and the health report's family stats ignore them.
+ */
+export function isLiveStpKey(key: string): boolean {
+  return (
+    /^stp_(htf_opens_rolling|trigger_rolling|trigger_type_rolling|size_factor_long|size_factor_short)$/.test(key) ||
+    /^(size_combined_|pyramid_|finviz_|swing_k)/.test(key)
+  );
+}
+
 export function familyOf(key: string): TickerFamily | null {
+  if (isLiveStpKey(key)) return null;
   if (key.startsWith("stp_")) return "stp";
   if (BAR_KEYS.has(key) || CRYPTO_BAR_KEYS.has(key)) return "bar";
   if (EARNINGS_KEYS.has(key)) return "earnings";

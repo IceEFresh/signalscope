@@ -14,6 +14,7 @@
 import { computeBarMetrics, parseChartBars, type DailyBar } from "../universe/bar-metrics";
 import { computeStp } from "../universe/stp";
 import { snapshotRow, type SnapshotRow } from "../universe/snapshot";
+import { liveStpKeys } from "../universe/stp-live";
 import { exclusionReason, type CryptoListing } from "./listing";
 
 export const CRYPTO_RULE = {
@@ -203,11 +204,16 @@ export const CRYPTO_KEY_RENAMES: Readonly<Record<string, string>> = { spy_return
  * the UTC date of the last complete bar. No sector or regime (stock-only). Pure.
  */
 export function cryptoSnapshotRow(symbol: string, bars: readonly DailyBar[], btcBars: readonly DailyBar[] | null): SnapshotRow | null {
-  const row = snapshotRow(symbol, bars, btcBars, computeStp(bars));
+  const stp = computeStp(bars);
+  const row = snapshotRow(symbol, bars, btcBars, stp);
   if (!row) return null;
   const last = bars.at(-1);
   if (last?.time == null || row.sessionDate !== utcDate(last.time)) return null; // dating guard: must be the bar's UTC day
-  const features = Object.fromEntries(Object.entries(row.features).map(([k, v]) => [CRYPTO_KEY_RENAMES[k] ?? k, v]));
+  const features: Record<string, unknown> = {
+    ...Object.fromEntries(Object.entries(row.features).map(([k, v]) => [CRYPTO_KEY_RENAMES[k] ?? k, v])),
+    // P3-0i2: rolling opens at 7/30 bars, the fixed-rule size factors and swing scores (no pyramid or Finviz on crypto)
+    ...liveStpKeys(bars, stp, { assetClass: "crypto" }),
+  };
   if (typeof features.hv20 === "number") features.hv20 *= CRYPTO_HV_SCALE;
   return { ...row, features, assetClass: "crypto" };
 }

@@ -15,11 +15,13 @@ import { computeStp, type StpResult } from "./stp";
 import { computeRegime, REGIME_SYMBOLS, type RegimeFeatures } from "./regime";
 import { computeMacro, missingMacroSeries, MACRO_SYMBOLS, type MacroFeatures, type MacroInput } from "./macro";
 import { parseCryptoBars } from "../crypto/universe";
-import { computeSectorRotation, ROTATION_ETFS, type SectorRotation } from "./sector-rotation";
+import { computeSectorRotation, INDUSTRY_ETFS, ROTATION_ETFS, SECTOR_ETFS, industryEtfFor, type SectorRotation } from "./sector-rotation";
 import { etParts } from "./bar-metrics";
 import { fetchOptionsRaw, normalizeChain, type NormalizedChain } from "../options-chain";
 import { computeOptionsFeatures, daysToExpiry, MIN_NEAR_DAYS, pickExpiry, type OptionsFeatures } from "./options-features";
-import { fetchDailyChart, fetchYahooChart } from "../yahoo-chart";
+import { fetchDailyChart, fetchYahooChart, peekDailyChart } from "../yahoo-chart";
+import { etfStates, MARKET_ETFS, type EtfState } from "./pyramid";
+import type { LiveContext } from "./stp-live";
 import { fetchCryptoListings } from "../crypto/provider";
 import { buildCryptoUniverse } from "../crypto/universe";
 import { buildUniverse, defaultDeps, evaluateSymbols, type UniverseBuildResult } from "./build";
@@ -290,6 +292,42 @@ export async function computeRegimeExtras(getChart: typeof fetchDailyChart = fet
   const r = computeRegime(spy, vix, tlt);
   console.log(`[regime] SPY vs SMA20 ${r.spy_close_vs_sma20?.toFixed(4) ?? "null"}, distribution days ${r.spy_distribution_days_25 ?? "null"}, VIX ${r.vix_close ?? "null"}`);
   return r;
+}
+
+/**
+ * P3-0i2: ETF state maps for the live Power Pyramid keys, from this run's chart cache (the
+ * sector-rotation fetch already loaded SPY, QQQ, DIA, the SPDRs and the industry ETFs).
+ * Never makes a request; an ETF that isn't cached has no states (its layer logs null).
+ */
+export async function loadLiveEtfStates(peek: (s: string) => ReturnType<typeof peekDailyChart> = peekDailyChart): Promise<Map<string, Map<string, EtfState>>> {
+  const out = new Map<string, Map<string, EtfState>>();
+  const etfs = [...new Set([...MARKET_ETFS, ...Object.values(SECTOR_ETFS), ...Object.values(INDUSTRY_ETFS)])];
+  for (const etf of etfs) {
+    const p = peek(etf);
+    if (!p) continue;
+    try {
+      const res = await p;
+      if (res.ok) out.set(etf, etfStates(parseChartBars(res.json)));
+    } catch {
+      // not cached usefully: the layer logs null
+    }
+  }
+  return out;
+}
+
+/** P3-0i2 live context for a stock: market ETFs plus its sector and industry ETF states. */
+export function liveContextFor(symbol: string, profiles: MemberProfiles, states: ReadonlyMap<string, ReadonlyMap<string, EtfState>>): LiveContext {
+  const p = profiles[symbol];
+  const sectorEtf = p?.sector ? SECTOR_ETFS[p.sector] ?? null : null;
+  const industryEtf = industryEtfFor(p?.industry);
+  return {
+    assetClass: "stock",
+    market: MARKET_ETFS.map((e) => states.get(e) ?? null),
+    sectorEtf,
+    sectorStates: sectorEtf ? states.get(sectorEtf) ?? null : null,
+    industryEtf,
+    industryStates: industryEtf ? states.get(industryEtf) ?? null : null,
+  };
 }
 
 /**

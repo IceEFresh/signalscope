@@ -5,13 +5,17 @@ import { yahooHealthSummary } from "../src/lib/yahoo-retry.js";
 import { computeAlpacaOptionsExtras } from "../src/lib/harvester/alpaca-options.js";
 import { chunk, computeSnapshotRows, type SnapshotRow } from "../src/lib/harvester/universe/snapshot.js";
 import { computeCryptoSnapshotRows } from "../src/lib/harvester/crypto/universe.js";
-import { fetchDailyChart } from "../src/lib/harvester/yahoo-chart.js";
+import { fetchDailyChart, peekDailyChart } from "../src/lib/harvester/yahoo-chart.js";
+import { parseChartBars } from "../src/lib/harvester/universe/bar-metrics.js";
+import { liveStpKeys } from "../src/lib/harvester/universe/stp-live.js";
 import {
   computeIngestExtras,
   computeStpExtras,
   computeRegimeExtras,
   computeSectorExtras,
   computeMacroExtras,
+  liveContextFor,
+  loadLiveEtfStates,
   computeOptionsExtras,
   httpPrepDeps,
   prepareHarvest,
@@ -120,7 +124,25 @@ async function main() {
 
   // 1e'. Universe-wide snapshot rows from the chart cache, STP states and the weekly sector profiles
   // (P3-0c / P3-0d, log only, no new requests)
-  const snapshot = await computeSnapshotRows(prep.scanSymbols, stp, undefined, { profiles: prep.profiles, rotation: sectorRotation });
+  // P3-0i2: live log-only STP keys (rolling opens, size factors, Power Pyramid, Finviz screens, swings)
+  const liveEtfStates = await loadLiveEtfStates();
+  const liveKeys = (s: string, bars: Parameters<typeof liveStpKeys>[0], r: Parameters<typeof liveStpKeys>[1]) =>
+    liveStpKeys(bars, r, liveContextFor(s, prep.profiles, liveEtfStates));
+  const snapshot = await computeSnapshotRows(prep.scanSymbols, stp, undefined, { profiles: prep.profiles, rotation: sectorRotation }, liveKeys);
+  // The same keys on the signal tickers' features (no new requests: their charts are cached)
+  let liveTickers = 0;
+  for (const sym of Object.keys(extras.barFeatures)) {
+    const p = peekDailyChart(sym);
+    const res = p ? await p.catch(() => null) : null;
+    if (!res?.ok) continue;
+    try {
+      Object.assign(extras.barFeatures[sym] as unknown as Record<string, unknown>, liveKeys(sym, parseChartBars(res.json), stp[sym]));
+      liveTickers++;
+    } catch (err) {
+      console.warn(`[stp-live] ${sym}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  console.log(`[stp-live] layer ETFs cached: ${liveEtfStates.size}; live keys on ${liveTickers} signal tickers`);
   console.log(
     `[snapshot] ${snapshot.rows.length} rows built, ${snapshot.missing} symbols without a cached chart, ${Object.keys(prep.profiles).length} members with a sector profile`,
   );
