@@ -194,7 +194,7 @@ Besides the calendar weekly and monthly opens, test **rolling** opens for the tw
 ### 1d. Changes from Chris, 2026-11-25 (these replace anything below that conflicts)
 - **Target is 3R** for exit A as well. Exit A is now: stop, **3R target**, time exit at session 10. Exit B keeps 3R.
 - **Gaps fill at the open, on both sides:**
-  - a gap through the entry fills at the open (already the rule);
+  - **superseded by §1e:** a gap through the entry does NOT fill (stop-limit, day order);
   - a gap through the **target** exits at the **open** (the better price, which a resting limit order gets);
   - a gap through the stop exits at the open (already the rule).
 - **Entry location vs the normal move (a selection rule).** A late entry in a move has less room to reach 3R before the move ends. Measure it for each trade.
@@ -210,7 +210,63 @@ Besides the calendar weekly and monthly opens, test **rolling** opens for the tw
   - **Pre-registered test (adds 2 comparisons per exit):** trades with `week_used < 0.5` **and** `month_used < 0.5` versus all trades, long and short. KEEP needs the same rule as the other groups, and also to beat all trades of that direction.
   - **Descriptive only:** expectancy and 3R-hit rate by bucket (`< 0.25`, `0.25–0.5`, `0.5–0.75`, `0.75–1`, `> 1`) for both measures, and by `room_w` (`< 1`, `≥ 1`).
   - No look-ahead: W, M and the lows/highs use completed bars up to the trigger day, plus the fill bar's price only.
-- **Exit B (STP exits) is on hold** until Chris confirms the trade management (see the open question on #57). Build exit A now. Keep exit B's code, but don't run it or register it until the question is answered.
+- **Exit B:** confirmed, see §1e (no longer on hold).
+
+### 1e. STP trade management, confirmed by Chris 2026-11-25 (replaces §1d's gap rules and exit-B hold; overrides anything below that conflicts)
+
+**Orders**
+- **Entries are stop-limit orders, good for the day (D+1 only).**
+  - **Long:** fills at `entry` only if D+1 opens **at or below** the entry and trades up through it.
+  - **If D+1 opens above the entry, there's no fill.** The setup is cancelled and counted as `gap_skip`. Mirrored for shorts.
+  - The same rule applies to the add order.
+- **Exits are market orders.** A stop touched intraday fills at the stop. A gap through the stop fills at the **open**.
+
+**Exit B: STP management. This is now the PRIMARY exit and the one that gets KEEP verdicts.**
+1. **Start:** 1 unit at `entry`. Stop = trigger-bar `low − fudge` (shorts: `high + fudge`). `R = entry − stop`.
+2. **Adds (Chris, 2026-11-25, replaces the single 2 ATR add): pyramid every 2R.**
+   - Add levels: `entry + 2R`, `entry + 4R`, `entry + 6R`, and so on. Shorts mirrored.
+   - Each add buys **50% of the current position size**: 1 → 1.5 → 2.25 → 3.375 units, and so on.
+   - Each add is a stop-limit order with the same no-gap-fill rule. If a bar opens above an add level, that add is skipped, and the next level stays live.
+   - If the stop and an add level are both touched on one bar, the stop wins and that add doesn't happen.
+   - There's no limit on the number of adds. Report the add count per trade, and the maximum.
+3. **After every add,** the stop for the **whole** position moves to its breakeven: the size-weighted average cost of all units held, plus nothing for costs.
+   - It moves only if that's tighter than the current stop.
+   - From then on, the stop is the **greater** of the current breakeven and any trailing stop, for longs. The stop never loosens.
+4. **Before 3R is reached** (a high ≥ `entry + 3R`), the stop is the initial stop, or BE once the add has filled. No trailing, and no exit at the target.
+5. **Once 3R has been touched,** trail on each completed bar and apply the new stop from the next bar. The stop only tightens, and never goes below BE (or the initial stop if there was no add):
+   - **Mechanical trades (mech1, mech2): mX only, as documented in docs/STP-SIGNALS.md.** When the close crosses below sma20, or sma10 crosses below sma20, stop = that bar's `low − fudge`. No bar stop.
+   - **All other trades: pmX, with the bar stop in its place when price is extended.**
+     - If `close − sma10 > 1 × ATR14` (the 10-day SMA is more than 1 ATR away), stop = that bar's `low − fudge` (the bar stop).
+     - Otherwise, pmX: when the trend direction on the prior bar is ≥ 1 and the close crosses below sma10, stop = that bar's `low − fudge`.
+   - Shorts mirror all of the above.
+6. **No target exit.** A safety time cap of **60 sessions** exits at that close. Report how many trades hit it.
+7. **P&L in R:** total P&L over all units divided by the initial 1-unit risk R. Costs are 0.10% of notional per leg (the entry, every add and the exit), converted into R. Also report the R of the initial unit alone, so the pyramid's effect can be seen separately.
+8. **Same-bar order:** when a bar touches both the stop and a level, the stop comes first (conservative).
+
+**Exit A: secondary reference, no verdicts.** A fixed 3R target as a limit order (a gap through it fills at the open), the stop, and a 10-session time exit. Same entry and gap rules, no add.
+
+**Metrics** for exit B, in addition to step 4:
+- the add rate and the add-count distribution;
+- the share of trades that reach 3R;
+- the share that exit at BE;
+- average R for trades that reached 3R and for those that didn't;
+- average holding sessions;
+- the 60-session cap count;
+- `gap_skip` and add-gap-skip counts.
+
+The control uses the same management.
+
+**Tests**, in addition to step 7:
+- the stop-limit gap skip for the entry and the add;
+- adds at 2R and 4R, each 50% of the current size, with the stop moving to the new size-weighted breakeven after each;
+- a gapped-over add is skipped and the next level stays live;
+- the stop and the add on the same bar;
+- no trailing before 3R;
+- the bar stop when sma10 is more than 1 ATR away;
+- mX for a mech trade and pmX for an inside trade;
+- the stop never drops below BE;
+- the 60-session cap;
+- R across a pyramided position, and initial-unit R.
 
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
