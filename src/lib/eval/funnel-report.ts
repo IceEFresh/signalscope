@@ -50,11 +50,11 @@ export function funnelMarkdownReport(results: readonly ComparisonResult[], trade
     "",
     `**Pre-registered (${results.length} comparisons): ${n("KEEP")} KEEP, ${n("DROP")} DROP, ${n("INSUFFICIENT")} INSUFFICIENT.** Pullback-entry KEEPs are provisional until confirmed on ≥ 6 months of live data. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.`,
     "",
-    "| comparison | verdict | held-out trades | held-out net exp R | baseline held-out exp R | folds passed | reason |",
-    "|---|---|---|---|---|---|---|",
+    "| comparison | verdict | held-out trades | held-out net exp R | baseline held-out exp R | ±20 control held-out exp R (descriptive) | folds passed | reason |",
+    "|---|---|---|---|---|---|---|---|",
     ...results.map(
       (r) =>
-        `| ${r.group} | ${r.verdict}${r.provisional && r.verdict === "KEEP" ? " (provisional)" : ""} | ${r.heldOut.trades} | ${r2(r.heldOut.expectancy)} | ${r2(r.kind === "control" ? r.heldOut.controlExpectancy : r.benchHeldOut?.expectancy)} | ${r.foldsPassed} | ${cell(r.reason)} |`,
+        `| ${r.group} | ${r.verdict}${r.provisional && r.verdict === "KEEP" ? " (provisional)" : ""} | ${r.heldOut.trades} | ${r2(r.heldOut.expectancy)} | ${r2(r.kind === "control" ? r.heldOut.controlExpectancy : r.benchHeldOut?.expectancy)} | ${r.kind === "control" ? r2(r.heldOut.controlWindowExpectancy) : "n/a"} | ${r.foldsPassed} | ${cell(r.reason)} |`,
     ),
     "",
     "**Descriptive (all trades in each group, no verdicts):**",
@@ -65,6 +65,7 @@ export function funnelMarkdownReport(results: readonly ComparisonResult[], trade
   for (const a of ["stop", "pullback"] as const)
     for (const p of ["all", "funnel", "top5", "top3"] as const) desc.push([`${p} / ${a}`, pick(p, a)]);
   desc.push(["top5 / pullback_low (limit at low + fudge)", pick("top5", "pullback_low")]);
+  desc.push(["top5_noair / stop (ranking without open_air, P3-0j3)", pick("top5_noair", "stop")]);
   desc.push(["top5 / stop: event-halved", top5.filter((t) => t.eventHalf)], ["top5 / stop: not halved", top5.filter((t) => !t.eventHalf)]);
   desc.push(["top5 / stop: open_air", top5.filter((t) => t.openAir)], ["top5 / stop: level within 10 ATR", top5.filter((t) => !t.openAir)]);
   desc.push(["top5 / stop: counter-trend shorts", top5.filter((t) => t.countertrend)]);
@@ -100,6 +101,7 @@ export function funnelMarkdownReport(results: readonly ComparisonResult[], trade
       out.push(`| ${a} | ${unknown ? "none (earnings_unknown)" : "EDGAR"} | ${m.trades} | ${r2(m.expectancy)} | ${pct(m.reached3RRate)} |`);
     }
   out.push("", ...controlSplitLines([...top5, ...pick("top5", "pullback")]));
+  out.push(...eventCounterfactualLines(trades), ...rrDiagnosticLines(trades));
   const acct = (a: EntryArm) => portfolioStats(pick("top5", a), meta.sessions);
   out.push("**Account view (top 5 new per day, no position cap):**", "", "| arm | trades | net $ | max DD $ | peak open positions | peak open risk $ | on |", "|---|---|---|---|---|---|---|");
   for (const a of ["stop", "pullback"] as const) {
@@ -113,6 +115,61 @@ export function funnelMarkdownReport(results: readonly ComparisonResult[], trade
     out.push("");
   }
   return out.join("\n");
+}
+
+const meanOf = (xs: readonly number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null);
+const medianOf = (xs: readonly number[]) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/**
+ * P3-0j3 descriptive: each top-5 trade rerun with the event stop rule off. Per tier (a trade
+ * counts under every tier it had; "no event" = none), R with the rule, R without, difference.
+ */
+export function eventCounterfactualLines(trades: readonly FunnelTrade[]): string[] {
+  const out = [
+    "**Event stop rule counterfactual (top 5; each trade rerun with the rule off; descriptive, P3-0j3):**",
+    "",
+    "| arm | tier | trades | net exp R with the rule | without | difference |",
+    "|---|---|---|---|---|---|",
+  ];
+  for (const a of ["stop", "pullback"] as const) {
+    const ts = trades.filter((t) => t.population === "top5" && t.arm === a && t.netRNoEvent != null);
+    const groups: Array<[string, FunnelTrade[]]> = [
+      ...(["event_bar", "event_be", "event_hold"] as const).map((tier): [string, FunnelTrade[]] => [tier, ts.filter((t) => t.eventTiers.includes(tier))]),
+      ["no event", ts.filter((t) => t.eventTiers.length === 0)],
+      ["all", ts],
+    ];
+    for (const [tier, g] of groups) {
+      const w = meanOf(g.map((t) => t.netR));
+      const wo = meanOf(g.map((t) => t.netRNoEvent!));
+      out.push(`| ${a} | ${tier} | ${g.length} | ${r2(w)} | ${r2(wo)} | ${r2(w != null && wo != null ? w - wo : null)} |`);
+    }
+  }
+  return [...out, ""];
+}
+
+/** P3-0j3 descriptive: top-5 by R/R quintile and the stop distance in ATR, top-5 vs all (stop entry). */
+export function rrDiagnosticLines(trades: readonly FunnelTrade[]): string[] {
+  const top = trades.filter((t) => t.population === "top5" && t.arm === "stop" && t.rr != null).sort((a, b) => a.rr! - b.rr!);
+  const all = trades.filter((t) => t.population === "all" && t.arm === "stop");
+  const out = [
+    "**R/R diagnostics (top 5, stop entry; descriptive, P3-0j3):**",
+    "",
+    `open_air: ${top.filter((t) => t.openAir).length} of ${top.length} top-5 trades. Median stop distance: top 5 ${r2(medianOf(top.map((t) => t.stopAtr).filter((v): v is number => v != null)))} ATR vs all trades ${r2(medianOf(all.map((t) => t.stopAtr).filter((v): v is number => v != null)))} ATR.`,
+    "",
+    "| R/R quintile | R/R range | trades | open_air | net exp R | reached 3R |",
+    "|---|---|---|---|---|---|",
+  ];
+  for (let q = 0; q < 5; q++) {
+    const g = top.slice(Math.floor((q * top.length) / 5), Math.floor(((q + 1) * top.length) / 5));
+    const m = groupMetrics(g);
+    out.push(`| Q${q + 1} | ${g.length ? `${g[0].rr!.toFixed(2)}–${g[g.length - 1].rr!.toFixed(2)}` : "n/a"} | ${g.length} | ${g.filter((t) => t.openAir).length} | ${r2(m.expectancy)} | ${pct(m.reached3RRate)} |`);
+  }
+  return [...out, ""];
 }
 
 const csvCell = (v: unknown) => {

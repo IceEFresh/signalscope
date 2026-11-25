@@ -25,20 +25,23 @@ const setup = (type: string, symbol: string): Setup => ({ variant: "calendar", h
 const SYMS = Array.from({ length: 40 }, (_, k) => String(k).padStart(2, "0"));
 
 describe("P3-0j2 control pool", () => {
-  it("EGOP: only sessions after the gap day; others ±window", () => {
+  it("verdict controls: every pattern only after the trigger (P3-0j3); the ±20 window is the descriptive mode", () => {
     expect(controlPoolRange(I, "egop", 90)).toEqual({ lo: I + 1, hi: I + CONTROL_WINDOW });
-    expect(controlPoolRange(I, "inside", 90)).toEqual({ lo: I - CONTROL_WINDOW, hi: I + CONTROL_WINDOW });
-    expect(controlPoolRange(5, "inside", 90).lo).toBe(0);
+    expect(controlPoolRange(I, "inside", 90)).toEqual({ lo: I + 1, hi: I + CONTROL_WINDOW });
+    expect(controlPoolRange(I, "inside", 90, "window")).toEqual({ lo: I - CONTROL_WINDOW, hi: I + CONTROL_WINDOW });
+    expect(controlPoolRange(5, "inside", 90, "window").lo).toBe(0);
     expect(controlPoolRange(85, "egop", 90).hi).toBe(88); // c + 1 must exist
   });
 
   it("an EGOP control (P3-0i matchedControl) is never drawn on or before the gap day", () => {
     const egop = SYMS.map((s) => matchedControl(setup("egop", s), bars, closes, info, "B")!);
     expect(egop.every((c) => c != null && c.i > I)).toBe(true);
-    // the same seeds for another pattern do draw before the trigger sometimes (±window kept)
+    // P3-0j3: every pattern's verdict control is after the trigger; the descriptive ±20 control draws both sides
     const inside = SYMS.map((s) => matchedControl(setup("inside", s), bars, closes, info, "B")!);
-    expect(inside.some((c) => c.i < I)).toBe(true);
-    expect(inside.some((c) => c.i > I)).toBe(true);
+    expect(inside.every((c) => c.i > I)).toBe(true);
+    const window = SYMS.map((s) => matchedControl(setup("inside", s), bars, closes, info, "B", undefined, undefined, undefined, "window")!);
+    expect(window.some((c) => c.i < I)).toBe(true);
+    expect(window.some((c) => c.i > I)).toBe(true);
   });
 
   it("an EGOP control (P3-0j funnelControl) is never drawn on or before the gap day", () => {
@@ -51,11 +54,11 @@ describe("P3-0j2 control pool", () => {
     }
   });
 
-  it("reports control expectancy before vs after the trigger per pattern", () => {
-    const t = (type: string, post: boolean, r: number) => ({ type, controlPost: post, controlNetR: r }) as unknown as Trade;
-    const lines = controlSplitLines([t("egop", true, 0.5), t("inside", false, -1), t("inside", true, 1), t("inside", true, 0)]);
-    expect(lines).toContain("| egop | 0 | n/a | 1 | 0.500 |");
-    expect(lines).toContain("| inside | 1 | -1.000 | 2 | 0.500 |");
+  it("reports the ±20 control split before vs after the trigger, next to the verdict control", () => {
+    const t = (type: string, post: boolean, w: number, r: number) => ({ type, controlWindowPost: post, controlWindowNetR: w, controlNetR: r }) as unknown as Trade;
+    const lines = controlSplitLines([t("egop", true, 0.5, 0.2), t("inside", false, -1, 0), t("inside", true, 1, 1), t("inside", true, 0, -1)]);
+    expect(lines).toContain("| egop | 0 | n/a | 1 | 0.500 | 1 | 0.200 |");
+    expect(lines).toContain("| inside | 1 | -1.000 | 2 | 0.500 | 3 | 0.000 |");
   });
 });
 

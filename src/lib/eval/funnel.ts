@@ -161,6 +161,12 @@ export function pullbackLimit(bar: DailyBar, dir: Dir, fudge: number, arm: "pull
  * (cancelled); an open below the limit fills at the open, otherwise at the limit. A bar that
  * reaches the limit and the stop is filled and stopped the same day (exit B checks the stop
  * on the fill bar). Short mirrored.
+ *
+ * P3-0j3: `risk` is the PLANNED risk, limit − stop, fixed when the order is placed: it sets
+ * the share count and the R unit (adds, the 3R trail trigger, the event tiers). A better
+ * fill at the open keeps those shares, so the real risk (fill − stop) × shares is never more
+ * than planned. Before P3-0j3 the risk was fill − stop, and an open a cent above the stop
+ * sized ≈ $200 / $0.01 shares.
  */
 export function limitEntryOnNextBar(next: DailyBar | undefined, dir: Dir, limit: number, stop: number): EntryOutcome {
   if (!next) return { status: "no_bar" };
@@ -169,12 +175,12 @@ export function limitEntryOnNextBar(next: DailyBar | undefined, dir: Dir, limit:
     if (open != null && open <= stop) return { status: "skipped_gap" };
     if (next.low > limit) return { status: "cancelled" };
     const fill = open != null && open < limit ? open : limit;
-    return fill - stop > 0 ? { status: "filled", fill, risk: fill - stop } : { status: "skipped_gap" };
+    return fill - stop > 0 && limit - stop > 0 ? { status: "filled", fill, risk: limit - stop } : { status: "skipped_gap" };
   }
   if (open != null && open >= stop) return { status: "skipped_gap" };
   if (next.high < limit) return { status: "cancelled" };
   const fill = open != null && open > limit ? open : limit;
-  return stop - fill > 0 ? { status: "filled", fill, risk: stop - fill } : { status: "skipped_gap" };
+  return stop - fill > 0 && stop - limit > 0 ? { status: "filled", fill, risk: stop - limit } : { status: "skipped_gap" };
 }
 
 /** §5: stock factor × pyramid × 0.5 with an out-of-hours event within 5 sessions, floored at 0.25. */

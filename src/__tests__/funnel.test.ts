@@ -195,7 +195,8 @@ describe("pullback entry", () => {
     expect(pullbackLimit(trigger, 1, 1, "pullback_low")).toBe(101);
     expect(pullbackLimit(trigger, -1, 1, "pullback_low")).toBe(109);
     expect(limitEntryOnNextBar(bars([[108, 109, 104, 107]])[0], 1, 105, stop)).toEqual({ status: "filled", fill: 105, risk: 6 });
-    expect(limitEntryOnNextBar(bars([[103, 106, 102, 105]])[0], 1, 105, stop)).toEqual({ status: "filled", fill: 103, risk: 4 });
+    // P3-0j3: a better open keeps the planned risk (limit − stop) as the sizing and R unit
+    expect(limitEntryOnNextBar(bars([[103, 106, 102, 105]])[0], 1, 105, stop)).toEqual({ status: "filled", fill: 103, risk: 6 });
   });
   it("no fill when D+1 never trades down to the limit; no fill on a gap at or below the stop", () => {
     expect(limitEntryOnNextBar(bars([[108, 112, 105.5, 111]])[0], 1, 105, stop)).toEqual({ status: "cancelled" });

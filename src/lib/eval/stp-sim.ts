@@ -498,13 +498,20 @@ export interface ControlResult {
   netR: number;
 }
 
+/** P3-0j3: verdict controls come from after the trigger; the ±20 window is kept as a descriptive control. */
+export type ControlMode = "after" | "window";
+
 /**
- * P3-0j2: the sessions a matched control may be drawn from. ±CONTROL_WINDOW around the
- * trigger, except EGOP: only after the gap day (c > i). A control before the gap could hold
- * through the earnings gap itself, a look-ahead that inflated EGOP's control.
+ * The sessions a matched control may be drawn from.
+ * - "after" (verdicts): only sessions after the trigger (c > i, up to i + 20). P3-0j2 did
+ *   this for EGOP (a control before the gap could hold through it); P3-0j3 extends it to every
+ *   pattern, since a day before a trigger is chosen knowing the trigger follows (inside bars:
+ *   +0.38R before vs −1.08R after in the first funnel run).
+ * - "window" (descriptive): ±CONTROL_WINDOW around the trigger, every pattern.
  */
-export function controlPoolRange(i: number, type: string, n: number): { lo: number; hi: number } {
-  return { lo: Math.max(0, type === "egop" ? i + 1 : i - CONTROL_WINDOW), hi: Math.min(n - 2, i + CONTROL_WINDOW) };
+export function controlPoolRange(i: number, type: string, n: number, mode: ControlMode = "after"): { lo: number; hi: number } {
+  void type;
+  return { lo: Math.max(0, mode === "after" ? i + 1 : i - CONTROL_WINDOW), hi: Math.min(n - 2, i + CONTROL_WINDOW) };
 }
 
 /**
@@ -523,9 +530,10 @@ export function matchedControl(
   seedBase = CONTROL_SEED,
   atr: ReadonlyArray<number | null> = atrSeries(bars),
   baseRisk = BASE_RISK_DOLLARS,
+  mode: ControlMode = "after",
 ): ControlResult | null {
   const pool: number[] = [];
-  const range = controlPoolRange(setup.i, setup.type, bars.length);
+  const range = controlPoolRange(setup.i, setup.type, bars.length, mode);
   for (let c = range.lo; c <= range.hi; c++) {
     if (c === setup.i) continue;
     const trig = setup.variant === "rolling" ? info[c]?.triggerRolling : info[c]?.trigger;
@@ -693,8 +701,11 @@ export interface Trade extends EntryLocation {
   size: number;
   initialUnitR: number;
   controlNetR: number | null;
-  /** P3-0j2: the control's day is after the trigger (descriptive pre/post split); null without a control. */
+  /** P3-0j2: the control's day is after the trigger; null without a control. */
   controlPost?: boolean | null;
+  /** P3-0j3 descriptive: the ±20-session control (the pre-P3-0j3 definition) and whether its day was after the trigger. */
+  controlWindowNetR?: number | null;
+  controlWindowPost?: boolean | null;
   /** SPY close vs its SMA20 on the trigger day. */
   regime: "spy_above_sma20" | "spy_below_sma20" | null;
   quarter: string;
@@ -789,6 +800,7 @@ export function simulateSymbol(
     const x = simulateExit(bars, closes, atr, s.i + 1, s.dir, e.fill, e.risk, s.stop, s.fudge, s.type, rule, baseRisk);
     openUntil = x.exitIndex;
     const control = matchedControl(s, bars, closes, info, rule, CONTROL_SEED, atr, baseRisk);
+    const controlW = matchedControl(s, bars, closes, info, rule, CONTROL_SEED, atr, baseRisk, "window");
     if (!control) counts.noControl++;
     const screen = screensOn(bars, s.i, atr);
     trades.push({
@@ -839,6 +851,8 @@ export function simulateSymbol(
       initialUnitR: x.initialUnitR,
       controlNetR: control?.netR ?? null,
       controlPost: control ? control.i > s.i : null,
+      controlWindowNetR: controlW?.netR ?? null,
+      controlWindowPost: controlW ? controlW.i > s.i : null,
       regime: opts.regime?.get(s.date) ?? null,
       quarter: quarterOf(s.date),
     });
@@ -863,6 +877,8 @@ export interface GroupMetrics {
   controls: number;
   controlExpectancy: number | null;
   edge: number | null; // expectancy − controlExpectancy
+  /** P3-0j3 descriptive: the ±20-session control's expectancy (the pre-P3-0j3 definition). */
+  controlWindowExpectancy: number | null;
   /** Exit B management (§1e). */
   addRate: number | null; // share of trades with at least one add
   avgAdds: number | null;
@@ -992,6 +1008,7 @@ export function groupMetrics(trades: readonly Trade[]): GroupMetrics {
     controls: ctrl.length,
     controlExpectancy: cExp,
     edge: exp != null && cExp != null ? exp - cExp : null,
+    controlWindowExpectancy: mean(trades.map((t) => t.controlWindowNetR).filter((v): v is number => v != null)),
     addRate: trades.length ? trades.filter((t) => t.adds > 0).length / trades.length : null,
     avgAdds: mean(trades.map((t) => t.adds)),
     maxAdds: trades.length ? Math.max(...trades.map((t) => t.adds)) : null,
@@ -1013,6 +1030,12 @@ export function groupMetrics(trades: readonly Trade[]): GroupMetrics {
 export function passes(m: GroupMetrics, min: number): boolean {
   return m.trades >= min && m.expectancy != null && m.expectancy > 0 && m.controlExpectancy != null && m.expectancy > m.controlExpectancy;
 }
+
+/** P3-0j3: the same rule against the descriptive ±20 control (provisional-KEEP check). */
+export const passesWindow = (m: GroupMetrics, min: number) => passes({ ...m, controlExpectancy: m.controlWindowExpectancy }, min);
+
+/** P3-0j3: appended to a KEEP that doesn't also pass against the ±20 control. */
+export const PROVISIONAL_AFTER_ONLY = "PROVISIONAL: KEEP only under the after-trigger control (changed after the first results, P3-0j3); needs live confirmation";
 
 export type SimVerdict = "KEEP" | "DROP" | "INSUFFICIENT" | "NOT_RUN";
 
@@ -1149,6 +1172,9 @@ export function evaluateGroups(
       } else {
         verdict = "KEEP";
         reason = `passes held out and ${foldsPassed} of ${WALK_FORWARD_FOLDS} folds`;
+        const wHeld = passesWindow(heldOut, MIN_HELDOUT_ROWS) && beatsBench(heldOut, heldIds);
+        const wFolds = folds.filter((f, k) => passesWindow(f, MIN_FOLD_ROWS) && beatsBench(f, foldIds[k])).length;
+        if (!(wHeld && wFolds >= FOLDS_REQUIRED)) reason += `; ${PROVISIONAL_AFTER_ONLY}`;
       }
     }
     return { group, primary, all: groupMetrics(sel), heldOut, folds, foldsPassed, verdict, reason };
