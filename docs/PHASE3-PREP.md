@@ -616,6 +616,45 @@ The report shows the size distribution of counter-trend shorts.
 No migration; the macro calendar is a JSON file. No dependency.
 
 
+## P3-0j3: fixes from the first funnel run (reviewer, 2026-11-25)
+The first `simulate-funnel` run (2026-11-25) turned up one bug, one control problem and two gaps in the reports. Pre-registration is unchanged at 10 comparisons; each change below goes into PHASE3-PREREG.md with its date, **after** the first run.
+
+**1. Pullback sizing bug (confidence 9/10).**
+- In `limitEntryOnNextBar`, when D+1 opens below the limit the fill is the open and `risk: fill − stop`. An open a cent above the stop gives risk ≈ $0.01, so shares ≈ $200 / 0.01. That's how `all / pullback` reached −$211.7M and −27.9R per trade.
+- A real limit order's share count is fixed when the order is placed.
+- **Fix:**
+  - shares = floor(base risk / (limit − stop));
+  - the R unit is (limit − stop);
+  - a fill at a better open keeps the same shares, with real risk (fill − stop) × shares, never more than planned;
+  - the add levels, the 3R trail trigger and the event tiers use the planned R unit from the actual fill.
+  - Same for `pullback_low` and for the pullback controls.
+- **Tests:**
+  - an open 1 cent above the stop: the share count comes from the limit risk, and a gap through the stop the next day loses ≤ 1R plus costs;
+  - an open at the limit is unchanged.
+- **Every pullback verdict from the first run is void.**
+
+**2. Matched controls taken before the trigger are biased.**
+- The control split shows inside-bar controls at **+0.38R before the trigger (n = 569) vs −1.08R after (n = 570)**, and mech2 at +0.30 vs −0.25.
+- A control day before the trigger is chosen knowing a trigger comes later. The trend criteria require price above the opens, so pre-trigger days sit inside the run-up that produced them. This is the same look-ahead as EGOP (P3-0j2), in milder form.
+- **Fix:** for **all** patterns, draw controls only from sessions after the trigger (c > i, within 20 sessions).
+  - Verdicts use the after-only control.
+  - Reports also show the ±20 control, descriptive, so the change is visible.
+- **Honesty note for PREREG:** this was changed after the first P3-0i and P3-0j results, as a validity fix. Any KEEP that appears only under the after-only control is **provisional** and needs live confirmation.
+- Applies to `matchedControl` (P3-0i) and `funnelControl` (P3-0j).
+
+**3. Event stop rule counterfactual.**
+- The tier groups (`event_bar` +3.05R, `event_be` +1.03R) are selected on open profit, so they can't show whether the rule helps.
+- **Fix:** rerun every top-5 trade with the event rule off, and report per tier: R with the rule, R without, and the difference. Descriptive.
+
+**4. R/R ranking diagnostics.**
+- 476 of the 567 top-5/stop trades are `open_air`, so the ranking mostly rewards a tight stop on a stock with no level within 10 ATR.
+- **Fix (descriptive only; the ranking rule itself is unchanged, since changing it now would be fitting):**
+  - top-5 results by `open_air` and by R/R quintile;
+  - the median stop distance in ATR, top-5 vs all;
+  - a variant ranking with `open_air` excluded.
+
+**Rerun:** `simulate-funnel.ts`, then `simulate-stp.ts --dataset backfill`.
+
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
 

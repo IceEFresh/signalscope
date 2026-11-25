@@ -41,6 +41,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 22b2. **P3-0i2b**: persistent bar store for the live swing keys (PHASE3-PREP §P3-0i2b). After #69.
 22c. **P3-0i3: historical earnings dates from SEC EDGAR 8-K item 2.02** (spec: docs/PHASE3-PREP.md). No migration. Lets EGOP be simulated on the backfill.
 22d. **P3-0j**: stock selection funnel, daily top-5 by R/R, pullback entry, macro-event sizing and stops, earnings rules (PHASE3-PREP §P3-0j). Pre-register its 10 comparisons in PHASE3-PREREG.md before any run.
+22e. **P3-0j3**: pullback sizing fix, after-trigger controls for all patterns, event-rule counterfactual, R/R diagnostics, then rerun (PHASE3-PREP §P3-0j3).
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.
