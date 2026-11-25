@@ -8,6 +8,7 @@ import { computeCryptoSnapshotRows } from "../src/lib/harvester/crypto/universe.
 import { fetchDailyChart, peekDailyChart } from "../src/lib/harvester/yahoo-chart.js";
 import { parseChartBars } from "../src/lib/harvester/universe/bar-metrics.js";
 import { liveStpKeys } from "../src/lib/harvester/universe/stp-live.js";
+import { PYRAMID_SECTOR_MIN_SHARE, pyramidCoverage, pyramidCoverageLine } from "../src/lib/health/harvest-health.js";
 import {
   computeIngestExtras,
   computeStpExtras,
@@ -143,6 +144,16 @@ async function main() {
     }
   }
   console.log(`[stp-live] layer ETFs cached: ${liveEtfStates.size}; live keys on ${liveTickers} signal tickers`);
+  const pyr = pyramidCoverage(
+    snapshot.rows.map((r) => r.features),
+    Object.values(prep.profiles).filter((p) => p.sector).length,
+    prep.scanSymbols.length,
+  );
+  if (pyr) {
+    const line = pyramidCoverageLine(pyr);
+    if (pyr.warn) console.warn(`${line}; WARNING: sector layer under ${PYRAMID_SECTOR_MIN_SHARE * 100}%, pyramid sizes reflect the market layer only`);
+    else console.log(line);
+  }
   console.log(
     `[snapshot] ${snapshot.rows.length} rows built, ${snapshot.missing} symbols without a cached chart, ${Object.keys(prep.profiles).length} members with a sector profile`,
   );

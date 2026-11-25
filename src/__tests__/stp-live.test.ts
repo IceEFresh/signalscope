@@ -11,7 +11,7 @@ import { cryptoSnapshotRow, parseCryptoBars } from "@/lib/harvester/crypto/unive
 import { liveContextFor, loadLiveEtfStates } from "@/lib/harvester/universe/harvest-prep";
 import { stockFactor } from "@/lib/eval/stp-sim";
 import { candidateKeys } from "@/lib/eval/features";
-import { familyOf, isLiveStpKey } from "@/lib/health/harvest-health";
+import { analyzeScan, familyOf, flagsFor, isLiveStpKey, pyramidCoverage, pyramidCoverageLine, renderText } from "@/lib/health/harvest-health";
 import type { EtfState } from "@/lib/harvester/universe/pyramid";
 
 const raw = (f: string) => JSON.parse(readFileSync(join(__dirname, "fixtures", f), "utf8")) as unknown;
@@ -140,5 +140,33 @@ describe("P3-0i2 wiring", () => {
     expect(familyOf("stp_ma_state")).toBe("stp"); // the registered STP states stay
     const rows = [{ scanId: "s", scanStart: NOW, symbol: "X", ret: {}, excess: {}, attrs: { ...liveStpKeys(amd, stpAmd, { assetClass: "stock" }), stp_ma_state: 1 } }];
     expect(candidateKeys(rows)).toEqual(["stp_ma_state"]);
+  });
+});
+
+describe("P3-0i2 pyramid coverage is visible (review on #69)", () => {
+  const agree = new Map<string, EtfState>([[lastDate, { opens: 1, trend: 1 }]]);
+  const withSector = liveStpKeys(amd, stpAmd, { assetClass: "stock", market: [agree, agree, agree], sectorEtf: "XLK", sectorStates: agree, industryEtf: null, industryStates: null });
+  const noProfile = liveStpKeys(amd, stpAmd, { assetClass: "stock", market: [agree, agree, agree] });
+
+  it("empty weekly profiles: the sector layer is null on every row, and that's a warning with a health flag", () => {
+    const c = pyramidCoverage([noProfile, noProfile, noProfile], 0, 1485)!;
+    expect(c).toMatchObject({ stockRows: 3, market: 3, sector: 0, industry: 0, profiled: 0, members: 1485, warn: true });
+    expect(pyramidCoverageLine(c)).toBe("[stp-live] pyramid: market layer 3/3 stock rows, sector 0/3, industry 0/3, profiles 0/1485 members");
+    const base = { scanId: "s1", startedAt: NOW, universeSize: 1485, regimeFeatures: { a: 1, macro: { a: 1 } }, sectorRotation: { a: 1 }, stpRows: 1, tickers: [] };
+    const report = analyzeScan({ ...base, snapshot: [noProfile, noProfile], profiledMembers: 0 });
+    const msgs = flagsFor([report]).map((f) => f.message);
+    expect(msgs.some((m) => m.startsWith("live pyramid sector layer on 0/2 stock rows (under 50%); 0/1485 universe members have a sector profile"))).toBe(true);
+    expect(renderText([report], [])).toContain("[stp-live] pyramid: market layer 2/2 stock rows, sector 0/2");
+  });
+
+  it("with profiles, the sector layer is counted and there's no warning", () => {
+    const c = pyramidCoverage([withSector, withSector, noProfile], 1400, 1485)!;
+    expect(c).toMatchObject({ sector: 2, warn: false });
+    const base = { scanId: "s1", startedAt: NOW, universeSize: 1485, regimeFeatures: { a: 1, macro: { a: 1 } }, sectorRotation: { a: 1 }, stpRows: 1, tickers: [] };
+    expect(flagsFor([analyzeScan({ ...base, snapshot: [withSector, withSector], profiledMembers: 1400 })]).some((f) => f.message.includes("pyramid"))).toBe(false);
+  });
+
+  it("rows without the live keys (older scans) give no coverage and no flag", () => {
+    expect(pyramidCoverage([{ rsi14: 50 }, null])).toBeNull();
   });
 });
