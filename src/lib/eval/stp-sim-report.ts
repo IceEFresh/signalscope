@@ -10,12 +10,12 @@ const pct = (v: number | null) => (v == null ? "n/a" : `${(v * 100).toFixed(1)}%
 const cell = (s: string) => s.replace(/\|/g, "/").replace(/\n/g, " ");
 
 function metricsRow(label: string, m: GroupMetrics): string {
-  return `| ${label} | ${m.trades} | ${pct(m.winRate)} | ${r2(m.expectancy)} | ${r2(m.medianR)} | ${r2(m.avgGrossR)} | ${r2(m.profitFactor)} | ${r2(m.avgHolding)} | ${r2(m.maxDrawdownR)} | ${m.controls} | ${r2(m.controlExpectancy)} | ${r2(m.edge)} |`;
+  return `| ${label} | ${m.trades} | ${pct(m.winRate)} | ${pct(m.targetRate)} | ${r2(m.expectancy)} | ${r2(m.medianR)} | ${r2(m.avgGrossR)} | ${r2(m.profitFactor)} | ${r2(m.avgHolding)} | ${r2(m.maxDrawdownR)} | ${m.controls} | ${r2(m.controlExpectancy)} | ${r2(m.edge)} |`;
 }
 
 const HEAD = [
-  "| split | trades | win | net exp R | median R | gross exp R | profit factor | avg hold | max DD R | controls | control exp R | edge R |",
-  "|---|---|---|---|---|---|---|---|---|---|---|---|",
+  "| split | trades | win | 3R hit | net exp R | median R | gross exp R | profit factor | avg hold | max DD R | controls | control exp R | edge R |",
+  "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
 ];
 
 function countsLine(label: string, counts: SymbolCounts): string {
@@ -75,9 +75,9 @@ const csvCell = (v: unknown) => {
 };
 
 export function tradesCsv(trades: readonly Trade[]): string {
-  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "control_r_net", "htf_alignment", "regime", "quarter"];
+  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "control_r_net", "htf_alignment", "week_used", "month_used", "room_w", "regime", "quarter"];
   const rows = trades.map((t) =>
-    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.controlNetR, t.alignment, t.regime, t.quarter]
+    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.controlNetR, t.alignment, t.weekUsed, t.monthUsed, t.roomW, t.regime, t.quarter]
       .map(csvCell)
       .join(","),
   );
@@ -90,7 +90,7 @@ export function simExperimentRow(results: readonly GroupResult[], meta: { number
   const n = (v: string) => prim.filter((r) => r.verdict === v).length;
   const all = results.find((r) => r.group === "all");
   const desc =
-    `P3-0i STP TRIGGER TRADES, backfill dataset, exit ${meta.exit} (${meta.exit === "A" ? "primary" : "secondary"}): ${meta.trades} trades, ${prim.length} primary groups. ` +
+    `P3-0i STP TRIGGER TRADES, backfill dataset, exit ${meta.exit}: ${meta.trades} trades, ${prim.length} primary groups. ` +
     `${keep.length} KEEP, ${n("DROP")} DROP, ${n("INSUFFICIENT")} INSUFFICIENT. All trades held out: net exp ${r2(all?.heldOut.expectancy ?? null)}R vs control ${r2(all?.heldOut.controlExpectancy ?? null)}R. ` +
     `Survivorship-biased (current members only). A KEEP leads to a Phase 4 paper-trading proposal, not a rule. Report: ${meta.reportPath}.`;
   return `| ${meta.number} | ${meta.date} | ${meta.commit} | n/a | n/a | n/a | ${prim.length} | STP trade sim exit ${meta.exit} (prereg) | ${keep.length ? "keep" : "discard"} | ${cell(keep.map((r) => r.group).join(" ") || "none")} | n/a | n/a | n/a | ${cell(desc)} |`;

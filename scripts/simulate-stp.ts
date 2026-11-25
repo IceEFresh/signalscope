@@ -8,7 +8,8 @@
 //     -v "$PWD/scripts/backtesting-experiments.md:/app/scripts/backtesting-experiments.md" \
 //     -e NODE_OPTIONS=--max-old-space-size=6144 -e GIT_COMMIT=$(git rev-parse --short HEAD) \
 //     harvester npx tsx scripts/simulate-stp.ts --dataset backfill
-// Options: --exit A|B (default: both, one log row each), --years 2, --dry-run (summary only).
+// Options: --years 2, --dry-run (summary only). Exit A only: exit B (STP trailing exits) is ON HOLD
+// until Chris confirms the trade management (docs/PHASE3-PREP.md P3-0i §1d); --exit B refuses.
 
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,7 +18,7 @@ import { BENCHMARK_SYMBOL } from "@/lib/harvester/universe/snapshot";
 import { backfillSessions } from "@/lib/harvester/universe/backfill";
 import { commitId } from "@/lib/eval/commit";
 import { lastExperimentNumber } from "@/lib/eval/report";
-import { emptyCounts, evaluateGroups, scanSymbol, setupOverlap, simulateSymbol, spyRegimeByDate, type ExitRule, type Overlap, type SymbolCounts, type Trade, type Variant } from "@/lib/eval/stp-sim";
+import { emptyCounts, EXITS_ON_HOLD, evaluateGroups, scanSymbol, setupOverlap, simulateSymbol, spyRegimeByDate, type ExitRule, type Overlap, type SymbolCounts, type Trade, type Variant } from "@/lib/eval/stp-sim";
 import { simExperimentRow, simMarkdownReport, tradesCsv } from "@/lib/eval/stp-sim-report";
 
 const CACHE_DIR = "scripts/output/backfill-bars";
@@ -32,7 +33,10 @@ function arg(name: string): string | undefined {
 function main() {
   const dataset = arg("--dataset") ?? "backfill";
   if (dataset !== "backfill") throw new Error(`only --dataset backfill is supported (got ${dataset})`);
-  const exits: ExitRule[] = arg("--exit") === "A" ? ["A"] : arg("--exit") === "B" ? ["B"] : ["A", "B"];
+  const requested = (arg("--exit") ?? "A").toUpperCase();
+  if (requested !== "A" && requested !== "B") throw new Error(`--exit must be A or B (got ${requested})`);
+  if (EXITS_ON_HOLD.has(requested as ExitRule)) throw new Error(`exit ${requested} is on hold (PHASE3-PREP.md P3-0i §1d): not run or registered until Chris confirms`);
+  const exits: ExitRule[] = [requested as ExitRule];
   const years = Number(arg("--years") ?? 2);
   const dryRun = process.argv.includes("--dry-run");
   if (!existsSync(CACHE_DIR)) throw new Error(`${CACHE_DIR} not found: run scripts/backfill-snapshot.ts first (its chart cache is the input)`);

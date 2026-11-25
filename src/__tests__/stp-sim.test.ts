@@ -6,7 +6,10 @@ import { computeStp } from "@/lib/harvester/universe/stp";
 import { barDateOf, sliceForSession } from "@/lib/harvester/universe/backfill";
 import {
   CONTROL_SEED,
+  EXIT_RULES,
+  EXITS_ON_HOLD,
   costInR,
+  entryLocation,
   entryOnNextBar,
   evaluateGroups,
   groupMetrics,
@@ -62,35 +65,43 @@ describe("entry: the D+1 stop order", () => {
   });
 });
 
-describe("exit A: stop, 2R target, 10-session time exit", () => {
-  // fill bar index 0, fill 100, stop 90, R 10, target 120
+describe("exit A: stop, 3R target (§1d), 10-session time exit", () => {
+  // fill bar index 0, fill 100, stop 90, R 10, target 130
   const run = (ohlc: Array<[number, number, number, number]>, dir: 1 | -1 = 1, fill = 100, stop = 90) => {
     const b = bars(ohlc);
     return simulateExit(b, b.map((x) => x.close), 0, dir, fill, Math.abs(fill - stop), stop, 0.5, "A");
   };
-  it("target hit", () => {
-    const x = run([[100, 105, 99, 104], [104, 121, 103, 118]]);
-    expect(x).toMatchObject({ reason: "target", exit: 120, exitIndex: 1, holding: 1 });
-    expect(x.grossR).toBeCloseTo(2, 12);
+  it("targets 3R", () => {
+    expect(EXIT_RULES.A.targetR).toBe(3);
+    const x = run([[100, 105, 99, 104], [104, 131, 103, 128]]);
+    expect(x).toMatchObject({ reason: "target", exit: 130, exitIndex: 1, holding: 1 });
+    expect(x.grossR).toBeCloseTo(3, 12);
+    expect(run([[100, 105, 99, 104], [104, 125, 103, 118]]).reason).not.toBe("target"); // 2.5R isn't enough
   });
   it("a bar touching both stop and target exits at the stop, including the fill bar", () => {
-    expect(run([[100, 125, 89, 110]])).toMatchObject({ reason: "stop", exit: 90, exitIndex: 0, grossR: -1 });
-    expect(run([[100, 105, 99, 104], [104, 125, 85, 110]])).toMatchObject({ reason: "stop", exit: 90, exitIndex: 1 });
+    expect(run([[100, 135, 89, 110]])).toMatchObject({ reason: "stop", exit: 90, exitIndex: 0, grossR: -1 });
+    expect(run([[100, 105, 99, 104], [104, 135, 85, 110]])).toMatchObject({ reason: "stop", exit: 90, exitIndex: 1 });
   });
   it("a gap through the stop exits at the open", () => {
     expect(run([[100, 105, 99, 104], [85, 88, 80, 86]])).toMatchObject({ reason: "stop_gap", exit: 85, grossR: -1.5 });
+  });
+  it("a gap through the target exits at the open, the better price (§1d)", () => {
+    const x = run([[100, 105, 99, 104], [134, 136, 133, 135]]);
+    expect(x).toMatchObject({ reason: "target", exit: 134 });
+    expect(x.grossR).toBeCloseTo(3.4, 12);
+    expect(run([[100, 101, 95, 96], [66, 67, 60, 61]], -1, 100, 110)).toMatchObject({ reason: "target", exit: 66 });
   });
   it("time exit at the close of session 10 after the fill", () => {
     const x = run([[100, 101, 99, 100], ...flat(12, 101)]);
     expect(x).toMatchObject({ reason: "time", exitIndex: 10, holding: 10, exit: 101 });
   });
   it("short mirrored", () => {
-    expect(run([[100, 101, 95, 96], [96, 97, 79, 81]], -1, 100, 110)).toMatchObject({ reason: "target", exit: 80 });
+    expect(run([[100, 101, 95, 96], [96, 97, 69, 71]], -1, 100, 110)).toMatchObject({ reason: "target", exit: 70 });
   });
   it("costs are 0.10% of price, converted into R", () => {
     expect(costInR(100, 10)).toBeCloseTo(0.01, 12);
-    const x = run([[100, 105, 99, 104], [104, 121, 103, 118]]);
-    expect(x.netR).toBeCloseTo(2 - 0.01, 12);
+    const x = run([[100, 105, 99, 104], [104, 131, 103, 128]]);
+    expect(x.netR).toBeCloseTo(3 - 0.01, 12);
   });
 });
 
@@ -193,7 +204,7 @@ describe("verdicts", () => {
     Array.from({ length: n }, (_, i) => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-        variant, alignment: "aligned" as const,
+        variant, alignment: "aligned" as const, weekUsed: 0.2, monthUsed: 0.2, roomW: 2,
         symbol: `S${i % 7}`, scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir, type, firedRules: [],
         entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: net(i), netR: net(i), reason: "time" as const, holding: 1,
         controlNetR: ctrl(i), regime: null, quarter: "2025Q1",
@@ -215,9 +226,9 @@ describe("verdicts", () => {
     expect(r.heldOut.trades).toBeLessThan(MIN_HELDOUT_ROWS);
     expect(r.verdict).toBe("INSUFFICIENT");
   });
-  it("17 pre-registered primary groups (13 calendar + 4 rolling); descriptive groups carry no verdict", () => {
+  it("19 pre-registered primary groups (13 calendar + 4 rolling + 2 early entry); descriptive groups carry no verdict", () => {
     const res = evaluateGroups(mk(50, () => 0, () => 0));
-    expect(res.filter((r) => r.primary)).toHaveLength(17);
+    expect(res.filter((r) => r.primary)).toHaveLength(19);
     expect(res.filter((r) => !r.primary).every((r) => r.verdict === null)).toBe(true);
   });
   it("metrics: profit factor, median, max drawdown in R", () => {
@@ -234,7 +245,7 @@ describe("verdicts", () => {
     expect(md).toMatch(/Survivorship bias/);
     expect(md).toMatch(/\| inside\+ \| KEEP \|/);
     expect(tradesCsv(trades.slice(0, 1)).split("\n")[0]).toMatch(/^variant,symbol,trigger_date,fill_date,exit_date,direction,type/);
-    expect(simExperimentRow(res, { number: 29, date: "d", commit: "c", exit: "A", reportPath: "p", trades: 400 })).toMatch(/^\| 29 \| d \| c \|.*\| 17 \| STP trade sim exit A/);
+    expect(simExperimentRow(res, { number: 29, date: "d", commit: "c", exit: "A", reportPath: "p", trades: 400 })).toMatch(/^\| 29 \| d \| c \|.*\| 19 \| STP trade sim exit A/);
   });
 });
 
@@ -312,7 +323,7 @@ describe("step 1c: rolling opens (5/20 stocks, 7/30 crypto)", () => {
     const trades = Array.from({ length: 50 }, (_, i): Trade => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-        variant: "rolling", alignment: null, symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside",
+        variant: "rolling", alignment: null, weekUsed: null, monthUsed: null, roomW: null, symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside",
         firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: 0, netR: 0, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };
     });
@@ -341,5 +352,73 @@ describe("step 1b: HTF alignment, descriptive only", () => {
       "htf:egop:aligned", "htf:egop:partial", "htf:egop:against",
     ]);
     expect(g.every((r) => !r.primary && r.verdict === null)).toBe(true);
+  });
+});
+
+describe("§1d entry location vs the normal move", () => {
+  // 80 weekdays (16 weeks); each week's bars span a 10-point range (high 110, low 100), so W = 10.
+  const weekly = bars(Array.from({ length: 80 }, (): [number, number, number, number] => [105, 110, 100, 105]));
+  const days = weekly.map((b) => barDateOf(b)!);
+
+  it("week_used = (fill − lowest low since the week's open) / W, long; mirrored short", () => {
+    // trigger on a Wednesday: the fill (Thursday) is in the same week; that week's low so far is 100
+    const i = days.findIndex((d, k) => k > 60 && new Date(`${d}T12:00:00Z`).getUTCDay() === 3);
+    const long = entryLocation(weekly, i, 104, 1, 2);
+    expect(long.weekUsed).toBeCloseTo((104 - 100) / 10, 12);
+    const short = entryLocation(weekly, i, 104, -1, 2);
+    expect(short.weekUsed).toBeCloseTo((110 - 104) / 10, 12);
+    // room to 3R: W × (1 − week_used) / (3 × R)
+    expect(long.roomW).toBeCloseTo((10 * (1 - 0.4)) / 6, 12);
+  });
+
+  it("uses only completed bars up to the trigger day plus the fill price: a later bar changes nothing", () => {
+    const i = 70;
+    const a = entryLocation(weekly, i, 104, 1, 2);
+    const planted = weekly.map((b, k) => (k > i ? { ...b, high: 1e6, low: 1 } : b));
+    expect(entryLocation(planted, i, 104, 1, 2)).toEqual(a);
+  });
+
+  it("a fill that opens a new week uses the fill alone for that week (week_used 0)", () => {
+    const i = days.findIndex((d, k) => k > 60 && new Date(`${d}T12:00:00Z`).getUTCDay() === 5); // Friday trigger, Monday fill
+    expect(entryLocation(weekly, i, 104, 1, 2).weekUsed).toBe(0);
+  });
+
+  it("null until 10 completed weeks and 6 completed months exist before the fill", () => {
+    expect(entryLocation(weekly, 20, 104, 1, 2).weekUsed).toBeNull();
+    expect(entryLocation(weekly, 70, 104, 1, 2).monthUsed).toBeNull(); // 80 weekdays ≈ 4 months
+  });
+
+  it("early-entry groups need week_used and month_used < 0.5, and must beat all trades of their direction", () => {
+    const T0 = Date.UTC(2025, 0, 6);
+    const mk = (i: number, early: boolean, netR: number): Trade => {
+      const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
+      return {
+        variant: "calendar", alignment: null, weekUsed: early ? 0.3 : 0.8, monthUsed: early ? 0.3 : 0.8, roomW: 1, symbol: "S", scanId: d,
+        scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1,
+        risk: 0.1, grossR: netR, netR, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
+      };
+    };
+    // early trades +0.5R, late trades +1R: early beats its control but not all longs → DROP
+    const trades = Array.from({ length: 800 }, (_, i) => mk(i, i % 2 === 0, i % 2 === 0 ? 0.5 : 1));
+    const r = evaluateGroups(trades).find((g) => g.group === "early:long")!;
+    expect(r.heldOut.trades).toBeGreaterThanOrEqual(MIN_HELDOUT_ROWS);
+    expect(r.verdict).toBe("DROP");
+    expect(r.reason).toMatch(/all trades of its direction/);
+    // flip it: early +1R, late +0.5R → KEEP
+    const flipped = Array.from({ length: 800 }, (_, i) => mk(i, i % 2 === 0, i % 2 === 0 ? 1 : 0.5));
+    expect(evaluateGroups(flipped).find((g) => g.group === "early:long")!.verdict).toBe("KEEP");
+  });
+
+  it("descriptive buckets for week_used, month_used and room_w carry no verdict and report the 3R-hit rate", () => {
+    const res = evaluateGroups([]);
+    const loc = res.filter((g) => g.group.startsWith("loc:"));
+    expect(loc).toHaveLength(12);
+    expect(loc.every((g) => !g.primary && g.verdict === null)).toBe(true);
+    expect(groupMetrics([]).targetRate).toBeNull();
+  });
+
+  it("exit B is on hold", () => {
+    expect(EXITS_ON_HOLD.has("B")).toBe(true);
+    expect(EXITS_ON_HOLD.has("A")).toBe(false);
   });
 });

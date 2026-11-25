@@ -7,7 +7,7 @@
  * day D+1 or later reads only that day's own bar and earlier ones.
  */
 import type { DailyBar } from "@/lib/harvester/universe/bar-metrics";
-import { sma } from "@/lib/harvester/universe/bar-features";
+import { sma, weekStart } from "@/lib/harvester/universe/bar-features";
 import { computeStp, htfOpensAt } from "@/lib/harvester/universe/stp";
 import { barDateOf, windowStart } from "@/lib/harvester/universe/backfill";
 import { computeStpRolling, ROLLING_WINDOWS, type RollingWindows } from "@/lib/harvester/universe/stp-rolling";
@@ -24,10 +24,12 @@ export const CONTROL_WINDOW = 20;
 export const CONTROL_TRIES = 5;
 
 export type ExitRule = "A" | "B";
+/** §1d (Chris, 2026-11-25): exit A targets 3R. Exit B is ON HOLD (built, not run or registered). */
 export const EXIT_RULES: Record<ExitRule, { targetR: number; maxSessions: number; trailing: boolean }> = {
-  A: { targetR: 2, maxSessions: 10, trailing: false },
+  A: { targetR: 3, maxSessions: 10, trailing: false },
   B: { targetR: 3, maxSessions: 20, trailing: true },
 };
+export const EXITS_ON_HOLD: ReadonlySet<ExitRule> = new Set(["B"]);
 
 export type Dir = 1 | -1;
 
@@ -189,7 +191,8 @@ export const costInR = (fill: number, risk: number) => (COST_ROUND_TRIP * fill) 
 
 /**
  * Walk the trade from the fill bar f. Per bar: a gap through the stop exits at the open,
- * a gap through the target exits at the target (conservative); a bar touching both the
+ * a gap through the target exits at the open (§1d: the better price a resting limit
+ * order gets); a bar touching both the
  * stop and the target exits at the stop, including the fill bar; then the target; then
  * the time exit at the close of session f + maxSessions. Data ending first exits at the
  * last close.
@@ -217,7 +220,7 @@ export function simulateExit(
     const b = bars[j];
     if (j > f && b.open != null) {
       if (dir === 1 ? b.open <= stop : b.open >= stop) return done(j, b.open, "stop_gap");
-      if (dir === 1 ? b.open >= target : b.open <= target) return done(j, target, "target");
+      if (dir === 1 ? b.open >= target : b.open <= target) return done(j, b.open, "target");
     }
     const hitStop = dir === 1 ? b.low <= stop : b.high >= stop;
     const hitTarget = dir === 1 ? b.high >= target : b.low <= target;
@@ -286,6 +289,72 @@ export function matchedControl(
   return null;
 }
 
+// ── Entry location vs the normal move (§1d) ─────────────────────────────────────
+
+/** Completed calendar weeks / months averaged for the normal move W / M. */
+export const NORMAL_WEEKS = 10;
+export const NORMAL_MONTHS = 6;
+/** Pre-registered entry-location rule: both under this share of the normal move. */
+export const EARLY_ENTRY_MAX = 0.5;
+
+export interface EntryLocation {
+  weekUsed: number | null;
+  monthUsed: number | null;
+  /** W × (1 − week_used) / (3R distance); ≥ 1 means a normal week still has room for 3R. */
+  roomW: number | null;
+}
+
+/**
+ * Entry location of a fill on bar i+1 for a trigger on bar i. W is the mean high−low range
+ * of the NORMAL_WEEKS calendar weeks completed before the fill's week; M likewise over
+ * NORMAL_MONTHS months. Long: week_used = (fill − lowest low since the week's open) / W,
+ * the lowest low taken over bars of the fill's week dated ≤ D plus the fill itself; short
+ * mirrored with the highest high. Uses bars ≤ i and the fill price only.
+ */
+export function entryLocation(bars: readonly DailyBar[], i: number, fill: number, dir: Dir, risk: number, targetR = EXIT_RULES.A.targetR): EntryLocation {
+  const dates = (k: number) => barDateOf(bars[k]);
+  const fillDate = dates(i + 1);
+  if (!fillDate) return { weekUsed: null, monthUsed: null, roomW: null };
+  const period = (kind: "week" | "month") => {
+    const key = (d: string) => (kind === "week" ? weekStart(d) : d.slice(0, 7));
+    const need = kind === "week" ? NORMAL_WEEKS : NORMAL_MONTHS;
+    const cur = key(fillDate);
+    const ranges = new Map<string, { hi: number; lo: number }>();
+    let extreme = fill; // lowest low (long) / highest high (short) since the period's open
+    let complete = false; // an older period exists, so the oldest one used isn't cut off by the data start
+    for (let k = i; k >= 0; k--) {
+      const d = dates(k);
+      if (!d) continue;
+      const kk = key(d);
+      if (kk === cur) {
+        extreme = dir === 1 ? Math.min(extreme, bars[k].low) : Math.max(extreme, bars[k].high);
+        continue;
+      }
+      if (!ranges.has(kk)) {
+        if (ranges.size === need) {
+          complete = true;
+          break;
+        }
+        ranges.set(kk, { hi: -Infinity, lo: Infinity });
+      }
+      const r = ranges.get(kk)!;
+      r.hi = Math.max(r.hi, bars[k].high);
+      r.lo = Math.min(r.lo, bars[k].low);
+    }
+    if (!complete) return null;
+    const normal = [...ranges.values()].reduce((sum, r) => sum + (r.hi - r.lo), 0) / need;
+    if (!(normal > 0)) return null;
+    return { used: (dir === 1 ? fill - extreme : extreme - fill) / normal, normal };
+  };
+  const w = period("week");
+  const m = period("month");
+  return {
+    weekUsed: w?.used ?? null,
+    monthUsed: m?.used ?? null,
+    roomW: w ? (w.normal * (1 - w.used)) / (targetR * risk) : null,
+  };
+}
+
 export type Alignment = "aligned" | "partial" | "against";
 
 /** Step 1b: stp_htf_opens × direction: +1 aligned, −1 against, anything else (±0.5, 0) partial; null unknown. */
@@ -295,7 +364,7 @@ export function htfAlignment(htf: number | null, dir: Dir): Alignment | null {
   return a >= 1 ? "aligned" : a <= -1 ? "against" : "partial";
 }
 
-export interface Trade {
+export interface Trade extends EntryLocation {
   variant: Variant;
   alignment: Alignment | null;
   symbol: string;
@@ -380,6 +449,7 @@ export function simulateSymbol(
     const control = matchedControl(s, bars, closes, info, rule);
     if (!control) counts.noControl++;
     trades.push({
+      ...entryLocation(bars, s.i, e.fill, s.dir, e.risk, EXIT_RULES[rule].targetR),
       variant,
       alignment: htfAlignment(s.htf, s.dir),
       symbol,
@@ -412,6 +482,8 @@ export function simulateSymbol(
 export interface GroupMetrics {
   trades: number;
   winRate: number | null;
+  /** Share of trades that exited at the target (3R). */
+  targetRate: number | null;
   avgR: number | null; // net
   medianR: number | null; // net
   avgGrossR: number | null;
@@ -459,6 +531,7 @@ export function groupMetrics(trades: readonly Trade[]): GroupMetrics {
   return {
     trades: trades.length,
     winRate: trades.length ? wins.length / trades.length : null,
+    targetRate: trades.length ? trades.filter((t) => t.reason === "target").length / trades.length : null,
     avgR: exp,
     medianR: median(net),
     avgGrossR: mean(trades.map((t) => t.grossR)),
@@ -490,18 +563,29 @@ export interface GroupResult {
   reason: string;
 }
 
+/** §1d descriptive buckets for week_used and month_used. */
+export const USED_BUCKETS: ReadonlyArray<{ label: string; lo: number; hi: number }> = [
+  { label: "<0.25", lo: -Infinity, hi: 0.25 },
+  { label: "0.25-0.5", lo: 0.25, hi: 0.5 },
+  { label: "0.5-0.75", lo: 0.5, hi: 0.75 },
+  { label: "0.75-1", lo: 0.75, hi: 1 },
+  { label: ">=1", lo: 1, hi: Infinity },
+];
+
 export const TRIGGER_TYPES = ["inside", "butn", "brutn", "mech1", "mech2", "egop"] as const;
 
 /** The pre-registered primary groups: all, long, short, and each type × direction the rules allow. */
-type GroupKey = Pick<Trade, "dir" | "type" | "variant">;
+type GroupKey = Pick<Trade, "dir" | "type" | "variant" | "weekUsed" | "monthUsed">;
+const early = (t: GroupKey) => t.weekUsed != null && t.monthUsed != null && t.weekUsed < EARLY_ENTRY_MAX && t.monthUsed < EARLY_ENTRY_MAX;
 const cal = (t: GroupKey) => t.variant === "calendar";
 
 /**
- * The pre-registered primary groups, 17 per exit: all, long, short and each type ×
- * direction on the calendar triggers (13), plus inside± and the U-turns with rolling
- * opens (4, step 1c).
+ * The pre-registered primary groups, 19 per exit: all, long, short and each type ×
+ * direction on the calendar triggers (13); inside± and the U-turns with rolling opens
+ * (4, step 1c); and early entries, long and short (2, §1d), which must also beat all
+ * calendar trades of their direction (`benchmark`).
  */
-export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey) => boolean }> = [
+export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey) => boolean; benchmark?: (t: GroupKey) => boolean }> = [
   { group: "all", match: cal },
   { group: "long", match: (t) => cal(t) && t.dir === 1 },
   { group: "short", match: (t) => cal(t) && t.dir === -1 },
@@ -512,6 +596,8 @@ export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey)
     group: `rolling:${type}${dir === 1 ? "+" : "-"}`,
     match: (t: GroupKey) => t.variant === "rolling" && t.type === type && t.dir === dir,
   })),
+  { group: "early:long", match: (t) => cal(t) && t.dir === 1 && early(t), benchmark: (t) => cal(t) && t.dir === 1 },
+  { group: "early:short", match: (t) => cal(t) && t.dir === -1 && early(t), benchmark: (t) => cal(t) && t.dir === -1 },
 ];
 
 /**
@@ -522,19 +608,28 @@ export function evaluateGroups(trades: readonly Trade[]): GroupResult[] {
   const { test } = timeSplit(trades);
   const heldIds = new Set(test.map((t) => t.scanId));
   const foldIds = walkForwardFolds(trades).map((f) => new Set(f.test.map((t) => t.scanId)));
-  const judge = (group: string, sel: Trade[], primary: boolean): GroupResult => {
+  const judge = (group: string, sel: Trade[], primary: boolean, bench?: Trade[]): GroupResult => {
     const heldOut = groupMetrics(sel.filter((t) => heldIds.has(t.scanId)));
     const folds = foldIds.map((ids) => groupMetrics(sel.filter((t) => ids.has(t.scanId))));
-    const foldsPassed = folds.filter((f) => passes(f, MIN_FOLD_ROWS)).length;
+    // §1d early-entry groups must also beat all trades of their direction in the same split.
+    const beatsBench = (m: GroupMetrics, ids: ReadonlySet<string>) => {
+      if (!bench) return true;
+      const b = groupMetrics(bench.filter((t) => ids.has(t.scanId)));
+      return m.expectancy != null && b.expectancy != null && m.expectancy > b.expectancy;
+    };
+    const heldOutPasses = passes(heldOut, MIN_HELDOUT_ROWS) && beatsBench(heldOut, heldIds);
+    const foldsPassed = folds.filter((f, k) => passes(f, MIN_FOLD_ROWS) && beatsBench(f, foldIds[k])).length;
     let verdict: SimVerdict | null = null;
     let reason = "descriptive only";
     if (primary) {
       if (heldOut.trades < MIN_HELDOUT_ROWS) {
         verdict = "INSUFFICIENT";
         reason = `${heldOut.trades} held-out trades (need ${MIN_HELDOUT_ROWS})`;
-      } else if (!passes(heldOut, MIN_HELDOUT_ROWS)) {
+      } else if (!heldOutPasses) {
         verdict = "DROP";
-        reason = "held-out net expectancy not > 0 and above its matched control";
+        reason = bench
+          ? "held-out net expectancy not > 0, above its matched control and above all trades of its direction"
+          : "held-out net expectancy not > 0 and above its matched control";
       } else if (foldsPassed < FOLDS_REQUIRED) {
         verdict = "DROP";
         reason = `passes held out but only ${foldsPassed} of ${WALK_FORWARD_FOLDS} folds (need ${FOLDS_REQUIRED})`;
@@ -545,13 +640,18 @@ export function evaluateGroups(trades: readonly Trade[]): GroupResult[] {
     }
     return { group, primary, all: groupMetrics(sel), heldOut, folds, foldsPassed, verdict, reason };
   };
-  const out: GroupResult[] = PRIMARY_GROUPS.map((g) => judge(g.group, trades.filter(g.match), true));
+  const out: GroupResult[] = PRIMARY_GROUPS.map((g) => judge(g.group, trades.filter(g.match), true, g.benchmark ? trades.filter(g.benchmark) : undefined));
   const calendar = trades.filter((t) => t.variant === "calendar");
   for (const type of TRIGGER_TYPES) out.push(judge(`type:${type}`, calendar.filter((t) => t.type === type), false));
   // Step 1b: do the weekly/monthly opens add anything on top of the MA- and catalyst-based patterns?
   for (const type of ["mech1", "mech2", "egop"] as const)
     for (const a of ["aligned", "partial", "against"] as const)
       out.push(judge(`htf:${type}:${a}`, calendar.filter((t) => t.type === type && t.alignment === a), false));
+  // §1d descriptive: expectancy and 3R-hit rate by how much of the normal move the entry had used
+  for (const m of ["weekUsed", "monthUsed"] as const)
+    for (const b of USED_BUCKETS) out.push(judge(`loc:${m}:${b.label}`, calendar.filter((t) => t[m] != null && t[m]! >= b.lo && t[m]! < b.hi), false));
+  out.push(judge("loc:roomW:<1", calendar.filter((t) => t.roomW != null && t.roomW < 1), false));
+  out.push(judge("loc:roomW:>=1", calendar.filter((t) => t.roomW != null && t.roomW >= 1), false));
   for (const r of ["spy_above_sma20", "spy_below_sma20"] as const) out.push(judge(`regime:${r}`, calendar.filter((t) => t.regime === r), false));
   for (const q of [...new Set(calendar.map((t) => t.quarter))].sort()) out.push(judge(`quarter:${q}`, calendar.filter((t) => t.quarter === q), false));
   return out;

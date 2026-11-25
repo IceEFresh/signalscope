@@ -121,7 +121,7 @@ The stock regime (`regime.*`) is not attached to crypto rows. The regime is stoc
 - **Log:** both backfill runs stay in `scripts/backtesting-experiments.md`. The first run's row is kept, and the rerun after this fix gets its own row.
 - **Not covered by this amendment:** the U-shape the first backfill run showed in `return_20d`, `rsi14_max_20d` and `sma20_vs_sma50` (both extremes beat the middle). Testing that would be a new hypothesis, such as beta-adjusted excess or |feature| buckets. It needs its own pre-registration and a test on the live universe dataset, not on the backfill that suggested it.
 
-## STP trigger trades (P3-0i): 17 comparisons per exit, reported separately
+## STP trigger trades (P3-0i): 19 comparisons, exit A only (exit B on hold)
 Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulates STP triggers as trades on the P3-0g backfill bars, the chart cache in `scripts/output/backfill-bars/`. It runs on every cached symbol except SPY, with trigger dates in the backfill's last 2 years of SPY sessions. The survivorship bias is the same as the backfill's: current members only, so results are optimistic.
 
 **Setups.** `computeStp` on each day D's live-window slice, the same slicing as P3-0g: bars dated on or before D, after D minus 3 months. Every `trigger ≠ 0` is one setup, with its own `entry`, `stop`, `fudge`, `triggerType` and `firedRules`. The backfill has no earnings dates, so `egop` never fires, and its groups will be INSUFFICIENT.
@@ -132,14 +132,14 @@ Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulat
 - An open at or past the stop, or R = |fill − stop| ≤ 0, skips the setup (counted).
 
 **Exits.** Both exits use the trigger's stop and these bar rules, in this order on each bar:
-1. From the bar after the fill: a gap through the stop exits at the open. A gap through the target exits **at the target**, not the better open (conservative).
+1. From the bar after the fill: a gap through the stop exits at the open. A gap through the target also exits **at the open**, the better price a resting limit order gets (§1d, Chris 2026-11-25).
 2. A bar that touches both the stop and the target exits at the stop. This includes the fill bar.
 3. Otherwise the target.
 4. Otherwise the time exit at that session's close.
 
 If the data ends first, the trade exits at the last close (`end_of_data`). Exit-specific rules:
-- **Exit A (primary):** target 2R, time exit at the close of the 10th session after the fill.
-- **Exit B (secondary):** target 3R, time exit at the 20th session, plus the STP trailing exits from docs/STP-SIGNALS.md, evaluated on each completed bar and applied from the next bar. The stop only tightens. `fudge` is the trigger bar's.
+- **Exit A (the registered test):** target **3R** (§1d), time exit at the close of the 10th session after the fill.
+- **Exit B: ON HOLD, not registered and not run** until Chris confirms the STP trade management (§1d). The code is built, and the script refuses `--exit B`. When it's released, its rules and comparisons get their own dated amendment here, before its first run. As built: target 3R, time exit at the 20th session, plus the STP trailing exits from docs/STP-SIGNALS.md, evaluated on each completed bar and applied from the next bar. The stop only tightens. `fudge` is the trigger bar's.
   - **mX:** the close, or sma10, crosses below sma20 → stop to low − fudge.
   - **pmX:** trendDirection at t−1 ≥ 1 and the close crosses below sma10 → stop to low − fudge.
   - **Bar stop:** trendDirection ≥ 1 and close > low[t−1] → stop to low[t−1] − fudge.
@@ -178,19 +178,29 @@ If the data ends first, the trade exits at the last close (`end_of_data`). Exit-
 - Their matched controls are drawn from sessions where the **rolling** trigger is 0. Calendar controls are drawn where the calendar trigger is 0.
 - **Overlap** is reported at setup level (same ticker, date and direction, inside and U-turn only): both fire, calendar only, rolling only.
 
-**Primary groups, 17 per exit:**
-- calendar triggers: all, long, short, inside+, inside−, butn+, brutn−, mech1+, mech1−, mech2+, mech2−, egop+, egop− (13);
-- rolling triggers: rolling inside+, rolling inside−, rolling butn+, rolling brutn− (4).
+**Entry location vs the normal move (§1d, the reviewer's working definition, which Chris may correct before the run).**
+- `W`: the mean high−low range of the 10 calendar weeks completed before the fill's week. `M`: the same over the 6 completed calendar months.
+- **Long:** `week_used = (fill − lowest low since the week's open) / W` and `month_used` likewise with `M`. The lowest low is taken over bars of the fill's week (or month) dated on or before the trigger day, **plus the fill price itself**, so a fill that opens a new week has `week_used = 0`. Short is mirrored with the highest high.
+- `room_w = W × (1 − week_used) / (3 × R)`. A value ≥ 1 means a normal week still has room for 3R.
+- Null when fewer than 10 complete weeks or 6 complete months exist before the fill. The oldest period used must have an earlier period before it, so the start of the data can't cut it off.
+- No look-ahead: only bars up to the trigger day plus the fill price.
+- **Early entry**, a primary test: `week_used < 0.5` **and** `month_used < 0.5`, on calendar triggers, long and short separately (+2 comparisons). KEEP needs the usual rule **and** a net expectancy above all calendar trades of the same direction, in the held-out split and in each passing fold.
 
-"all", "long" and "short" cover calendar triggers only. `butn` is bullish only and `brutn` bearish only. Exit A's 17 are the primary test; exit B's 17 are reported separately and never pooled with exit A. At a nominal 5%, about 1 KEEP per exit could come from chance before the fold rule.
+**Primary groups, 19, exit A:**
+- calendar triggers: all, long, short, inside+, inside−, butn+, brutn−, mech1+, mech1−, mech2+, mech2−, egop+, egop− (13);
+- rolling triggers: rolling inside+, rolling inside−, rolling butn+, rolling brutn− (4);
+- early entry: early long, early short (2).
+
+"all", "long" and "short" cover calendar triggers only. `butn` is bullish only and `brutn` bearish only. EGOP stays INSUFFICIENT until P3-0i3 adds historical earnings dates. At a nominal 5%, about 1 KEEP could come from chance before the fold rule.
 
 **Descriptive only, no verdict (calendar triggers):**
 - by `triggerType`, both directions;
 - **step 1b:** mech1, mech2 and egop, each split by `stp_htf_opens` alignment with the trade direction: aligned (htf × direction = +1), against (−1), partial (±0.5 or 0). This shows whether the weekly and monthly opens add anything on top of each pattern's own criteria;
+- §1d: net expectancy and 3R-hit rate by `week_used` and `month_used` bucket (< 0.25, 0.25–0.5, 0.5–0.75, 0.75–1, ≥ 1) and by `room_w` (< 1, ≥ 1);
 - SPY above or below its SMA20 on the trigger day, from the backfill SPY bars;
 - calendar quarter.
 
-**Output.** One report, one trades CSV and one experiment-log row per exit. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
+**Output.** One report, one trades CSV (with `week_used`, `month_used` and `room_w`) and one experiment-log row, for exit A. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
 
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.
