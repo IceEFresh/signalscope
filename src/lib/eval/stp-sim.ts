@@ -11,6 +11,8 @@ import { sma, weekStart, wilderAtr } from "@/lib/harvester/universe/bar-features
 import { computeStp, htfOpensAt } from "@/lib/harvester/universe/stp";
 import { barDateOf, windowStart } from "@/lib/harvester/universe/backfill";
 import { computeStpRolling, ROLLING_WINDOWS, type RollingWindows } from "@/lib/harvester/universe/stp-rolling";
+import { SWING_KS, swingEntry, zigzag, type Pivot } from "@/lib/harvester/universe/swings";
+import { pyramidLayers, type LayerState, type PyramidInputs } from "@/lib/harvester/universe/pyramid";
 import { timeSplit, walkForwardFolds, FOLDS_REQUIRED, MIN_FOLD_ROWS, MIN_HELDOUT_ROWS, WALK_FORWARD_FOLDS } from "./rules";
 
 export const SIM_VERSION = 1;
@@ -199,41 +201,68 @@ export interface TradeExit {
   exitIndex: number;
   exit: number;
   reason: ExitReason;
-  /** All units, in units of the initial 1-unit R. */
+  /** Dollar P&L over the initial base risk (§1h): all units. */
   grossR: number;
   netR: number;
-  /** The initial unit alone, net of its two legs' costs. */
+  /** The initial shares alone, net of their two legs' costs, over the base risk. */
   initialUnitR: number;
   holding: number;
   adds: number;
+  /** Adds that filled on the entry bar itself (intraday order unknowable from daily bars). */
+  sameBarAdds: number;
   addGapSkips: number;
   reached3R: boolean;
-  /** Position size at the exit, in initial units (1, 1.5, 2.25, ...). */
+  /** Shares at the exit over the initial shares (1, 1.5, 2.2, …). */
   size: number;
+  shares: number;
+  sharesAtExit: number;
+  dollarGross: number;
+  dollarNet: number;
 }
 
 export const costInR = (fill: number, risk: number) => (COST_ROUND_TRIP * fill) / risk;
-/** §1e: exit B costs are 0.10% of notional per leg (entry, each add, exit). */
+/** §1e: costs are 0.10% of traded value per leg (entry, each add, exit). */
 export const COST_PER_LEG = COST_ROUND_TRIP;
 export const ADD_EVERY_R = 2;
 export const ADD_FRACTION = 0.5;
 export const TRAIL_AFTER_R = 3;
 export const EXIT_B_CAP = 60;
+/** §1h: every position risks $100 × size_mult. */
+export const BASE_RISK_DOLLARS = 100;
+
+/** §1h: floor(base risk / per-share risk); 0 means no trade (size_skip). */
+export const initialShares = (baseRisk: number, risk: number) => (risk > 0 ? Math.floor(baseRisk / risk + 1e-9) : 0);
+
+function finish(
+  legs: ReadonlyArray<{ qty: number; price: number }>,
+  dir: Dir,
+  exit: number,
+  baseRisk: number,
+  base: Omit<TradeExit, "grossR" | "netR" | "initialUnitR" | "size" | "shares" | "sharesAtExit" | "dollarGross" | "dollarNet" | "exit">,
+): TradeExit {
+  const shares = legs[0].qty;
+  const sharesAtExit = legs.reduce((sum, l) => sum + l.qty, 0);
+  const dollarGross = legs.reduce((sum, l) => sum + l.qty * dir * (exit - l.price), 0);
+  const costs = COST_PER_LEG * (legs.reduce((sum, l) => sum + l.qty * l.price, 0) + sharesAtExit * exit);
+  const dollarNet = dollarGross - costs;
+  const fill = legs[0].price;
+  const initialUnitR = (shares * dir * (exit - fill) - COST_PER_LEG * shares * (fill + exit)) / baseRisk;
+  return { ...base, exit, grossR: dollarGross / baseRisk, netR: dollarNet / baseRisk, initialUnitR, size: sharesAtExit / shares, shares, sharesAtExit, dollarGross, dollarNet };
+}
 
 /**
  * Exit A (reference, no verdicts): stop, 3R target as a limit order (a gap through it
  * exits at the open), time exit at the close of session f + 10. A gap through the stop
  * exits at the open; a bar touching both exits at the stop, fill bar included.
+ * Sized by §1h: floor(baseRisk / risk) shares, no adds.
  */
-export function simulateExitA(bars: readonly DailyBar[], f: number, dir: Dir, fill: number, risk: number, stop: number): TradeExit {
+export function simulateExitA(bars: readonly DailyBar[], f: number, dir: Dir, fill: number, risk: number, stop: number, baseRisk = BASE_RISK_DOLLARS): TradeExit {
   const { targetR, maxSessions } = EXIT_RULES.A;
   const target = fill + dir * targetR * risk;
   const last = Math.min(bars.length - 1, f + maxSessions);
-  const done = (j: number, exit: number, reason: ExitReason): TradeExit => {
-    const grossR = (dir * (exit - fill)) / risk;
-    const netR = grossR - costInR(fill, risk);
-    return { exitIndex: j, exit, reason, grossR, netR, initialUnitR: netR, holding: j - f, adds: 0, addGapSkips: 0, reached3R: dir * (exit - fill) >= 3 * risk, size: 1 };
-  };
+  const legs = [{ qty: initialShares(baseRisk, risk), price: fill }];
+  const done = (j: number, exit: number, reason: ExitReason) =>
+    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: 0, sameBarAdds: 0, addGapSkips: 0, reached3R: dir * (exit - fill) >= 3 * risk });
   for (let j = f; j <= last; j++) {
     const b = bars[j];
     if (j > f && b.open != null) {
@@ -248,14 +277,16 @@ export function simulateExitA(bars: readonly DailyBar[], f: number, dir: Dir, fi
 }
 
 /**
- * Exit B, STP management (§1e, primary). 1 unit at `fill` with the initial stop. Per bar,
- * in order: a gap through the stop exits at the open; a bar touching the stop exits at the
- * stop (before any add on that bar); adds at fill ± 2R, 4R, … as stop-limit orders, each
- * 50% of the current size; an add level opened through is skipped and the next level stays
- * live. After an add, the stop moves to the size-weighted breakeven when that's tighter,
- * from the next bar. Once a high (low, short) reaches fill ± 3R, each completed bar can
- * tighten the stop with trailCandidate, from the next bar; the stop never loosens. No
- * target; a 60-session cap exits at that close. R is total P&L over the initial 1-unit R.
+ * Exit B, STP management (§1e, primary), sized by §1h. Starts with
+ * floor(baseRisk / risk) shares at `fill` and the initial stop. Per bar, in order: a gap
+ * through the stop exits at the open; a bar touching the stop exits at the stop (before
+ * any add on that bar); adds at fill ± 2R, 4R, … as stop-limit orders, each
+ * floor(50% of current shares) (0 → no add); an add level opened through is skipped and
+ * the next level stays live. After an add, the stop moves to the size-weighted breakeven
+ * when that's tighter, from the next bar. Once a high (low, short) reaches fill ± 3R, each
+ * completed bar can tighten the stop with trailCandidate, from the next bar; the stop
+ * never loosens. No target; a 60-session cap exits at that close. R = dollar P&L over the
+ * base risk.
  */
 export function simulateExitB(
   bars: readonly DailyBar[],
@@ -268,8 +299,9 @@ export function simulateExitB(
   stop0: number,
   fudge: number,
   type: string,
+  baseRisk = BASE_RISK_DOLLARS,
 ): TradeExit {
-  const legs: Array<{ qty: number; price: number }> = [{ qty: 1, price: fill }];
+  const legs: Array<{ qty: number; price: number }> = [{ qty: initialShares(baseRisk, risk), price: fill }];
   const size = () => legs.reduce((s, l) => s + l.qty, 0);
   const avgCost = () => legs.reduce((s, l) => s + l.qty * l.price, 0) / size();
   const tighter = (a: number, b: number) => (dir === 1 ? Math.max(a, b) : Math.min(a, b));
@@ -278,18 +310,14 @@ export function simulateExitB(
   let trailed = false;
   let nextAdd = 1; // the next add level is fill ± nextAdd × 2R
   let addGapSkips = 0;
+  let sameBarAdds = 0;
   let reached3R = false;
   const threeR = fill + dir * TRAIL_AFTER_R * risk;
   const last = Math.min(bars.length - 1, f + EXIT_B_CAP);
   const mech = isMechanical(type);
 
-  const done = (j: number, exit: number, reason: ExitReason): TradeExit => {
-    const pnl = legs.reduce((s, l) => s + l.qty * dir * (exit - l.price), 0);
-    const costs = COST_PER_LEG * (legs.reduce((s, l) => s + l.qty * l.price, 0) + size() * exit);
-    const grossR = pnl / risk;
-    const initialUnitR = (dir * (exit - fill) - COST_PER_LEG * (fill + exit)) / risk;
-    return { exitIndex: j, exit, reason, grossR, netR: grossR - costs / risk, initialUnitR, holding: j - f, adds: legs.length - 1, addGapSkips, reached3R, size: size() };
-  };
+  const done = (j: number, exit: number, reason: ExitReason) =>
+    finish(legs, dir, exit, baseRisk, { exitIndex: j, reason, holding: j - f, adds: legs.length - 1, sameBarAdds, addGapSkips, reached3R });
   const stopReason = (): ExitReason => (trailed ? "trail_stop" : movedToBE ? "be_stop" : "stop");
 
   for (let j = f; j <= last; j++) {
@@ -306,8 +334,11 @@ export function simulateExitB(
         continue;
       }
       if (dir === 1 ? b.high < level : b.low > level) break;
-      legs.push({ qty: size() * ADD_FRACTION, price: level });
       nextAdd++;
+      const qty = Math.floor(size() * ADD_FRACTION);
+      if (qty < 1) continue; // §1h: an add rounding to 0 is no add
+      legs.push({ qty, price: level });
+      if (j === f) sameBarAdds++;
       const be = avgCost();
       if (tighter(stop, be) === be && be !== stop) pendingStop = be;
     }
@@ -342,8 +373,9 @@ export function simulateExit(
   fudge: number,
   type: string,
   rule: ExitRule,
+  baseRisk = BASE_RISK_DOLLARS,
 ): TradeExit {
-  return rule === "A" ? simulateExitA(bars, f, dir, fill, risk, stop) : simulateExitB(bars, closes, atr, f, dir, fill, risk, stop, fudge, type);
+  return rule === "A" ? simulateExitA(bars, f, dir, fill, risk, stop, baseRisk) : simulateExitB(bars, closes, atr, f, dir, fill, risk, stop, fudge, type, baseRisk);
 }
 
 /** Deterministic PRNG (mulberry32). */
@@ -373,7 +405,7 @@ export interface ControlResult {
  * Matched control for a filled trade: a random non-trigger session within ±CONTROL_WINDOW
  * of the trigger, same direction, entry high + fudge (low − fudge short) and the mirror
  * stop from that bar, then the same entry, management (the trade's type decides mX vs
- * pmX) and cost rules. Up to CONTROL_TRIES sessions are tried until one fills; null if
+ * pmX), base risk (the trade's size_mult) and cost rules. Up to CONTROL_TRIES sessions are tried until one fills; null if
  * none does.
  */
 export function matchedControl(
@@ -384,6 +416,7 @@ export function matchedControl(
   rule: ExitRule,
   seedBase = CONTROL_SEED,
   atr: ReadonlyArray<number | null> = atrSeries(bars),
+  baseRisk = BASE_RISK_DOLLARS,
 ): ControlResult | null {
   const pool: number[] = [];
   for (let c = setup.i - CONTROL_WINDOW; c <= setup.i + CONTROL_WINDOW; c++) {
@@ -398,8 +431,8 @@ export function matchedControl(
     const entry = setup.dir === 1 ? bars[c].high + fudge : bars[c].low - fudge;
     const stop = setup.dir === 1 ? bars[c].low - fudge : bars[c].high + fudge;
     const e = entryOnNextBar(bars[c + 1], setup.dir, entry, stop);
-    if (e.status !== "filled") continue;
-    const x = simulateExit(bars, closes, atr, c + 1, setup.dir, e.fill, e.risk, stop, fudge, setup.type, rule);
+    if (e.status !== "filled" || initialShares(baseRisk, e.risk) < 1) continue;
+    const x = simulateExit(bars, closes, atr, c + 1, setup.dir, e.fill, e.risk, stop, fudge, setup.type, rule, baseRisk);
     return { i: c, netR: x.netR };
   }
   return null;
@@ -480,8 +513,32 @@ export function htfAlignment(htf: number | null, dir: Dir): Alignment | null {
   return a >= 1 ? "aligned" : a <= -1 ? "against" : "partial";
 }
 
+export interface SwingScores {
+  rallyUsed: number | null;
+  rallyAge: number | null;
+  room3R: number | null;
+  pullbackRatio: number | null;
+}
+
 export interface Trade extends EntryLocation {
   variant: Variant;
+  /** §1f: swing-structure entry scores per zigzag threshold k ("1.5", "2", "3"). */
+  swing: Record<string, SwingScores>;
+  /** §1g Power Pyramid layers and size multipliers. */
+  layerMarket: LayerState | null;
+  layerSector: LayerState | null;
+  layerIndustry: LayerState | null;
+  sizeMult: number;
+  sizeMultIndustry: number;
+  sizeMultOpens: number;
+  sizeMultTrend: number;
+  /** §1h dollar sizing. */
+  baseRisk: number;
+  shares: number;
+  sharesAtExit: number;
+  dollarGross: number;
+  dollarNet: number;
+  sameBarAdds: number;
   alignment: Alignment | null;
   symbol: string;
   /** Trigger date: the time key for the split. */
@@ -523,9 +580,15 @@ export interface SymbolCounts {
   skippedOverlap: number;
   noBar: number;
   noControl: number;
+  /** §1h: 0 shares at $100 × size_mult. */
+  sizeSkip: number;
+  /** §1g: trades with a market or sector layer that had no data (treated as mixed). */
+  layerNull: number;
 }
 
-export const emptyCounts = (): SymbolCounts => ({ setups: 0, filled: 0, cancelled: 0, gapSkip: 0, skippedGap: 0, skippedOverlap: 0, noBar: 0, noControl: 0 });
+export const emptyCounts = (): SymbolCounts => ({
+  setups: 0, filled: 0, cancelled: 0, gapSkip: 0, skippedGap: 0, skippedOverlap: 0, noBar: 0, noControl: 0, sizeSkip: 0, layerNull: 0,
+});
 
 /** SPY above/below its SMA20 by date, from SPY's own bars. */
 export function spyRegimeByDate(spy: readonly DailyBar[]): Map<string, Trade["regime"]> {
@@ -546,8 +609,17 @@ export function simulateSymbol(
   symbol: string,
   bars: readonly DailyBar[],
   rule: ExitRule,
-  opts: { sessions?: ReadonlySet<string>; regime?: ReadonlyMap<string, Trade["regime"]>; scanned?: Scanned; variant?: Variant } = {},
-): { trades: Trade[]; counts: SymbolCounts } {
+  opts: {
+    sessions?: ReadonlySet<string>;
+    regime?: ReadonlyMap<string, Trade["regime"]>;
+    scanned?: Scanned;
+    variant?: Variant;
+    /** §1g ETF states for this symbol's market, sector and industry layers; null → every layer mixed. */
+    pyramid?: PyramidInputs | null;
+    /** §1f zigzag pivots per k, computed once per symbol. */
+    pivots?: Record<string, Pivot[]>;
+  } = {},
+): { trades: Trade[]; counts: SymbolCounts; sizeSkipByType: Record<string, number> } {
   const scanned = opts.scanned ?? scanSymbol(symbol, bars, opts.sessions);
   const variant = opts.variant ?? "calendar";
   const setups = variant === "rolling" ? scanned.rollingSetups : scanned.setups;
@@ -555,6 +627,9 @@ export function simulateSymbol(
   const closes = bars.map((b) => b.close);
   const atr = atrSeries(bars);
   const counts = emptyCounts();
+  const sizeSkipByType: Record<string, number> = {};
+  const pivots = opts.pivots ?? Object.fromEntries(SWING_KS.map((k) => [String(k), zigzag(bars, k)]));
+  const noPyramid: PyramidInputs = { market: [null, null, null], sector: null, industry: null };
   const trades: Trade[] = [];
   let openUntil = -1; // exit bar of the open trade; a trigger on the exit day itself is allowed
   for (const s of setups) {
@@ -569,12 +644,35 @@ export function simulateSymbol(
     else if (e.status === "skipped_gap") counts.skippedGap++;
     else if (e.status === "no_bar") counts.noBar++;
     if (e.status !== "filled") continue;
+    // §1g size from the layers above the stock, §1h shares at $100 × size_mult
+    const layers = pyramidLayers(opts.pyramid ?? noPyramid, s.date, s.dir);
+    const baseRisk = BASE_RISK_DOLLARS * layers.sizeMult;
+    if (initialShares(baseRisk, e.risk) < 1) {
+      counts.sizeSkip++;
+      sizeSkipByType[s.type] = (sizeSkipByType[s.type] ?? 0) + 1;
+      continue;
+    }
+    if (layers.market == null || layers.sector == null) counts.layerNull++;
     counts.filled++;
-    const x = simulateExit(bars, closes, atr, s.i + 1, s.dir, e.fill, e.risk, s.stop, s.fudge, s.type, rule);
+    const x = simulateExit(bars, closes, atr, s.i + 1, s.dir, e.fill, e.risk, s.stop, s.fudge, s.type, rule, baseRisk);
     openUntil = x.exitIndex;
-    const control = matchedControl(s, bars, closes, info, rule, CONTROL_SEED, atr);
+    const control = matchedControl(s, bars, closes, info, rule, CONTROL_SEED, atr, baseRisk);
     if (!control) counts.noControl++;
     trades.push({
+      swing: Object.fromEntries(SWING_KS.map((k) => [String(k), swingEntry(bars, s.i, e.fill, e.risk, s.dir, k, pivots[String(k)])])),
+      layerMarket: layers.market,
+      layerSector: layers.sector,
+      layerIndustry: layers.industry,
+      sizeMult: layers.sizeMult,
+      sizeMultIndustry: layers.sizeMultIndustry,
+      sizeMultOpens: layers.sizeMultOpens,
+      sizeMultTrend: layers.sizeMultTrend,
+      baseRisk,
+      shares: x.shares,
+      sharesAtExit: x.sharesAtExit,
+      dollarGross: x.dollarGross,
+      dollarNet: x.dollarNet,
+      sameBarAdds: x.sameBarAdds,
       ...entryLocation(bars, s.i, e.fill, s.dir, e.risk, TRAIL_AFTER_R),
       variant,
       alignment: htfAlignment(s.htf, s.dir),
@@ -605,7 +703,7 @@ export function simulateSymbol(
       quarter: quarterOf(s.date),
     });
   }
-  return { trades, counts };
+  return { trades, counts, sizeSkipByType };
 }
 
 // ── Metrics and verdicts ───────────────────────────────────────────────────────
@@ -636,6 +734,12 @@ export interface GroupMetrics {
   avgRNot3R: number | null;
   timeCaps: number;
   avgInitialUnitR: number | null;
+  sameBarAdds: number;
+  /** §1h: total dollar P&L (net) and its max drawdown, trades in exit-date order. */
+  dollarNet: number;
+  maxDrawdownDollar: number | null;
+  /** §1g: size-weighted R = R × size_mult (the portfolio view under the sizing rule). */
+  sizeWeightedR: number;
 }
 
 const mean = (xs: readonly number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null);
@@ -660,6 +764,69 @@ export function maxDrawdownR(trades: readonly Pick<Trade, "fillDate" | "symbol" 
     dd = Math.max(dd, peak - cum);
   }
   return dd;
+}
+
+/** Max peak-to-trough of cumulative dollar P&L, trades in exit-date order. */
+export function maxDrawdownDollar(trades: readonly Pick<Trade, "exitDate" | "symbol" | "dollarNet">[]): number | null {
+  if (!trades.length) return null;
+  const sorted = [...trades].sort((a, b) => a.exitDate.localeCompare(b.exitDate) || a.symbol.localeCompare(b.symbol));
+  let cum = 0;
+  let peak = 0;
+  let dd = 0;
+  for (const t of sorted) {
+    cum += t.dollarNet ?? 0;
+    peak = Math.max(peak, cum);
+    dd = Math.max(dd, peak - cum);
+  }
+  return dd;
+}
+
+export interface PortfolioStats {
+  trades: number;
+  dollarNet: number;
+  maxDrawdownDollar: number | null;
+  tradesPerSession: number | null;
+  peakOpenPositions: number;
+  peakOpenRisk: number;
+  peakDate: string | null;
+}
+
+/**
+ * §1h account view, no cap applied: open positions and open risk (shares × per-share
+ * risk at the entry) on every session, a position counting from its fill date through its
+ * exit date.
+ */
+export function portfolioStats(trades: readonly Trade[], sessions: number): PortfolioStats {
+  const events: Array<{ d: string; order: number; pos: number; risk: number }> = [];
+  for (const t of trades) {
+    const risk = t.shares * t.risk;
+    events.push({ d: t.fillDate, order: 0, pos: 1, risk });
+    events.push({ d: t.exitDate, order: 1, pos: -1, risk: -risk });
+  }
+  events.sort((a, b) => a.d.localeCompare(b.d) || a.order - b.order);
+  let pos = 0;
+  let risk = 0;
+  let peakPos = 0;
+  let peakRisk = 0;
+  let peakDate: string | null = null;
+  for (const e of events) {
+    pos += e.pos;
+    risk += e.risk;
+    if (e.order === 0 && pos > peakPos) {
+      peakPos = pos;
+      peakDate = e.d;
+    }
+    if (e.order === 0) peakRisk = Math.max(peakRisk, risk);
+  }
+  return {
+    trades: trades.length,
+    dollarNet: trades.reduce((s, t) => s + t.dollarNet, 0),
+    maxDrawdownDollar: maxDrawdownDollar(trades),
+    tradesPerSession: sessions > 0 ? trades.length / sessions : null,
+    peakOpenPositions: peakPos,
+    peakOpenRisk: peakRisk,
+    peakDate,
+  };
 }
 
 export function groupMetrics(trades: readonly Trade[]): GroupMetrics {
@@ -694,6 +861,10 @@ export function groupMetrics(trades: readonly Trade[]): GroupMetrics {
     avgRNot3R: mean(trades.filter((t) => !t.reached3R).map((t) => t.netR)),
     timeCaps: trades.filter((t) => t.reason === "time_cap").length,
     avgInitialUnitR: mean(trades.map((t) => t.initialUnitR)),
+    sameBarAdds: trades.reduce((s, t) => s + (t.sameBarAdds ?? 0), 0),
+    dollarNet: trades.reduce((s, t) => s + (t.dollarNet ?? 0), 0),
+    maxDrawdownDollar: maxDrawdownDollar(trades),
+    sizeWeightedR: trades.reduce((s, t) => s + t.netR * (t.sizeMult ?? 1), 0),
   };
 }
 
@@ -724,18 +895,33 @@ export const USED_BUCKETS: ReadonlyArray<{ label: string; lo: number; hi: number
   { label: ">=1", lo: 1, hi: Infinity },
 ];
 
+/** §1f descriptive buckets for rally_age and pullback_ratio. */
+export const THIRDS: ReadonlyArray<{ label: string; lo: number; hi: number }> = [
+  { label: "<0.5", lo: -Infinity, hi: 0.5 },
+  { label: "0.5-1", lo: 0.5, hi: 1 },
+  { label: ">=1", lo: 1, hi: Infinity },
+];
+
 export const TRIGGER_TYPES = ["inside", "butn", "brutn", "mech1", "mech2", "egop"] as const;
 
 /** The pre-registered primary groups: all, long, short, and each type × direction the rules allow. */
-type GroupKey = Pick<Trade, "dir" | "type" | "variant" | "weekUsed" | "monthUsed">;
-const early = (t: GroupKey) => t.weekUsed != null && t.monthUsed != null && t.weekUsed < EARLY_ENTRY_MAX && t.monthUsed < EARLY_ENTRY_MAX;
+type GroupKey = Pick<Trade, "dir" | "type" | "variant" | "swing" | "layerMarket" | "layerSector">;
+/** §1f pre-registered selection: rally_used < 0.5 and room_3r ≥ 1 at zigzag threshold k. */
+export const SWING_RALLY_MAX = 0.5;
+const earlySwing = (t: GroupKey, k: string) => {
+  const w = t.swing?.[k];
+  return !!w && w.rallyUsed != null && w.room3R != null && w.rallyUsed < SWING_RALLY_MAX && w.room3R >= 1;
+};
+/** §1g pre-registered selection: market and sector layers both agree. */
+const allAgree = (t: GroupKey) => t.layerMarket === "agree" && t.layerSector === "agree";
 const cal = (t: GroupKey) => t.variant === "calendar";
 
 /**
- * The pre-registered primary groups, 19 per exit: all, long, short and each type ×
- * direction on the calendar triggers (13); inside± and the U-turns with rolling opens
- * (4, step 1c); and early entries, long and short (2, §1d), which must also beat all
- * calendar trades of their direction (`benchmark`).
+ * The pre-registered primary groups, 25: all, long, short and each type × direction on
+ * the calendar triggers (13); inside± and the U-turns with rolling opens (4, step 1c);
+ * swing-structure early entries for k = 1.5, 2, 3 × long/short (6, §1f, replacing §1d's
+ * 2); and Power Pyramid "all agree" long/short (2, §1g). The §1f and §1g groups must also
+ * beat all calendar trades of their direction (`benchmark`).
  */
 export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey) => boolean; benchmark?: (t: GroupKey) => boolean }> = [
   { group: "all", match: cal },
@@ -748,8 +934,18 @@ export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey)
     group: `rolling:${type}${dir === 1 ? "+" : "-"}`,
     match: (t: GroupKey) => t.variant === "rolling" && t.type === type && t.dir === dir,
   })),
-  { group: "early:long", match: (t) => cal(t) && t.dir === 1 && early(t), benchmark: (t) => cal(t) && t.dir === 1 },
-  { group: "early:short", match: (t) => cal(t) && t.dir === -1 && early(t), benchmark: (t) => cal(t) && t.dir === -1 },
+  ...SWING_KS.flatMap((k) =>
+    ([1, -1] as const).map((dir) => ({
+      group: `swing:k${k}:${dir === 1 ? "long" : "short"}`,
+      match: (t: GroupKey) => cal(t) && t.dir === dir && earlySwing(t, String(k)),
+      benchmark: (t: GroupKey) => cal(t) && t.dir === dir,
+    })),
+  ),
+  ...([1, -1] as const).map((dir) => ({
+    group: `pyramid:allAgree:${dir === 1 ? "long" : "short"}`,
+    match: (t: GroupKey) => cal(t) && t.dir === dir && allAgree(t),
+    benchmark: (t: GroupKey) => cal(t) && t.dir === dir,
+  })),
 ];
 
 /**
@@ -805,6 +1001,25 @@ export function evaluateGroups(trades: readonly Trade[], opts: { verdicts?: bool
     for (const b of USED_BUCKETS) out.push(judge(`loc:${m}:${b.label}`, calendar.filter((t) => t[m] != null && t[m]! >= b.lo && t[m]! < b.hi), false));
   out.push(judge("loc:roomW:<1", calendar.filter((t) => t.roomW != null && t.roomW < 1), false));
   out.push(judge("loc:roomW:>=1", calendar.filter((t) => t.roomW != null && t.roomW >= 1), false));
+  // §1f descriptive, per k
+  const ranges = (name: string, cuts: ReadonlyArray<{ label: string; lo: number; hi: number }>, get: (t: Trade) => number | null) => {
+    for (const b of cuts) out.push(judge(`${name}:${b.label}`, calendar.filter((t) => { const v = get(t); return v != null && v >= b.lo && v < b.hi; }), false));
+  };
+  for (const k of SWING_KS) {
+    const kk = String(k);
+    ranges(`swing:k${k}:rallyUsed`, USED_BUCKETS, (t) => t.swing?.[kk]?.rallyUsed ?? null);
+    ranges(`swing:k${k}:room3R`, [{ label: "<1", lo: -Infinity, hi: 1 }, { label: ">=1", lo: 1, hi: Infinity }], (t) => t.swing?.[kk]?.room3R ?? null);
+    ranges(`swing:k${k}:rallyAge`, THIRDS, (t) => t.swing?.[kk]?.rallyAge ?? null);
+    ranges(`swing:k${k}:pullbackRatio`, THIRDS, (t) => t.swing?.[kk]?.pullbackRatio ?? null);
+  }
+  // §1g descriptive: size multiples (layers both / opens-only / trend-only / with industry) and each layer's state
+  for (const m of [1, 0.5, 0.25]) out.push(judge(`pyramid:size:${m}`, calendar.filter((t) => t.sizeMult === m), false));
+  for (const m of [1, 0.5, 0.25]) out.push(judge(`pyramid:opensOnly:size:${m}`, calendar.filter((t) => t.sizeMultOpens === m), false));
+  for (const m of [1, 0.5, 0.25]) out.push(judge(`pyramid:trendOnly:size:${m}`, calendar.filter((t) => t.sizeMultTrend === m), false));
+  for (const m of [1, 0.5, 0.25, 0.125]) out.push(judge(`pyramid:withIndustry:size:${m}`, calendar.filter((t) => t.sizeMultIndustry === m), false));
+  for (const layer of ["layerMarket", "layerSector", "layerIndustry"] as const)
+    for (const st of ["agree", "mixed", "disagree", null] as const)
+      out.push(judge(`pyramid:${layer.replace("layer", "").toLowerCase()}:${st ?? "none"}`, calendar.filter((t) => t[layer] === st), false));
   for (const r of ["spy_above_sma20", "spy_below_sma20"] as const) out.push(judge(`regime:${r}`, calendar.filter((t) => t.regime === r), false));
   for (const q of [...new Set(calendar.map((t) => t.quarter))].sort()) out.push(judge(`quarter:${q}`, calendar.filter((t) => t.quarter === q), false));
   return out;

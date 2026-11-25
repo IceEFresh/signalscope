@@ -3,19 +3,34 @@
  * per exit rule.
  */
 import { SURVIVORSHIP_NOTE } from "./report";
-import { COST_ROUND_TRIP, CONTROL_SEED, EXIT_RULES, type ExitRule, type GroupMetrics, type GroupResult, type Overlap, type SymbolCounts, type Trade } from "./stp-sim";
+import {
+  BASE_RISK_DOLLARS, COST_ROUND_TRIP, CONTROL_SEED, EXIT_RULES,
+  type ExitRule, type GroupMetrics, type GroupResult, type Overlap, type PortfolioStats, type SymbolCounts, type Trade,
+} from "./stp-sim";
+
+/** §1f: the per-stock swing profile distribution across the universe, per k (medians of each stock's medians). */
+export interface ProfileSummary {
+  k: number;
+  stocks: number;
+  rallyAtr: number | null;
+  pullbackAtr: number | null;
+  rallyBars: number | null;
+  pullbackBars: number | null;
+}
+
+const usd = (v: number | null) => (v == null ? "n/a" : "$" + v.toFixed(0));
 
 const r2 = (v: number | null) => (v == null ? "n/a" : v.toFixed(3));
 const pct = (v: number | null) => (v == null ? "n/a" : `${(v * 100).toFixed(1)}%`);
 const cell = (s: string) => s.replace(/\|/g, "/").replace(/\n/g, " ");
 
 function metricsRow(label: string, m: GroupMetrics): string {
-  return `| ${label} | ${m.trades} | ${pct(m.winRate)} | ${pct(m.targetRate)} | ${r2(m.expectancy)} | ${r2(m.medianR)} | ${r2(m.avgGrossR)} | ${r2(m.profitFactor)} | ${r2(m.avgHolding)} | ${r2(m.maxDrawdownR)} | ${m.controls} | ${r2(m.controlExpectancy)} | ${r2(m.edge)} |`;
+  return `| ${label} | ${m.trades} | ${usd(m.dollarNet)} | ${r2(m.sizeWeightedR)} | ${pct(m.winRate)} | ${pct(m.targetRate)} | ${r2(m.expectancy)} | ${r2(m.medianR)} | ${r2(m.avgGrossR)} | ${r2(m.profitFactor)} | ${r2(m.avgHolding)} | ${r2(m.maxDrawdownR)} | ${m.controls} | ${r2(m.controlExpectancy)} | ${r2(m.edge)} |`;
 }
 
 const HEAD = [
-  "| split | trades | win | 3R hit | net exp R | median R | gross exp R | profit factor | avg hold | max DD R | controls | control exp R | edge R |",
-  "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+  "| split | trades | net $ | size-wtd R | win | 3R hit | net exp R | median R | gross exp R | profit factor | avg hold | max DD R | controls | control exp R | edge R |",
+  "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
 ];
 
 function countsLine(label: string, counts: SymbolCounts): string {
@@ -23,14 +38,25 @@ function countsLine(label: string, counts: SymbolCounts): string {
   return (
     `${label}: setups ${counts.setups}: filled ${counts.filled}, cancelled (no D+1 fill) ${counts.cancelled}, gap_skip (D+1 opened through the entry) ${counts.gapSkip}, ` +
     `skipped open past stop ${counts.skippedGap}, ` +
-    `skipped while a position was open ${counts.skippedOverlap}, no D+1 bar ${counts.noBar}. Fill rate ${pct(fillRate)}. Trades without a matched control: ${counts.noControl}.`
+    `skipped while a position was open ${counts.skippedOverlap}, size_skip (0 shares at ${usd(BASE_RISK_DOLLARS)} × size_mult) ${counts.sizeSkip}, ` +
+    `no D+1 bar ${counts.noBar}, market/sector layer without data (treated as mixed) ${counts.layerNull}. Fill rate ${pct(fillRate)}. Trades without a matched control: ${counts.noControl}.`
   );
 }
 
 export function simMarkdownReport(
   results: readonly GroupResult[],
   counts: SymbolCounts,
-  meta: { date: string; commit: string; exit: ExitRule; symbols: number; rollingCounts?: SymbolCounts; overlap?: Overlap },
+  meta: {
+    date: string;
+    commit: string;
+    exit: ExitRule;
+    symbols: number;
+    rollingCounts?: SymbolCounts;
+    overlap?: Overlap;
+    portfolio?: { calendar: PortfolioStats; rolling: PortfolioStats };
+    sizeSkipByType?: Record<string, number>;
+    profiles?: readonly ProfileSummary[];
+  },
 ): string {
   const rule = EXIT_RULES[meta.exit];
   const prim = results.filter((r) => r.primary);
@@ -58,6 +84,32 @@ export function simMarkdownReport(
           "",
         ]
       : []),
+    ...(meta.portfolio
+      ? [
+          `**Account view (§1h, ${usd(BASE_RISK_DOLLARS)} × size_mult risk per position, no cap applied):**`,
+          "",
+          "| population | trades | net $ | max DD $ | trades per session | peak open positions | peak open risk $ | on |",
+          "|---|---|---|---|---|---|---|---|",
+          ...(["calendar", "rolling"] as const).map((v) => {
+            const p = meta.portfolio![v];
+            return `| ${v} | ${p.trades} | ${usd(p.dollarNet)} | ${usd(p.maxDrawdownDollar)} | ${r2(p.tradesPerSession)} | ${p.peakOpenPositions} | ${usd(p.peakOpenRisk)} | ${p.peakDate ?? "n/a"} |`;
+          }),
+          "",
+        ]
+      : []),
+    ...(meta.sizeSkipByType && Object.keys(meta.sizeSkipByType).length
+      ? [`size_skip by pattern (calendar): ${Object.entries(meta.sizeSkipByType).map(([t, c]) => `${t} ${c}`).join(", ")}.`, ""]
+      : []),
+    ...(meta.profiles
+      ? [
+          "**Swing profiles across the universe (§1f; median of each stock's median leg at the last bar):**",
+          "",
+          "| k | stocks | rally (ATR) | pullback (ATR) | rally bars | pullback bars |",
+          "|---|---|---|---|---|---|",
+          ...meta.profiles.map((p) => `| ${p.k} | ${p.stocks} | ${r2(p.rallyAtr)} | ${r2(p.pullbackAtr)} | ${r2(p.rallyBars)} | ${r2(p.pullbackBars)} |`),
+          "",
+        ]
+      : []),
     meta.exit === "B"
       ? `**Primary groups (${prim.length} comparisons): ${n("KEEP")} KEEP, ${n("DROP")} DROP, ${n("INSUFFICIENT")} INSUFFICIENT.** A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.`
       : `**Reference exit: the ${prim.length} pre-registered groups are shown without verdicts.**`,
@@ -66,11 +118,11 @@ export function simMarkdownReport(
       ? [
           "Management (all trades in the group):",
           "",
-          "| group | add rate | avg adds | max adds | add gap skips | reached 3R | BE exits | avg R reached 3R | avg R not | 60-session caps | initial-unit R |",
-          "|---|---|---|---|---|---|---|---|---|---|---|",
+          "| group | add rate | avg adds | max adds | same-bar adds | add gap skips | reached 3R | BE exits | avg R reached 3R | avg R not | 60-session caps | initial-unit R |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|",
           ...prim.map(
             (r) =>
-              `| ${r.group} | ${pct(r.all.addRate)} | ${r2(r.all.avgAdds)} | ${r.all.maxAdds ?? "n/a"} | ${r.all.addGapSkips} | ${pct(r.all.reached3RRate)} | ${pct(r.all.beExitRate)} | ` +
+              `| ${r.group} | ${pct(r.all.addRate)} | ${r2(r.all.avgAdds)} | ${r.all.maxAdds ?? "n/a"} | ${r.all.sameBarAdds} | ${r.all.addGapSkips} | ${pct(r.all.reached3RRate)} | ${pct(r.all.beExitRate)} | ` +
               `${r2(r.all.avgRReached3R)} | ${r2(r.all.avgRNot3R)} | ${r.all.timeCaps} | ${r2(r.all.avgInitialUnitR)} |`,
           ),
           "",
@@ -95,9 +147,13 @@ const csvCell = (v: unknown) => {
 };
 
 export function tradesCsv(trades: readonly Trade[]): string {
-  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "adds", "size_at_exit", "reached_3r", "initial_unit_r_net", "control_r_net", "htf_alignment", "week_used", "month_used", "room_w", "regime", "quarter"];
+  const cols = ["variant", "symbol", "trigger_date", "fill_date", "exit_date", "direction", "type", "fired_rules", "entry", "fill", "stop", "exit", "risk", "r_gross", "r_net", "exit_reason", "holding", "adds", "same_bar_adds", "size_at_exit", "shares", "shares_at_exit", "base_risk", "dollar_net", "size_mult",
+    "layer_market", "layer_sector", "layer_industry", "size_mult_industry", "size_mult_opens", "size_mult_trend",
+    "k1.5_rally_used", "k1.5_room_3r", "k2_rally_used", "k2_room_3r", "k3_rally_used", "k3_room_3r", "reached_3r", "initial_unit_r_net", "control_r_net", "htf_alignment", "week_used", "month_used", "room_w", "regime", "quarter"];
   const rows = trades.map((t) =>
-    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.adds, t.size, t.reached3R, t.initialUnitR, t.controlNetR, t.alignment, t.weekUsed, t.monthUsed, t.roomW, t.regime, t.quarter]
+    [t.variant, t.symbol, t.scanId, t.fillDate, t.exitDate, t.dir === 1 ? "long" : "short", t.type, t.firedRules.join(" "), t.entry, t.fill, t.stop, t.exit, t.risk, t.grossR, t.netR, t.reason, t.holding, t.adds, t.sameBarAdds, t.size, t.shares, t.sharesAtExit, t.baseRisk, t.dollarNet, t.sizeMult,
+      t.layerMarket, t.layerSector, t.layerIndustry, t.sizeMultIndustry, t.sizeMultOpens, t.sizeMultTrend,
+      t.swing["1.5"]?.rallyUsed, t.swing["1.5"]?.room3R, t.swing["2"]?.rallyUsed, t.swing["2"]?.room3R, t.swing["3"]?.rallyUsed, t.swing["3"]?.room3R, t.reached3R, t.initialUnitR, t.controlNetR, t.alignment, t.weekUsed, t.monthUsed, t.roomW, t.regime, t.quarter]
       .map(csvCell)
       .join(","),
   );

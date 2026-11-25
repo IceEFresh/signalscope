@@ -91,7 +91,8 @@ describe("exit A (reference): stop, 3R limit target, 10-session time exit", () =
   it("time exit at the close of session 10 after the fill; costs 0.10% in R", () => {
     expect(run([[100, 101, 99, 100], ...flat(12, 101)])).toMatchObject({ reason: "time", exitIndex: 10, holding: 10, exit: 101 });
     expect(costInR(100, 10)).toBeCloseTo(0.01, 12);
-    expect(run([[100, 105, 99, 104], [104, 131, 103, 128]]).netR).toBeCloseTo(3 - 0.01, 12);
+    // 10 shares ($100 / $10 risk); costs 0.1% of each leg's value: (1000 + 1300) × 0.001 = $2.30
+    expect(run([[100, 105, 99, 104], [104, 131, 103, 128]]).netR).toBeCloseTo(3 - 2.3 / 100, 12);
   });
 });
 
@@ -104,20 +105,21 @@ describe("exit B (primary): STP management (§1e)", () => {
   };
   const quiet = (n: number, p: number): Array<[number, number, number, number]> => Array.from({ length: n }, () => [p, p + 0.5, p - 0.5, p]);
 
-  it("adds at 2R and 4R, each 50% of the current size; stop moves to the size-weighted breakeven after each", () => {
-    // bar 1 trades up to 121 (add 1 at 120), bar 2 up to 141 (add 2 at 140), then drifts down to the BE stop
+  it("adds at 2R and 4R, each floor(50%) of the current shares; stop moves to the size-weighted breakeven after each", () => {
+    // $100 risk / $10 per share = 10 shares. Bar 1 reaches 120 (add 5 → 15), bar 2 reaches 140 (add floor(7.5) = 7 → 22)
     const x = B([[100, 101, 99, 100], [110, 121, 109, 119], [119, 141, 118, 139], ...quiet(3, 139), [139, 139.5, 100, 101]]);
     expect(x.adds).toBe(2);
-    expect(x.size).toBeCloseTo(2.25, 12);
-    // BE after add 2: (1×100 + 0.5×120 + 0.75×140) / 2.25 = 117.777…
-    const be = (100 + 60 + 105) / 2.25;
+    expect(x.shares).toBe(10);
+    expect(x.sharesAtExit).toBe(22);
+    const be = (10 * 100 + 5 * 120 + 7 * 140) / 22;
     expect(x.exit).toBeCloseTo(be, 9);
-    // total P&L over all units at the BE price is 0 before costs; costs are 0.1% of every leg's notional
+    // total P&L over all shares at the BE price is 0 before costs; costs are 0.1% of every leg's value
     expect(x.grossR).toBeCloseTo(0, 9);
-    const costs = 0.001 * (100 + 0.5 * 120 + 0.75 * 140 + 2.25 * be);
-    expect(x.netR).toBeCloseTo(-costs / 10, 9);
-    // the initial unit alone made (be − 100) / R minus its two legs' costs
-    expect(x.initialUnitR).toBeCloseTo((be - 100 - 0.001 * (100 + be)) / 10, 9);
+    const costs = 0.001 * (10 * 100 + 5 * 120 + 7 * 140 + 22 * be);
+    expect(x.dollarNet).toBeCloseTo(-costs, 9);
+    expect(x.netR).toBeCloseTo(-costs / 100, 9);
+    // the initial 10 shares alone, net of their two legs, over the $100 base risk
+    expect(x.initialUnitR).toBeCloseTo((10 * (be - 100) - 0.001 * 10 * (100 + be)) / 100, 9);
   });
 
   it("the stop-limit add isn't filled on a gap through it; the next level stays live", () => {
@@ -125,12 +127,12 @@ describe("exit B (primary): STP management (§1e)", () => {
     const x = B([[100, 101, 99, 100], [125, 126, 124, 125], [125, 141, 124, 140], [140, 140.5, 60, 61]]);
     expect(x.addGapSkips).toBe(1);
     expect(x.adds).toBe(1);
-    expect(x.size).toBeCloseTo(1.5, 12);
+    expect(x.sharesAtExit).toBe(15);
   });
 
   it("when a bar touches the stop and an add level, the stop wins and the add doesn't happen", () => {
     const x = B([[100, 101, 99, 100], [100, 125, 85, 110]]);
-    expect(x).toMatchObject({ reason: "stop", exit: 90, adds: 0, size: 1 });
+    expect(x).toMatchObject({ reason: "stop", exit: 90, adds: 0, sharesAtExit: 10 });
     expect(x.grossR).toBeCloseTo(-1, 12);
   });
 
@@ -174,7 +176,7 @@ describe("exit B (primary): STP management (§1e)", () => {
     const x = B([...up, [110, 131, 109.5, 130], [130, 130.5, 101, 102], [102, 103, 50, 51]]);
     expect(x.adds).toBe(1);
     expect(x.reached3R).toBe(true);
-    expect(x.exit).toBeGreaterThanOrEqual((100 + 0.5 * 120) / 1.5 - 1e-9);
+    expect(x.exit).toBeGreaterThanOrEqual((10 * 100 + 5 * 120) / 15 - 1e-9);
   });
 
   it("60-session cap exits at that close; no target exit ever", () => {
@@ -188,7 +190,7 @@ describe("exit B (primary): STP management (§1e)", () => {
   it("shorts mirror: adds below, BE above", () => {
     const x = B([[100, 101, 99, 100], [90, 91, 79, 81], [81, 120, 80, 119]], "inside", -1, 100, 110);
     expect(x.adds).toBe(1); // 80 reached
-    expect(x.exit).toBeCloseTo((100 + 0.5 * 80) / 1.5, 9); // BE stop
+    expect(x.exit).toBeCloseTo((10 * 100 + 5 * 80) / 15, 9); // BE stop
     expect(x.reason).toBe("be_stop");
   });
 });
@@ -254,7 +256,8 @@ describe("verdicts", () => {
     Array.from({ length: n }, (_, i) => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-        variant, alignment: "aligned" as const, weekUsed: 0.2, monthUsed: 0.2, roomW: 2, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: net(i),
+        swing: {}, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
+        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, sameBarAdds: 0, variant, alignment: "aligned" as const, weekUsed: 0.2, monthUsed: 0.2, roomW: 2, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: net(i),
         symbol: `S${i % 7}`, scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir, type, firedRules: [],
         entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: net(i), netR: net(i), reason: "time" as const, holding: 1,
         controlNetR: ctrl(i), regime: null, quarter: "2025Q1",
@@ -276,9 +279,10 @@ describe("verdicts", () => {
     expect(r.heldOut.trades).toBeLessThan(MIN_HELDOUT_ROWS);
     expect(r.verdict).toBe("INSUFFICIENT");
   });
-  it("19 pre-registered primary groups (13 calendar + 4 rolling + 2 early entry); descriptive groups carry no verdict", () => {
+  it("25 pre-registered primary groups (13 calendar + 4 rolling + 6 swing + 2 pyramid); descriptive groups carry no verdict", () => {
     const res = evaluateGroups(mk(50, () => 0, () => 0));
-    expect(res.filter((r) => r.primary)).toHaveLength(19);
+    expect(res.filter((r) => r.primary)).toHaveLength(25);
+    expect(res.some((r) => r.group.startsWith("early:"))).toBe(false); // §1f replaced §1d's test
     expect(res.filter((r) => !r.primary).every((r) => r.verdict === null)).toBe(true);
   });
   it("metrics: profit factor, median, max drawdown in R", () => {
@@ -291,11 +295,11 @@ describe("verdicts", () => {
   it("report, CSV and log row", () => {
     const trades = mk(400, (i) => (i % 3 === 0 ? -1 : 0.8), () => 0);
     const res = evaluateGroups(trades);
-    const md = simMarkdownReport(res, { setups: 500, filled: 400, cancelled: 90, gapSkip: 0, skippedGap: 5, skippedOverlap: 5, noBar: 0, noControl: 0 }, { date: "d", commit: "c", exit: "A", symbols: 7 });
+    const md = simMarkdownReport(res, { setups: 500, filled: 400, cancelled: 90, gapSkip: 0, sizeSkip: 0, layerNull: 0, skippedGap: 5, skippedOverlap: 5, noBar: 0, noControl: 0 }, { date: "d", commit: "c", exit: "A", symbols: 7 });
     expect(md).toMatch(/Survivorship bias/);
     expect(md).toMatch(/\| inside\+ \| KEEP \|/);
     expect(tradesCsv(trades.slice(0, 1)).split("\n")[0]).toMatch(/^variant,symbol,trigger_date,fill_date,exit_date,direction,type/);
-    expect(simExperimentRow(res, { number: 29, date: "d", commit: "c", exit: "A", reportPath: "p", trades: 400 })).toMatch(/^\| 29 \| d \| c \|.*\| 19 \| STP trade sim exit A/);
+    expect(simExperimentRow(res, { number: 29, date: "d", commit: "c", exit: "A", reportPath: "p", trades: 400 })).toMatch(/^\| 29 \| d \| c \|.*\| 25 \| STP trade sim exit A/);
   });
 });
 
@@ -373,7 +377,8 @@ describe("step 1c: rolling opens (5/20 stocks, 7/30 crypto)", () => {
     const trades = Array.from({ length: 50 }, (_, i): Trade => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-        variant: "rolling", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 0, symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside",
+swing: {}, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
+        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, sameBarAdds: 0, variant: "rolling", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 0, symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside",
         firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: 0, netR: 0, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };
     });
@@ -438,31 +443,33 @@ describe("§1d entry location vs the normal move", () => {
     expect(entryLocation(weekly, 70, 104, 1, 2).monthUsed).toBeNull(); // 80 weekdays ≈ 4 months
   });
 
-  it("early-entry groups need week_used and month_used < 0.5, and must beat all trades of their direction", () => {
+  it("§1f swing groups need rally_used < 0.5 and room_3r ≥ 1, and must beat all trades of their direction", () => {
     const T0 = Date.UTC(2025, 0, 6);
     const mk = (i: number, early: boolean, netR: number): Trade => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
+      const sw = { rallyUsed: early ? 0.3 : 0.8, rallyAge: 0.5, room3R: early ? 1.5 : 0.5, pullbackRatio: 1 };
       return {
-        variant: "calendar", alignment: null, weekUsed: early ? 0.3 : 0.8, monthUsed: early ? 0.3 : 0.8, roomW: 1, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: netR, symbol: "S", scanId: d,
+        layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
+        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, sameBarAdds: 0, swing: { "1.5": sw, "2": sw, "3": sw },
+        variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: netR, symbol: "S", scanId: d,
         scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1,
         risk: 0.1, grossR: netR, netR, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };
     };
-    // early trades +0.5R, late trades +1R: early beats its control but not all longs → DROP
-    const trades = Array.from({ length: 800 }, (_, i) => mk(i, i % 2 === 0, i % 2 === 0 ? 0.5 : 1));
-    const r = evaluateGroups(trades).find((g) => g.group === "early:long")!;
-    expect(r.heldOut.trades).toBeGreaterThanOrEqual(MIN_HELDOUT_ROWS);
-    expect(r.verdict).toBe("DROP");
-    expect(r.reason).toMatch(/all trades of its direction/);
-    // flip it: early +1R, late +0.5R → KEEP
-    const flipped = Array.from({ length: 800 }, (_, i) => mk(i, i % 2 === 0, i % 2 === 0 ? 1 : 0.5));
-    expect(evaluateGroups(flipped).find((g) => g.group === "early:long")!.verdict).toBe("KEEP");
+    const lose = evaluateGroups(Array.from({ length: 800 }, (_, i) => mk(i, i % 2 === 0, i % 2 === 0 ? 0.5 : 1))).find((g) => g.group === "swing:k2:long")!;
+    expect(lose.heldOut.trades).toBeGreaterThanOrEqual(MIN_HELDOUT_ROWS);
+    expect(lose.verdict).toBe("DROP");
+    expect(lose.reason).toMatch(/all trades of its direction/);
+    const win = evaluateGroups(Array.from({ length: 800 }, (_, i) => mk(i, i % 2 === 0, i % 2 === 0 ? 1 : 0.5)));
+    for (const k of ["1.5", "2", "3"]) expect(win.find((g) => g.group === `swing:k${k}:long`)!.verdict).toBe("KEEP");
   });
 
   it("descriptive buckets for week_used, month_used and room_w carry no verdict and report the 3R-hit rate", () => {
     const res = evaluateGroups([]);
     const loc = res.filter((g) => g.group.startsWith("loc:"));
     expect(loc).toHaveLength(12);
+    // §1f descriptive per k: rally_used 5 + room_3r 2 + rally_age 3 + pullback_ratio 3 = 13 buckets
+    expect(res.filter((g) => g.group.startsWith("swing:k2:") && !g.primary)).toHaveLength(13);
     expect(loc.every((g) => !g.primary && g.verdict === null)).toBe(true);
     expect(groupMetrics([]).targetRate).toBeNull();
   });
@@ -473,7 +480,8 @@ describe("§1d entry location vs the normal move", () => {
     const t = (i: number): Trade => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-        variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 1,
+swing: {}, layerMarket: null, layerSector: null, layerIndustry: null, sizeMult: 1, sizeMultIndustry: 1, sizeMultOpens: 1, sizeMultTrend: 1,
+        baseRisk: 100, shares: 10, sharesAtExit: 10, dollarGross: 0, dollarNet: 0, sameBarAdds: 0, variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 1,
         symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1,
         stop: 0.9, exit: 1, risk: 0.1, grossR: 1, netR: 1, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };

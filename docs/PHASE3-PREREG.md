@@ -121,7 +121,7 @@ The stock regime (`regime.*`) is not attached to crypto rows. The regime is stoc
 - **Log:** both backfill runs stay in `scripts/backtesting-experiments.md`. The first run's row is kept, and the rerun after this fix gets its own row.
 - **Not covered by this amendment:** the U-shape the first backfill run showed in `return_20d`, `rsi14_max_20d` and `sma20_vs_sma50` (both extremes beat the middle). Testing that would be a new hypothesis, such as beta-adjusted excess or |feature| buckets. It needs its own pre-registration and a test on the live universe dataset, not on the backfill that suggested it.
 
-## STP trigger trades (P3-0i): 19 comparisons on exit B (STP management); exit A is a reference
+## STP trigger trades (P3-0i): 25 comparisons on exit B (STP management); exit A is a reference
 Fixed before the first run. `scripts/simulate-stp.ts --dataset backfill` simulates STP triggers as trades on the P3-0g backfill bars, the chart cache in `scripts/output/backfill-bars/`. It runs on every cached symbol except SPY, with trigger dates in the backfill's last 2 years of SPY sessions. The survivorship bias is the same as the backfill's: current members only, so results are optimistic.
 
 **Setups.** `computeStp` on each day D's live-window slice, the same slicing as P3-0g: bars dated on or before D, after D minus 3 months. Every `trigger ≠ 0` is one setup, with its own `entry`, `stop`, `fudge`, `triggerType` and `firedRules`. The backfill has no earnings dates, so `egop` never fires, and its groups will be INSUFFICIENT.
@@ -191,18 +191,59 @@ Costs are 0.10% round trip. Exit A's report shows the same groups without verdic
 - Their matched controls are drawn from sessions where the **rolling** trigger is 0. Calendar controls are drawn where the calendar trigger is 0.
 - **Overlap** is reported at setup level (same ticker, date and direction, inside and U-turn only): both fire, calendar only, rolling only.
 
-**Entry location vs the normal move (§1d, the reviewer's working definition, which Chris may correct before the run).**
-- `W`: the mean high−low range of the 10 calendar weeks completed before the fill's week. `M`: the same over the 6 completed calendar months.
-- **Long:** `week_used = (fill − lowest low since the week's open) / W` and `month_used` likewise with `M`. The lowest low is taken over bars of the fill's week (or month) dated on or before the trigger day, **plus the fill price itself**, so a fill that opens a new week has `week_used = 0`. Short is mirrored with the highest high.
-- `room_w = W × (1 − week_used) / (3 × R)`. A value ≥ 1 means a normal week still has room for 3R.
-- Null when fewer than 10 complete weeks or 6 complete months exist before the fill. The oldest period used must have an earlier period before it, so the start of the data can't cut it off.
-- No look-ahead: only bars up to the trigger day plus the fill price.
-- **Early entry**, a primary test: `week_used < 0.5` **and** `month_used < 0.5`, on calendar triggers, long and short separately (+2 comparisons). KEEP needs the usual rule **and** a net expectancy above all calendar trades of the same direction, in the held-out split and in each passing fold.
+**Entry location vs the normal move (§1d): descriptive only.** §1f replaced §1d's test, so `week_used`, `month_used` and `room_w` are reported by bucket with no verdict.
+- `W` is the mean high−low range of the 10 calendar weeks completed before the fill's week; `M` is the same over 6 completed months.
+- Long: `week_used = (fill − lowest low since the week's open) / W`. The lowest low is over bars of the fill's week dated ≤ D, plus the fill. Short mirrored.
+- `room_w = W × (1 − week_used) / (3 × R)`.
 
-**Primary groups, 19, exit B:**
+**Entry location by swing structure (§1f), a primary test.**
+- **Swings:** an ATR zigzag. A swing high is confirmed once price falls k × ATR14 from it, a swing low once price rises k × ATR14 from it. ATR14 is Wilder's, at the pivot bar where the next leg starts.
+  - Thresholds: k = 1.5, 2 and 3.
+  - A pivot counts on day t only if it was confirmed on or before t (no look-ahead). The zigzag is causal, so it's run once over each symbol's history.
+- **Profile:** confirmed legs that start within the 250 sessions up to the trigger day. For rallies (up-legs) and pullbacks (down-legs): the median and 75th percentile in ATR units (of the leg's start pivot) and in %, plus the median duration in bars. Fewer than 4 legs of a kind gives null.
+- **Entry scores for a long** (shorts mirrored: down-legs are the move and up-legs the pullback; the last swing high replaces the last swing low):
+  - `rally_used = ((fill − last swing low) / ATR at that low) / median rally (ATR)`;
+  - `rally_age = (fill bar − last swing low bar) / median rally bars`;
+  - `room_3r = (median rally × ATR at the low − (fill − low)) / (3 × R)`;
+  - `pullback_ratio = (the confirmed pullback that ended at that low, in ATR of its start) / median pullback`.
+- **Test, 6 comparisons:** trades with `rally_used < 0.5` and `room_3r ≥ 1`, for each k × direction, on calendar triggers. A KEEP needs the usual rule **and** a net expectancy above all calendar trades of the same direction, held out and in each counted fold.
+- **Descriptive per k:** `rally_used` buckets (< 0.25, 0.25–0.5, 0.5–0.75, 0.75–1, ≥ 1); `room_3r` (< 1, ≥ 1); `rally_age` and `pullback_ratio` (< 0.5, 0.5–1, ≥ 1). Also the universe-wide distribution of per-stock profile medians at the last bar.
+
+**Position size by the Stock Market Power Pyramid (§1g).**
+- **Layer state** on the trigger day, from that ETF's bars dated ≤ D:
+  - opens = `stp_htf_opens`;
+  - trend up = close > sma50 and sma20 > sma50; down is the mirror; anything else is neutral.
+  - For a long, a layer **agrees** when opens = +1 and the trend is up, **disagrees** when opens = −1 and the trend is down, and is **mixed** otherwise. Mixed isn't a disagreement. Shorts mirrored.
+- **Layers:**
+  - market: SPY, QQQ and DIA each scored, then a 2-of-3 majority (agree or disagree; otherwise mixed);
+  - sector: the stock's SPDR (from today's `UniverseMember.sector`);
+  - industry: the 1f-mapped ETF, null when unmapped.
+- **Missing data:** a layer with no ETF bar on D, or an unmapped sector, is null and treated as mixed (counted).
+- **size_mult** from the market and sector layers: 0 disagreeing → 1, 1 → 0.5, 2 → 0.25. These are the reviewer's assumptions, which Chris may correct.
+- **Test, 2 comparisons:** "all agree" (market and sector both agree) vs all calendar trades of the same direction, long and short. Same KEEP rule plus beating that direction.
+- **Descriptive:**
+  - trades by size_mult;
+  - the opens-only and trend-only variants;
+  - the industry-included variant (halved per disagreeing layer of three);
+  - each layer's state;
+  - total size-weighted R, and dollar drawdown under the sizing rule.
+
+**Fixed dollar risk (§1h).**
+- Base risk = **$100 × size_mult**. Initial shares = floor(base risk / per-share risk); **0 shares means no trade** (`size_skip`, counted per pattern, and it doesn't block the ticker).
+- Each exit-B add = floor(50% of current shares). 0 means no add.
+- Exit A uses the same initial shares with no adds.
+- Dollar P&L = shares × the price move, summed over legs, minus 0.10% of each leg's traded value.
+- **R = dollar P&L / base risk**, so unweighted R is the per-trade edge. Dollar P&L already includes size_mult.
+- The control uses the trade's size_mult.
+- **Account view,** no cap applied: total dollar P&L, max dollar drawdown (in exit-date order), trades per session, and the peak open positions and peak open risk (shares × per-share risk) on any day.
+
+**Primary groups, 25, exit B:**
 - calendar triggers: all, long, short, inside+, inside−, butn+, brutn−, mech1+, mech1−, mech2+, mech2−, egop+, egop− (13);
 - rolling triggers: rolling inside+, rolling inside−, rolling butn+, rolling brutn− (4);
-- early entry: early long, early short (2).
+- swing-structure early entry (§1f): k = 1.5, 2, 3 × long, short (6);
+- Power Pyramid all agree (§1g): long, short (2).
+
+§1f replaces §1d's two early-entry comparisons, so they aren't counted. The reviewer's count of 27 added §1f and §1g to §1d's 19; with §1d's 2 removed, it's 25.
 
 "all", "long" and "short" cover calendar triggers only. `butn` is bullish only and `brutn` bearish only. EGOP stays INSUFFICIENT until P3-0i3 adds historical earnings dates. At a nominal 5%, about 1 KEEP could come from chance before the fold rule.
 
@@ -210,10 +251,12 @@ Costs are 0.10% round trip. Exit A's report shows the same groups without verdic
 - by `triggerType`, both directions;
 - **step 1b:** mech1, mech2 and egop, each split by `stp_htf_opens` alignment with the trade direction: aligned (htf × direction = +1), against (−1), partial (±0.5 or 0). This shows whether the weekly and monthly opens add anything on top of each pattern's own criteria;
 - §1d: net expectancy and 3R-hit rate by `week_used` and `month_used` bucket (< 0.25, 0.25–0.5, 0.5–0.75, 0.75–1, ≥ 1) and by `room_w` (< 1, ≥ 1);
+- §1f and §1g descriptive groups as listed above;
+- exit B adds on the fill bar itself (same-bar adds) are counted, because the intraday order of entry and +2R isn't knowable from daily bars;
 - SPY above or below its SMA20 on the trigger day, from the backfill SPY bars;
 - calendar quarter.
 
-**Output.** One report, one trades CSV (with adds, size at exit, reached 3R, initial-unit R, `week_used`, `month_used` and `room_w`) and one experiment-log row per exit: exit B with its verdicts, exit A marked as a reference. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
+**Output.** One report, one trades CSV (with adds, same-bar adds, shares, base risk, dollar P&L, size_mult and the layer states, the swing scores per k, reached 3R, initial-unit R, `week_used`, `month_used` and `room_w`) and one experiment-log row per exit: exit B with its verdicts, exit A marked as a reference. A KEEP leads to a Phase 4 paper-trading proposal, not a live rule.
 
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.
