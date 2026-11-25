@@ -113,5 +113,13 @@ Each scan stores macro fields under `Scan.regimeFeatures.macro`: the dollar inde
 
 The stock regime (`regime.*`) is not attached to crypto rows. The regime is stock-only, which matches the crypto dataset's 26 comparisons.
 
+## Amendment 2026-11-25 (P3-0h): low-cardinality numeric keys are bucketed by value
+**Found after the first backfill run. This is a bug fix, not a new hypothesis.** In that run `stp_well_bid` (values −1, 0, +1) was cut into quintiles. The cuts collapsed −1 and 0 into one "q1" bucket (167,590 held-out rows), so its KEEP compared "not well bid" with "well bid", not well-offered with well-bid. Every STP state key (`stp_htf_opens`, `stp_ma_state`, `stp_well_bid`, `stp_size_factor`) and small-integer keys such as `consecutive_up_days` had the same problem.
+
+- **Rule:** a numeric key with **7 or fewer distinct non-null values in the held-out split's training rows** is treated as categorical. Each value is its own bucket, labelled by value (`=-1`, `=0`, `=1`). It's decided once per feature and used for the held-out split and every fold. Above 7 distinct values, quintiles apply as before.
+- **Unchanged:** the 100-row held-out minimum, the 30-row fold minimum, the bucket chosen on training data, the same bucket tested in every fold, and KEEP needing the held-out pass plus 2 of 3 folds. **No comparison count changes:** each key is still one comparison.
+- **Log:** both backfill runs stay in `scripts/backtesting-experiments.md`. The first run's row is kept, and the rerun after this fix gets its own row.
+- **Not covered by this amendment:** the U-shape the first backfill run showed in `return_20d`, `rsi14_max_20d` and `sma20_vs_sma50` (both extremes beat the middle). Testing that would be a new hypothesis, such as beta-adjusted excess or |feature| buckets. It needs its own pre-registration and a test on the live universe dataset, not on the backfill that suggested it.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

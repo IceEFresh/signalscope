@@ -11,7 +11,7 @@ import {
   type SpyClose,
   type StoredTickerRow,
 } from "@/lib/eval/dataset";
-import { candidateKeys, evaluateFeature, quintileCuts, bucketOf, featureKind, testSplit, EXCLUDED_KEYS, MISSING } from "@/lib/eval/features";
+import { candidateKeys, evaluateFeature, quintileCuts, bucketOf, featureKind, testSplit, EXCLUDED_KEYS, MAX_DISCRETE_VALUES, MISSING } from "@/lib/eval/features";
 import { experimentSummaryRow, lastExperimentNumber, markdownReport } from "@/lib/eval/report";
 import { etParts, parseChartBars } from "@/lib/harvester/universe/bar-metrics";
 
@@ -162,10 +162,63 @@ describe("buckets", () => {
 
   it("classifies features as numeric, categorical or skipped", () => {
     const row = (v: unknown): EvalRow => ({ scanId: "a", scanStart: new Date(T0), symbol: "X", ret: {}, excess: {}, attrs: { k: v } });
-    expect(featureKind([row(1), row(2.5), row(null)], "k")).toBe("numeric");
+    expect(featureKind([...Array.from({ length: 8 }, (_, i) => row(i + 0.5)), row(null)], "k")).toBe("numeric");
+    expect(featureKind([row(1), row(2.5), row(null)], "k")).toBe("discrete"); // P3-0h: ≤ 7 distinct values
     expect(featureKind([row("opportunistic"), row("routine")], "k")).toBe("categorical");
     expect(featureKind(Array.from({ length: 20 }, (_, i) => row(`c${i}`)), "k")).toBe("skipped");
     expect(featureKind([row(null)], "k")).toBe("skipped");
+  });
+});
+
+describe("P3-0h: low-cardinality numeric keys are bucketed by value", () => {
+  /** 40 scans x 60 tickers; `stp_well_bid` in {-1, 0, 1}; only -1 earns an edge when `edge` is set. */
+  function stateFixture(values: readonly number[], edge: boolean): EvalRow[] {
+    const r = rng(7);
+    const rows: EvalRow[] = [];
+    for (let s = 0; s < 40; s++) {
+      for (let i = 0; i < 60; i++) {
+        const v = values[i % values.length];
+        const x = (edge && v === -1 ? 0.03 : -0.002) + (r() - 0.5) * 0.04;
+        rows.push({
+          scanId: `scan${String(s).padStart(3, "0")}`,
+          scanStart: new Date(T0 + s * DAY),
+          symbol: `S${i}`,
+          ret: { "1d": x, "3d": x, "7d": x },
+          excess: { "1d": x, "3d": x, "7d": x },
+          attrs: { stp_well_bid: v },
+        });
+      }
+    }
+    return rows;
+  }
+
+  it("a 3-valued feature gets 3 value buckets (=-1, =0, =1), not merged quintiles", () => {
+    const res = evaluateFeature(stateFixture([-1, 0, 1], false), "stp_well_bid");
+    expect(res.kind).toBe("discrete");
+    expect(res.heldOut.buckets.map((b) => b.bucket).sort()).toEqual(["=-1", "=0", "=1"]);
+    for (const f of res.folds) expect(f.buckets.map((b) => b.bucket).every((b) => b.startsWith("="))).toBe(true);
+    const md = markdownReport([res], { date: "d", commit: "c", rows: 0, scans: 0, dataset: "backfill" });
+    expect(md).toMatch(/\| =-1( ←)? \|/);
+    expect(md).not.toMatch(/\| q1/);
+  });
+
+  it(`an ${MAX_DISCRETE_VALUES + 1}-valued feature still uses quintiles`, () => {
+    const res = evaluateFeature(stateFixture([-3, -2, -1, 0, 1, 2, 3, 4], false), "stp_well_bid");
+    expect(res.kind).toBe("numeric");
+    expect(res.heldOut.buckets.every((b) => /^q\d$/.test(b.bucket))).toBe(true);
+  });
+
+  it("a planted effect in the -1 category alone comes out KEEP for =-1", () => {
+    const res = evaluateFeature(stateFixture([-1, 0, 1], true), "stp_well_bid");
+    expect(res.heldOut.selected).toBe("=-1");
+    expect(res.verdict).toBe("KEEP");
+    expect(res.folds.filter((f) => f.selected === "=-1" && f.passed).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("the -1/0 merge the old quintile rule made is gone: =-1 and =0 are tested separately", () => {
+    const res = evaluateFeature(stateFixture([-1, 0, 0, 0, 1], false), "stp_well_bid");
+    const n = (b: string) => res.heldOut.buckets.find((x) => x.bucket === b)!.test.n;
+    expect(n("=0")).toBe(3 * n("=-1"));
   });
 });
 
