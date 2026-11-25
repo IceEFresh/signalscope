@@ -6,8 +6,10 @@ import { computeStp } from "@/lib/harvester/universe/stp";
 import { barDateOf, sliceForSession } from "@/lib/harvester/universe/backfill";
 import {
   CONTROL_SEED,
+  EXIT_B_CAP,
   EXIT_RULES,
-  EXITS_ON_HOLD,
+  PRIMARY_EXIT,
+  atrSeries,
   costInR,
   entryLocation,
   entryOnNextBar,
@@ -18,9 +20,10 @@ import {
   maxDrawdownR,
   scanSymbol,
   setupOverlap,
-  simulateExit,
+  simulateExitA,
+  simulateExitB,
   simulateSymbol,
-  trailStop,
+  trailCandidate,
   type BarInfo,
   type Setup,
   type Trade,
@@ -44,19 +47,20 @@ function bars(ohlc: Array<[number, number, number, number]>, start = Date.UTC(20
 }
 const flat = (n: number, p = 100): Array<[number, number, number, number]> => Array.from({ length: n }, () => [p, p + 1, p - 1, p]);
 
-describe("entry: the D+1 stop order", () => {
+describe("entry: the D+1 stop-limit day order (§1e)", () => {
   const next = (o: number, h: number, l: number, c: number) => bars([[o, h, l, c]])[0];
   it("no fill when D+1 never reaches the entry", () => {
     expect(entryOnNextBar(next(100, 104.9, 99, 104), 1, 105, 95)).toEqual({ status: "cancelled" });
     expect(entryOnNextBar(next(100, 101, 95.1, 96), -1, 95, 105)).toEqual({ status: "cancelled" });
   });
-  it("normal fill at the entry, R = entry − stop", () => {
+  it("fills at the entry when D+1 opens at or below it and trades through; R = entry − stop", () => {
     expect(entryOnNextBar(next(100, 106, 99, 105), 1, 105, 95)).toEqual({ status: "filled", fill: 105, risk: 10 });
+    expect(entryOnNextBar(next(105, 106, 104, 105), 1, 105, 95)).toEqual({ status: "filled", fill: 105, risk: 10 });
     expect(entryOnNextBar(next(100, 101, 94, 95), -1, 95, 105)).toEqual({ status: "filled", fill: 95, risk: 10 });
   });
-  it("a gap through the entry fills at the open (the worse price)", () => {
-    expect(entryOnNextBar(next(108, 110, 107, 109), 1, 105, 95)).toEqual({ status: "filled", fill: 108, risk: 13 });
-    expect(entryOnNextBar(next(92, 93, 90, 91), -1, 95, 105)).toEqual({ status: "filled", fill: 92, risk: 13 });
+  it("a gap through the entry is no fill (gap_skip)", () => {
+    expect(entryOnNextBar(next(108, 110, 107, 109), 1, 105, 95)).toEqual({ status: "gap_skip" });
+    expect(entryOnNextBar(next(92, 93, 90, 91), -1, 95, 105)).toEqual({ status: "gap_skip" });
   });
   it("an open past the stop skips the setup", () => {
     expect(entryOnNextBar(next(94, 106, 90, 100), 1, 105, 95)).toEqual({ status: "skipped_gap" });
@@ -65,81 +69,127 @@ describe("entry: the D+1 stop order", () => {
   });
 });
 
-describe("exit A: stop, 3R target (§1d), 10-session time exit", () => {
+describe("exit A (reference): stop, 3R limit target, 10-session time exit", () => {
   // fill bar index 0, fill 100, stop 90, R 10, target 130
-  const run = (ohlc: Array<[number, number, number, number]>, dir: 1 | -1 = 1, fill = 100, stop = 90) => {
-    const b = bars(ohlc);
-    return simulateExit(b, b.map((x) => x.close), 0, dir, fill, Math.abs(fill - stop), stop, 0.5, "A");
-  };
+  const run = (ohlc: Array<[number, number, number, number]>, dir: 1 | -1 = 1, fill = 100, stop = 90) => simulateExitA(bars(ohlc), 0, dir, fill, Math.abs(fill - stop), stop);
   it("targets 3R", () => {
     expect(EXIT_RULES.A.targetR).toBe(3);
     const x = run([[100, 105, 99, 104], [104, 131, 103, 128]]);
     expect(x).toMatchObject({ reason: "target", exit: 130, exitIndex: 1, holding: 1 });
     expect(x.grossR).toBeCloseTo(3, 12);
-    expect(run([[100, 105, 99, 104], [104, 125, 103, 118]]).reason).not.toBe("target"); // 2.5R isn't enough
+    expect(run([[100, 105, 99, 104], [104, 125, 103, 118]]).reason).not.toBe("target");
   });
   it("a bar touching both stop and target exits at the stop, including the fill bar", () => {
     expect(run([[100, 135, 89, 110]])).toMatchObject({ reason: "stop", exit: 90, exitIndex: 0, grossR: -1 });
     expect(run([[100, 105, 99, 104], [104, 135, 85, 110]])).toMatchObject({ reason: "stop", exit: 90, exitIndex: 1 });
   });
-  it("a gap through the stop exits at the open", () => {
+  it("gaps exit at the open: through the stop (market order) and through the target (limit)", () => {
     expect(run([[100, 105, 99, 104], [85, 88, 80, 86]])).toMatchObject({ reason: "stop_gap", exit: 85, grossR: -1.5 });
-  });
-  it("a gap through the target exits at the open, the better price (§1d)", () => {
-    const x = run([[100, 105, 99, 104], [134, 136, 133, 135]]);
-    expect(x).toMatchObject({ reason: "target", exit: 134 });
-    expect(x.grossR).toBeCloseTo(3.4, 12);
+    expect(run([[100, 105, 99, 104], [134, 136, 133, 135]])).toMatchObject({ reason: "target", exit: 134 });
     expect(run([[100, 101, 95, 96], [66, 67, 60, 61]], -1, 100, 110)).toMatchObject({ reason: "target", exit: 66 });
   });
-  it("time exit at the close of session 10 after the fill", () => {
-    const x = run([[100, 101, 99, 100], ...flat(12, 101)]);
-    expect(x).toMatchObject({ reason: "time", exitIndex: 10, holding: 10, exit: 101 });
-  });
-  it("short mirrored", () => {
-    expect(run([[100, 101, 95, 96], [96, 97, 69, 71]], -1, 100, 110)).toMatchObject({ reason: "target", exit: 70 });
-  });
-  it("costs are 0.10% of price, converted into R", () => {
+  it("time exit at the close of session 10 after the fill; costs 0.10% in R", () => {
+    expect(run([[100, 101, 99, 100], ...flat(12, 101)])).toMatchObject({ reason: "time", exitIndex: 10, holding: 10, exit: 101 });
     expect(costInR(100, 10)).toBeCloseTo(0.01, 12);
-    const x = run([[100, 105, 99, 104], [104, 131, 103, 128]]);
-    expect(x.netR).toBeCloseTo(3 - 0.01, 12);
+    expect(run([[100, 105, 99, 104], [104, 131, 103, 128]]).netR).toBeCloseTo(3 - 0.01, 12);
   });
 });
 
-describe("exit B: STP trailing exits on synthetic bars", () => {
-  // 30 rising bars so SMAs exist and trendDirection is +1, then the rule bar at t = 30.
-  const rising = Array.from({ length: 30 }, (_, i): [number, number, number, number] => [100 + i, 101.5 + i, 99.5 + i, 101 + i]);
-  const closes = (b: DailyBar[]) => b.map((x) => x.close);
+describe("exit B (primary): STP management (§1e)", () => {
+  // Long: fill 100, stop 90, R 10. Add levels 120, 140, 160 …; 3R = 130.
+  const B = (ohlc: Array<[number, number, number, number]>, type = "inside", dir: 1 | -1 = 1, fill = 100, stop = 90) => {
+    const b = bars(ohlc);
+    const closes = b.map((x) => x.close);
+    return simulateExitB(b, closes, atrSeries(b), 0, dir, fill, Math.abs(fill - stop), stop, 0.5, type);
+  };
+  const quiet = (n: number, p: number): Array<[number, number, number, number]> => Array.from({ length: n }, () => [p, p + 0.5, p - 0.5, p]);
 
-  it("bar stop: trendDirection ≥ 1 and close > prior low trails the stop to low[t−1] − fudge", () => {
-    const b = bars(rising);
-    const t = 29;
-    expect(trailStop(b, closes(b), t, 1, 50, 0.5)).toBeCloseTo(b[t - 1].low - 0.5, 12);
+  it("adds at 2R and 4R, each 50% of the current size; stop moves to the size-weighted breakeven after each", () => {
+    // bar 1 trades up to 121 (add 1 at 120), bar 2 up to 141 (add 2 at 140), then drifts down to the BE stop
+    const x = B([[100, 101, 99, 100], [110, 121, 109, 119], [119, 141, 118, 139], ...quiet(3, 139), [139, 139.5, 100, 101]]);
+    expect(x.adds).toBe(2);
+    expect(x.size).toBeCloseTo(2.25, 12);
+    // BE after add 2: (1×100 + 0.5×120 + 0.75×140) / 2.25 = 117.777…
+    const be = (100 + 60 + 105) / 2.25;
+    expect(x.exit).toBeCloseTo(be, 9);
+    // total P&L over all units at the BE price is 0 before costs; costs are 0.1% of every leg's notional
+    expect(x.grossR).toBeCloseTo(0, 9);
+    const costs = 0.001 * (100 + 0.5 * 120 + 0.75 * 140 + 2.25 * be);
+    expect(x.netR).toBeCloseTo(-costs / 10, 9);
+    // the initial unit alone made (be − 100) / R minus its two legs' costs
+    expect(x.initialUnitR).toBeCloseTo((be - 100 - 0.001 * (100 + be)) / 10, 9);
   });
-  it("mX: close crossing below sma20 moves the stop to low[t] − fudge", () => {
-    const b = bars([...rising, [128, 128.5, 100, 100.2]]); // collapse through sma20
+
+  it("the stop-limit add isn't filled on a gap through it; the next level stays live", () => {
+    // bar 1 opens at 125 (above 120): add 1 skipped; bar 2 reaches 140: add 2 fills
+    const x = B([[100, 101, 99, 100], [125, 126, 124, 125], [125, 141, 124, 140], [140, 140.5, 60, 61]]);
+    expect(x.addGapSkips).toBe(1);
+    expect(x.adds).toBe(1);
+    expect(x.size).toBeCloseTo(1.5, 12);
+  });
+
+  it("when a bar touches the stop and an add level, the stop wins and the add doesn't happen", () => {
+    const x = B([[100, 101, 99, 100], [100, 125, 85, 110]]);
+    expect(x).toMatchObject({ reason: "stop", exit: 90, adds: 0, size: 1 });
+    expect(x.grossR).toBeCloseTo(-1, 12);
+  });
+
+  it("no trailing and no target before 3R: a strong close below sma10 at 2.5R doesn't move the stop", () => {
+    // rise to 125 (2.5R, add at 120 → BE stop 106.67), then a sharp pullback that would trigger pmX if trailing were on
+    const up = Array.from({ length: 25 }, (_, i): [number, number, number, number] => [100 + i, 101 + i, 99.5 + i, 100.8 + i]);
+    const x = B([...up, [124, 124.5, 108, 108.5], [108.5, 109, 107.5, 108], [108, 108.5, 100, 101]]);
+    expect(x.reached3R).toBe(false);
+    expect(x.reason).toBe("be_stop");
+  });
+
+  it("bar stop once 3R is touched and price is extended (close − sma10 > 1 ATR)", () => {
+    // steady 1-point bars, then a jump to 135 (3.5R): extended, so the stop trails to that bar's low − fudge
+    const base = Array.from({ length: 30 }, (_, i): [number, number, number, number] => [100 + i * 0.1, 100.6 + i * 0.1, 99.6 + i * 0.1, 100 + i * 0.1]);
+    const b = bars([...base, [104, 136, 103.9, 135], [135, 135.2, 120, 121]]);
+    const closes = b.map((x) => x.close);
+    const atr = atrSeries(b);
     const t = 30;
-    const s = trailStop(b, closes(b), t, 1, 50, 0.5);
-    expect(s).toBeCloseTo(Math.max(b[t].low - 0.5, 50), 12);
-    expect(s).toBeGreaterThan(50);
+    expect(closes[t] - (closes.slice(t - 9, t + 1).reduce((s, v) => s + v, 0) / 10)).toBeGreaterThan(atr[t]!);
+    expect(trailCandidate(b, closes, atr, t, 1, 0.5, false)).toBeCloseTo(b[t].low - 0.5, 12);
+    // a mechanical trade ignores the bar stop: no mX cross here, so no candidate
+    expect(trailCandidate(b, closes, atr, t, 1, 0.5, true)).toBeNull();
   });
-  it("pmX: close crossing below sma10 after an up trend moves the stop to low[t] − fudge", () => {
-    const b = bars([...rising, [129, 129.5, 124, 124.5]]); // below sma10, above sma20
-    const t = 30;
-    // close 124.5 < low[t−1] 128.5, so the bar stop doesn't apply; close stays above sma20, so mX doesn't either
-    expect(trailStop(b, closes(b), t, 1, 50, 0.5)).toBeCloseTo(b[t].low - 0.5, 12);
+
+  it("mX for a mech trade and pmX for an inside trade", () => {
+    const up = Array.from({ length: 30 }, (_, i): [number, number, number, number] => [100 + i, 101.5 + i, 99.5 + i, 101 + i]);
+    // close drops below sma10 but stays above sma20: pmX fires (inside), mX doesn't (mech)
+    const pm = bars([...up, [129, 129.5, 124, 124.5]]);
+    const c1 = pm.map((x) => x.close);
+    expect(trailCandidate(pm, c1, atrSeries(pm), 30, 1, 0.5, false)).toBeCloseTo(pm[30].low - 0.5, 12);
+    expect(trailCandidate(pm, c1, atrSeries(pm), 30, 1, 0.5, true)).toBeNull();
+    // close collapses through sma20: mX fires for the mech trade
+    const mx = bars([...up, [128, 128.5, 100, 100.2]]);
+    const c2 = mx.map((x) => x.close);
+    expect(trailCandidate(mx, c2, atrSeries(mx), 30, 1, 0.5, true)).toBeCloseTo(mx[30].low - 0.5, 12);
   });
-  it("the stop never loosens, and a short mirrors it", () => {
-    const b = bars(rising);
-    expect(trailStop(b, closes(b), 29, 1, 1e6, 0.5)).toBe(1e6);
-    const falling = bars(Array.from({ length: 30 }, (_, i): [number, number, number, number] => [200 - i, 201.5 - i, 199.5 - i, 199 - i]));
-    expect(trailStop(falling, closes(falling), 29, -1, 1e6, 0.5)).toBeCloseTo(falling[28].high + 0.5, 12);
+
+  it("the stop never drops below breakeven: a trailing level under BE is ignored", () => {
+    // add at 120 → BE 106.67; touch 3R at 131; a pmX level lower than BE must not loosen the stop
+    const up = Array.from({ length: 25 }, (_, i): [number, number, number, number] => [100 + i * 0.4, 100.5 + i * 0.4, 99.5 + i * 0.4, 100 + i * 0.4]);
+    const x = B([...up, [110, 131, 109.5, 130], [130, 130.5, 101, 102], [102, 103, 50, 51]]);
+    expect(x.adds).toBe(1);
+    expect(x.reached3R).toBe(true);
+    expect(x.exit).toBeGreaterThanOrEqual((100 + 0.5 * 120) / 1.5 - 1e-9);
   });
-  it("exit B uses a 3R target, a 20-session time exit, and reports a trailed stop as trail_stop", () => {
-    const b = bars([...rising, [130, 131, 129.5, 130.5], [130.5, 131, 100, 101]]);
-    const x = simulateExit(b, closes(b), 29, 1, 129, 5, 124, 0.5, "B");
-    expect(x.reason).toBe("trail_stop");
-    const t = bars([[100, 101, 99, 100], ...flat(25, 101)]);
-    expect(simulateExit(t, closes(t), 0, 1, 100, 10, 90, 0.5, "B")).toMatchObject({ reason: "time", holding: 20 });
+
+  it("60-session cap exits at that close; no target exit ever", () => {
+    expect(EXIT_B_CAP).toBe(60);
+    const x = B([[100, 101, 99, 100], ...quiet(70, 101)]);
+    expect(x).toMatchObject({ reason: "time_cap", holding: 60, exit: 101 });
+    const far = B([[100, 101, 99, 100], [101, 500, 100, 499], ...quiet(5, 499)]);
+    expect(far.reason).not.toBe("target");
+  });
+
+  it("shorts mirror: adds below, BE above", () => {
+    const x = B([[100, 101, 99, 100], [90, 91, 79, 81], [81, 120, 80, 119]], "inside", -1, 100, 110);
+    expect(x.adds).toBe(1); // 80 reached
+    expect(x.exit).toBeCloseTo((100 + 0.5 * 80) / 1.5, 9); // BE stop
+    expect(x.reason).toBe("be_stop");
   });
 });
 
@@ -204,7 +254,7 @@ describe("verdicts", () => {
     Array.from({ length: n }, (_, i) => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-        variant, alignment: "aligned" as const, weekUsed: 0.2, monthUsed: 0.2, roomW: 2,
+        variant, alignment: "aligned" as const, weekUsed: 0.2, monthUsed: 0.2, roomW: 2, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: net(i),
         symbol: `S${i % 7}`, scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir, type, firedRules: [],
         entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: net(i), netR: net(i), reason: "time" as const, holding: 1,
         controlNetR: ctrl(i), regime: null, quarter: "2025Q1",
@@ -241,7 +291,7 @@ describe("verdicts", () => {
   it("report, CSV and log row", () => {
     const trades = mk(400, (i) => (i % 3 === 0 ? -1 : 0.8), () => 0);
     const res = evaluateGroups(trades);
-    const md = simMarkdownReport(res, { setups: 500, filled: 400, cancelled: 90, skippedGap: 5, skippedOverlap: 5, noBar: 0, noControl: 0 }, { date: "d", commit: "c", exit: "A", symbols: 7 });
+    const md = simMarkdownReport(res, { setups: 500, filled: 400, cancelled: 90, gapSkip: 0, skippedGap: 5, skippedOverlap: 5, noBar: 0, noControl: 0 }, { date: "d", commit: "c", exit: "A", symbols: 7 });
     expect(md).toMatch(/Survivorship bias/);
     expect(md).toMatch(/\| inside\+ \| KEEP \|/);
     expect(tradesCsv(trades.slice(0, 1)).split("\n")[0]).toMatch(/^variant,symbol,trigger_date,fill_date,exit_date,direction,type/);
@@ -323,7 +373,7 @@ describe("step 1c: rolling opens (5/20 stocks, 7/30 crypto)", () => {
     const trades = Array.from({ length: 50 }, (_, i): Trade => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-        variant: "rolling", alignment: null, weekUsed: null, monthUsed: null, roomW: null, symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside",
+        variant: "rolling", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 0, symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside",
         firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1, risk: 0.1, grossR: 0, netR: 0, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };
     });
@@ -393,7 +443,7 @@ describe("§1d entry location vs the normal move", () => {
     const mk = (i: number, early: boolean, netR: number): Trade => {
       const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
       return {
-        variant: "calendar", alignment: null, weekUsed: early ? 0.3 : 0.8, monthUsed: early ? 0.3 : 0.8, roomW: 1, symbol: "S", scanId: d,
+        variant: "calendar", alignment: null, weekUsed: early ? 0.3 : 0.8, monthUsed: early ? 0.3 : 0.8, roomW: 1, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: netR, symbol: "S", scanId: d,
         scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1, stop: 0.9, exit: 1,
         risk: 0.1, grossR: netR, netR, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
       };
@@ -417,8 +467,18 @@ describe("§1d entry location vs the normal move", () => {
     expect(groupMetrics([]).targetRate).toBeNull();
   });
 
-  it("exit B is on hold", () => {
-    expect(EXITS_ON_HOLD.has("B")).toBe(true);
-    expect(EXITS_ON_HOLD.has("A")).toBe(false);
+  it("exit B is primary; exit A is a reference with no verdicts", () => {
+    expect(PRIMARY_EXIT).toBe("B");
+    const T0 = Date.UTC(2025, 0, 6);
+    const t = (i: number): Trade => {
+      const d = new Date(T0 + i * 86_400_000).toISOString().slice(0, 10);
+      return {
+        variant: "calendar", alignment: null, weekUsed: null, monthUsed: null, roomW: null, adds: 0, addGapSkips: 0, reached3R: false, size: 1, initialUnitR: 1,
+        symbol: "S", scanId: d, scanStart: new Date(`${d}T21:00:00Z`), fillDate: d, exitDate: d, dir: 1, type: "inside", firedRules: [], entry: 1, fill: 1,
+        stop: 0.9, exit: 1, risk: 0.1, grossR: 1, netR: 1, reason: "time", holding: 1, controlNetR: 0, regime: null, quarter: "2025Q1",
+      };
+    };
+    const ref = evaluateGroups(Array.from({ length: 800 }, (_, i) => t(i)), { verdicts: false });
+    expect(ref.filter((r) => r.primary).every((r) => r.verdict === null && r.reason === "reference exit: no verdict")).toBe(true);
   });
 });

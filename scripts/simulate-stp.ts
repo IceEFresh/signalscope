@@ -8,8 +8,8 @@
 //     -v "$PWD/scripts/backtesting-experiments.md:/app/scripts/backtesting-experiments.md" \
 //     -e NODE_OPTIONS=--max-old-space-size=6144 -e GIT_COMMIT=$(git rev-parse --short HEAD) \
 //     harvester npx tsx scripts/simulate-stp.ts --dataset backfill
-// Options: --years 2, --dry-run (summary only). Exit A only: exit B (STP trailing exits) is ON HOLD
-// until Chris confirms the trade management (docs/PHASE3-PREP.md P3-0i §1d); --exit B refuses.
+// Options: --exit A|B (default both), --years 2, --dry-run (summary only). Exit B (STP management,
+// §1e) is primary and gets the verdicts; exit A (fixed 3R) is a reference with no verdicts.
 
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,7 +18,7 @@ import { BENCHMARK_SYMBOL } from "@/lib/harvester/universe/snapshot";
 import { backfillSessions } from "@/lib/harvester/universe/backfill";
 import { commitId } from "@/lib/eval/commit";
 import { lastExperimentNumber } from "@/lib/eval/report";
-import { emptyCounts, EXITS_ON_HOLD, evaluateGroups, scanSymbol, setupOverlap, simulateSymbol, spyRegimeByDate, type ExitRule, type Overlap, type SymbolCounts, type Trade, type Variant } from "@/lib/eval/stp-sim";
+import { emptyCounts, evaluateGroups, PRIMARY_EXIT, scanSymbol, setupOverlap, simulateSymbol, spyRegimeByDate, type ExitRule, type Overlap, type SymbolCounts, type Trade, type Variant } from "@/lib/eval/stp-sim";
 import { simExperimentRow, simMarkdownReport, tradesCsv } from "@/lib/eval/stp-sim-report";
 
 const CACHE_DIR = "scripts/output/backfill-bars";
@@ -33,10 +33,9 @@ function arg(name: string): string | undefined {
 function main() {
   const dataset = arg("--dataset") ?? "backfill";
   if (dataset !== "backfill") throw new Error(`only --dataset backfill is supported (got ${dataset})`);
-  const requested = (arg("--exit") ?? "A").toUpperCase();
-  if (requested !== "A" && requested !== "B") throw new Error(`--exit must be A or B (got ${requested})`);
-  if (EXITS_ON_HOLD.has(requested as ExitRule)) throw new Error(`exit ${requested} is on hold (PHASE3-PREP.md P3-0i §1d): not run or registered until Chris confirms`);
-  const exits: ExitRule[] = [requested as ExitRule];
+  const requested = arg("--exit")?.toUpperCase();
+  if (requested && requested !== "A" && requested !== "B") throw new Error(`--exit must be A or B (got ${requested})`);
+  const exits: ExitRule[] = requested ? [requested as ExitRule] : ["B", "A"];
   const years = Number(arg("--years") ?? 2);
   const dryRun = process.argv.includes("--dry-run");
   if (!existsSync(CACHE_DIR)) throw new Error(`${CACHE_DIR} not found: run scripts/backfill-snapshot.ts first (its chart cache is the input)`);
@@ -84,7 +83,7 @@ function main() {
   const commit = commitId();
   for (const exit of exits) {
     const { trades, counts } = byExit[exit];
-    const results = evaluateGroups(trades);
+    const results = evaluateGroups(trades, { verdicts: exit === PRIMARY_EXIT });
     const prim = results.filter((r) => r.primary);
     console.log(
       `P3-0i exit ${exit}: ${trades.length} trades (${counts.calendar.filled} calendar, ${counts.rolling.filled} rolling); primary groups ${prim.filter((r) => r.verdict === "KEEP").length} KEEP, ` +

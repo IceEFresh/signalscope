@@ -7,7 +7,7 @@
  * day D+1 or later reads only that day's own bar and earlier ones.
  */
 import type { DailyBar } from "@/lib/harvester/universe/bar-metrics";
-import { sma, weekStart } from "@/lib/harvester/universe/bar-features";
+import { sma, weekStart, wilderAtr } from "@/lib/harvester/universe/bar-features";
 import { computeStp, htfOpensAt } from "@/lib/harvester/universe/stp";
 import { barDateOf, windowStart } from "@/lib/harvester/universe/backfill";
 import { computeStpRolling, ROLLING_WINDOWS, type RollingWindows } from "@/lib/harvester/universe/stp-rolling";
@@ -24,12 +24,15 @@ export const CONTROL_WINDOW = 20;
 export const CONTROL_TRIES = 5;
 
 export type ExitRule = "A" | "B";
-/** §1d (Chris, 2026-11-25): exit A targets 3R. Exit B is ON HOLD (built, not run or registered). */
-export const EXIT_RULES: Record<ExitRule, { targetR: number; maxSessions: number; trailing: boolean }> = {
-  A: { targetR: 3, maxSessions: 10, trailing: false },
-  B: { targetR: 3, maxSessions: 20, trailing: true },
+/**
+ * §1e (Chris, 2026-11-25): exit B, the STP management, is PRIMARY and gets the verdicts;
+ * exit A (fixed 3R target, 10 sessions) is a reference with no verdicts.
+ */
+export const EXIT_RULES: Record<ExitRule, { targetR: number; maxSessions: number }> = {
+  A: { targetR: 3, maxSessions: 10 },
+  B: { targetR: 3, maxSessions: 60 },
 };
-export const EXITS_ON_HOLD: ReadonlySet<ExitRule> = new Set(["B"]);
+export const PRIMARY_EXIT: ExitRule = "B";
 
 export type Dir = 1 | -1;
 
@@ -118,103 +121,118 @@ export function setupOverlap(calendar: readonly Setup[], rolling: readonly Setup
 export type EntryOutcome =
   | { status: "filled"; fill: number; risk: number }
   | { status: "cancelled" }
+  | { status: "gap_skip" }
   | { status: "skipped_gap" }
   | { status: "no_bar" };
 
 /**
- * The D+1 stop order, valid one session. Long fills if the D+1 high reaches the entry,
- * at max(entry, open); a gap past the stop, or R ≤ 0, skips the setup. Short mirrored.
- * Reads only bar D+1.
+ * §1e: the D+1 entry is a stop-limit day order. Long fills at `entry` only if D+1 opens at
+ * or below the entry and trades up through it; an open above the entry is no fill
+ * (`gap_skip`). An open at or past the stop skips the setup (§2). Short mirrored. Reads
+ * only bar D+1.
  */
 export function entryOnNextBar(next: DailyBar | undefined, dir: Dir, entry: number, stop: number): EntryOutcome {
   if (!next) return { status: "no_bar" };
   const open = next.open ?? null;
+  const risk = dir === 1 ? entry - stop : stop - entry;
   if (dir === 1) {
+    if (open != null && open > entry) return { status: "gap_skip" };
     if (next.high < entry) return { status: "cancelled" };
     if (open != null && open <= stop) return { status: "skipped_gap" };
-    const fill = open != null ? Math.max(entry, open) : entry;
-    const risk = fill - stop;
-    return risk > 0 ? { status: "filled", fill, risk } : { status: "skipped_gap" };
+  } else {
+    if (open != null && open < entry) return { status: "gap_skip" };
+    if (next.low > entry) return { status: "cancelled" };
+    if (open != null && open >= stop) return { status: "skipped_gap" };
   }
-  if (next.low > entry) return { status: "cancelled" };
-  if (open != null && open >= stop) return { status: "skipped_gap" };
-  const fill = open != null ? Math.min(entry, open) : entry;
-  const risk = stop - fill;
-  return risk > 0 ? { status: "filled", fill, risk } : { status: "skipped_gap" };
+  return risk > 0 ? { status: "filled", fill: entry, risk } : { status: "skipped_gap" };
 }
 
 const crossesBelow = (p: number | null, pl: number | null, c: number | null, cl: number | null) => p != null && pl != null && c != null && cl != null && p >= pl && c < cl;
 const crossesAbove = (p: number | null, pl: number | null, c: number | null, cl: number | null) => p != null && pl != null && c != null && cl != null && p <= pl && c > cl;
 
+/** Mechanical trades trail with mX only (§1e). */
+export const isMechanical = (type: string) => type === "mech1" || type === "mech2";
+
+/** Wilder ATR14 ending at each bar (null before 15 bars), over the symbol's whole history. */
+export function atrSeries(bars: readonly DailyBar[]): Array<number | null> {
+  const s = wilderAtr(bars); // element k ends at bar k + 14
+  return bars.map((_, i) => (i >= 14 ? s[i - 14] ?? null : null));
+}
+
 /**
- * Exit B trailing stop after bar t closes (docs/STP-SIGNALS.md "Exits"), applied from
- * bar t+1. Long: mX (close or sma10 crosses below sma20) and pmX (trendDirection[t−1] ≥ 1
- * and close crosses below sma10) move the stop to low[t] − fudge; the bar stop (while
- * trendDirection ≥ 1 and close > low[t−1]) trails at low[t−1] − fudge. Short mirrored.
- * The stop only ever tightens. Uses bars ≤ t only.
+ * Exit B trailing candidate after bar t closes (§1e), applied from bar t+1; the caller
+ * keeps the tighter of it and the current stop. Long:
+ * - mech1/mech2: mX only. Close crosses below sma20, or sma10 crosses below sma20 → low[t] − fudge.
+ * - others: if close − sma10 > 1 × ATR14 → low[t] − fudge (bar stop); otherwise pmX:
+ *   trendDirection[t−1] ≥ 1 and close crosses below sma10 → low[t] − fudge.
+ * Short mirrored. Null when no rule fires. Uses bars ≤ t only.
  */
-export function trailStop(bars: readonly DailyBar[], closes: readonly number[], t: number, dir: Dir, stop: number, fudge: number): number {
-  if (t < 1) return stop;
+export function trailCandidate(
+  bars: readonly DailyBar[],
+  closes: readonly number[],
+  atr: ReadonlyArray<number | null>,
+  t: number,
+  dir: Dir,
+  fudge: number,
+  mechanical: boolean,
+): number | null {
+  if (t < 1) return null;
   const s10 = sma(closes, 10, t);
   const s20 = sma(closes, 20, t);
   const s10p = sma(closes, 10, t - 1);
   const s20p = sma(closes, 20, t - 1);
   const c = closes[t];
   const cp = closes[t - 1];
-  const td = htfOpensAt(bars, t);
+  const level = dir === 1 ? bars[t].low - fudge : bars[t].high + fudge;
+  const below = dir === 1 ? crossesBelow : crossesAbove;
+  if (mechanical) return below(cp, s20p, c, s20) || below(s10p, s20p, s10, s20) ? level : null;
+  const a = atr[t];
+  if (s10 != null && a != null && dir * (c - s10) > a) return level; // extended: bar stop
   const tdPrev = htfOpensAt(bars, t - 1);
-  const cands: number[] = [];
-  if (dir === 1) {
-    if (crossesBelow(cp, s20p, c, s20) || crossesBelow(s10p, s20p, s10, s20)) cands.push(bars[t].low - fudge);
-    if (tdPrev != null && tdPrev >= 1 && crossesBelow(cp, s10p, c, s10)) cands.push(bars[t].low - fudge);
-    if (td != null && td >= 1 && c > bars[t - 1].low) cands.push(bars[t - 1].low - fudge);
-    return Math.max(stop, ...cands);
-  }
-  if (crossesAbove(cp, s20p, c, s20) || crossesAbove(s10p, s20p, s10, s20)) cands.push(bars[t].high + fudge);
-  if (tdPrev != null && tdPrev <= -1 && crossesAbove(cp, s10p, c, s10)) cands.push(bars[t].high + fudge);
-  if (td != null && td <= -1 && c < bars[t - 1].high) cands.push(bars[t - 1].high + fudge);
-  return Math.min(stop, ...cands);
+  if (tdPrev != null && dir * tdPrev >= 1 && below(cp, s10p, c, s10)) return level; // pmX
+  return null;
 }
 
-export type ExitReason = "stop" | "stop_gap" | "trail_stop" | "target" | "time" | "end_of_data";
+export type ExitReason = "stop" | "stop_gap" | "trail_stop" | "be_stop" | "target" | "time" | "time_cap" | "end_of_data";
 
 export interface TradeExit {
   exitIndex: number;
   exit: number;
   reason: ExitReason;
+  /** All units, in units of the initial 1-unit R. */
   grossR: number;
   netR: number;
+  /** The initial unit alone, net of its two legs' costs. */
+  initialUnitR: number;
   holding: number;
+  adds: number;
+  addGapSkips: number;
+  reached3R: boolean;
+  /** Position size at the exit, in initial units (1, 1.5, 2.25, ...). */
+  size: number;
 }
 
 export const costInR = (fill: number, risk: number) => (COST_ROUND_TRIP * fill) / risk;
+/** §1e: exit B costs are 0.10% of notional per leg (entry, each add, exit). */
+export const COST_PER_LEG = COST_ROUND_TRIP;
+export const ADD_EVERY_R = 2;
+export const ADD_FRACTION = 0.5;
+export const TRAIL_AFTER_R = 3;
+export const EXIT_B_CAP = 60;
 
 /**
- * Walk the trade from the fill bar f. Per bar: a gap through the stop exits at the open,
- * a gap through the target exits at the open (§1d: the better price a resting limit
- * order gets); a bar touching both the
- * stop and the target exits at the stop, including the fill bar; then the target; then
- * the time exit at the close of session f + maxSessions. Data ending first exits at the
- * last close.
+ * Exit A (reference, no verdicts): stop, 3R target as a limit order (a gap through it
+ * exits at the open), time exit at the close of session f + 10. A gap through the stop
+ * exits at the open; a bar touching both exits at the stop, fill bar included.
  */
-export function simulateExit(
-  bars: readonly DailyBar[],
-  closes: readonly number[],
-  f: number,
-  dir: Dir,
-  fill: number,
-  risk: number,
-  stop0: number,
-  fudge: number,
-  rule: ExitRule,
-): TradeExit {
-  const { targetR, maxSessions, trailing } = EXIT_RULES[rule];
+export function simulateExitA(bars: readonly DailyBar[], f: number, dir: Dir, fill: number, risk: number, stop: number): TradeExit {
+  const { targetR, maxSessions } = EXIT_RULES.A;
   const target = fill + dir * targetR * risk;
-  let stop = stop0;
   const last = Math.min(bars.length - 1, f + maxSessions);
   const done = (j: number, exit: number, reason: ExitReason): TradeExit => {
     const grossR = (dir * (exit - fill)) / risk;
-    return { exitIndex: j, exit, reason, grossR, netR: grossR - costInR(fill, risk), holding: j - f };
+    const netR = grossR - costInR(fill, risk);
+    return { exitIndex: j, exit, reason, grossR, netR, initialUnitR: netR, holding: j - f, adds: 0, addGapSkips: 0, reached3R: dir * (exit - fill) >= 3 * risk, size: 1 };
   };
   for (let j = f; j <= last; j++) {
     const b = bars[j];
@@ -222,14 +240,110 @@ export function simulateExit(
       if (dir === 1 ? b.open <= stop : b.open >= stop) return done(j, b.open, "stop_gap");
       if (dir === 1 ? b.open >= target : b.open <= target) return done(j, b.open, "target");
     }
-    const hitStop = dir === 1 ? b.low <= stop : b.high >= stop;
-    const hitTarget = dir === 1 ? b.high >= target : b.low <= target;
-    if (hitStop) return done(j, stop, stop === stop0 ? "stop" : "trail_stop");
-    if (hitTarget) return done(j, target, "target");
+    if (dir === 1 ? b.low <= stop : b.high >= stop) return done(j, stop, "stop");
+    if (dir === 1 ? b.high >= target : b.low <= target) return done(j, target, "target");
     if (j === f + maxSessions) return done(j, b.close, "time");
-    if (trailing) stop = trailStop(bars, closes, j, dir, stop, fudge);
   }
   return done(last, bars[last].close, "end_of_data");
+}
+
+/**
+ * Exit B, STP management (§1e, primary). 1 unit at `fill` with the initial stop. Per bar,
+ * in order: a gap through the stop exits at the open; a bar touching the stop exits at the
+ * stop (before any add on that bar); adds at fill ± 2R, 4R, … as stop-limit orders, each
+ * 50% of the current size; an add level opened through is skipped and the next level stays
+ * live. After an add, the stop moves to the size-weighted breakeven when that's tighter,
+ * from the next bar. Once a high (low, short) reaches fill ± 3R, each completed bar can
+ * tighten the stop with trailCandidate, from the next bar; the stop never loosens. No
+ * target; a 60-session cap exits at that close. R is total P&L over the initial 1-unit R.
+ */
+export function simulateExitB(
+  bars: readonly DailyBar[],
+  closes: readonly number[],
+  atr: ReadonlyArray<number | null>,
+  f: number,
+  dir: Dir,
+  fill: number,
+  risk: number,
+  stop0: number,
+  fudge: number,
+  type: string,
+): TradeExit {
+  const legs: Array<{ qty: number; price: number }> = [{ qty: 1, price: fill }];
+  const size = () => legs.reduce((s, l) => s + l.qty, 0);
+  const avgCost = () => legs.reduce((s, l) => s + l.qty * l.price, 0) / size();
+  const tighter = (a: number, b: number) => (dir === 1 ? Math.max(a, b) : Math.min(a, b));
+  let stop = stop0;
+  let movedToBE = false;
+  let trailed = false;
+  let nextAdd = 1; // the next add level is fill ± nextAdd × 2R
+  let addGapSkips = 0;
+  let reached3R = false;
+  const threeR = fill + dir * TRAIL_AFTER_R * risk;
+  const last = Math.min(bars.length - 1, f + EXIT_B_CAP);
+  const mech = isMechanical(type);
+
+  const done = (j: number, exit: number, reason: ExitReason): TradeExit => {
+    const pnl = legs.reduce((s, l) => s + l.qty * dir * (exit - l.price), 0);
+    const costs = COST_PER_LEG * (legs.reduce((s, l) => s + l.qty * l.price, 0) + size() * exit);
+    const grossR = pnl / risk;
+    const initialUnitR = (dir * (exit - fill) - COST_PER_LEG * (fill + exit)) / risk;
+    return { exitIndex: j, exit, reason, grossR, netR: grossR - costs / risk, initialUnitR, holding: j - f, adds: legs.length - 1, addGapSkips, reached3R, size: size() };
+  };
+  const stopReason = (): ExitReason => (trailed ? "trail_stop" : movedToBE ? "be_stop" : "stop");
+
+  for (let j = f; j <= last; j++) {
+    const b = bars[j];
+    if (j > f && b.open != null && (dir === 1 ? b.open <= stop : b.open >= stop)) return done(j, b.open, "stop_gap");
+    if (dir === 1 ? b.low <= stop : b.high >= stop) return done(j, stop, stopReason());
+    // Adds: stop-limit orders at successive 2R levels; a level the bar opened through is skipped.
+    let pendingStop: number | null = null;
+    for (;;) {
+      const level = fill + dir * nextAdd * ADD_EVERY_R * risk;
+      if (j > f && b.open != null && (dir === 1 ? b.open > level : b.open < level)) {
+        addGapSkips++;
+        nextAdd++;
+        continue;
+      }
+      if (dir === 1 ? b.high < level : b.low > level) break;
+      legs.push({ qty: size() * ADD_FRACTION, price: level });
+      nextAdd++;
+      const be = avgCost();
+      if (tighter(stop, be) === be && be !== stop) pendingStop = be;
+    }
+    if (dir === 1 ? b.high >= threeR : b.low <= threeR) reached3R = true;
+    if (j === f + EXIT_B_CAP) return done(j, b.close, "time_cap");
+    // From the next bar: breakeven after adds, then the trail once 3R has been touched.
+    if (pendingStop != null) {
+      stop = tighter(stop, pendingStop);
+      movedToBE = true;
+    }
+    if (reached3R) {
+      const c = trailCandidate(bars, closes, atr, j, dir, fudge, mech);
+      if (c != null && tighter(stop, c) === c && c !== stop) {
+        stop = c;
+        trailed = true;
+      }
+    }
+  }
+  return done(last, bars[last].close, "end_of_data");
+}
+
+/** Simulate one filled entry under an exit rule. */
+export function simulateExit(
+  bars: readonly DailyBar[],
+  closes: readonly number[],
+  atr: ReadonlyArray<number | null>,
+  f: number,
+  dir: Dir,
+  fill: number,
+  risk: number,
+  stop: number,
+  fudge: number,
+  type: string,
+  rule: ExitRule,
+): TradeExit {
+  return rule === "A" ? simulateExitA(bars, f, dir, fill, risk, stop) : simulateExitB(bars, closes, atr, f, dir, fill, risk, stop, fudge, type);
 }
 
 /** Deterministic PRNG (mulberry32). */
@@ -258,8 +372,9 @@ export interface ControlResult {
 /**
  * Matched control for a filled trade: a random non-trigger session within ±CONTROL_WINDOW
  * of the trigger, same direction, entry high + fudge (low − fudge short) and the mirror
- * stop from that bar, then the same fill, exit and cost rules. Up to CONTROL_TRIES
- * sessions are tried until one fills; null if none does.
+ * stop from that bar, then the same entry, management (the trade's type decides mX vs
+ * pmX) and cost rules. Up to CONTROL_TRIES sessions are tried until one fills; null if
+ * none does.
  */
 export function matchedControl(
   setup: Setup,
@@ -268,6 +383,7 @@ export function matchedControl(
   info: readonly BarInfo[],
   rule: ExitRule,
   seedBase = CONTROL_SEED,
+  atr: ReadonlyArray<number | null> = atrSeries(bars),
 ): ControlResult | null {
   const pool: number[] = [];
   for (let c = setup.i - CONTROL_WINDOW; c <= setup.i + CONTROL_WINDOW; c++) {
@@ -283,7 +399,7 @@ export function matchedControl(
     const stop = setup.dir === 1 ? bars[c].low - fudge : bars[c].high + fudge;
     const e = entryOnNextBar(bars[c + 1], setup.dir, entry, stop);
     if (e.status !== "filled") continue;
-    const x = simulateExit(bars, closes, c + 1, setup.dir, e.fill, e.risk, stop, fudge, rule);
+    const x = simulateExit(bars, closes, atr, c + 1, setup.dir, e.fill, e.risk, stop, fudge, setup.type, rule);
     return { i: c, netR: x.netR };
   }
   return null;
@@ -311,7 +427,7 @@ export interface EntryLocation {
  * the lowest low taken over bars of the fill's week dated ≤ D plus the fill itself; short
  * mirrored with the highest high. Uses bars ≤ i and the fill price only.
  */
-export function entryLocation(bars: readonly DailyBar[], i: number, fill: number, dir: Dir, risk: number, targetR = EXIT_RULES.A.targetR): EntryLocation {
+export function entryLocation(bars: readonly DailyBar[], i: number, fill: number, dir: Dir, risk: number, targetR = 3): EntryLocation {
   const dates = (k: number) => barDateOf(bars[k]);
   const fillDate = dates(i + 1);
   if (!fillDate) return { weekUsed: null, monthUsed: null, roomW: null };
@@ -385,6 +501,12 @@ export interface Trade extends EntryLocation {
   netR: number;
   reason: ExitReason;
   holding: number;
+  /** Exit B: adds filled, add levels skipped because a bar opened through them, 3R touched, size at exit. */
+  adds: number;
+  addGapSkips: number;
+  reached3R: boolean;
+  size: number;
+  initialUnitR: number;
   controlNetR: number | null;
   /** SPY close vs its SMA20 on the trigger day. */
   regime: "spy_above_sma20" | "spy_below_sma20" | null;
@@ -395,13 +517,15 @@ export interface SymbolCounts {
   setups: number;
   filled: number;
   cancelled: number;
+  /** §1e: D+1 opened through the entry, so the stop-limit didn't fill. */
+  gapSkip: number;
   skippedGap: number;
   skippedOverlap: number;
   noBar: number;
   noControl: number;
 }
 
-export const emptyCounts = (): SymbolCounts => ({ setups: 0, filled: 0, cancelled: 0, skippedGap: 0, skippedOverlap: 0, noBar: 0, noControl: 0 });
+export const emptyCounts = (): SymbolCounts => ({ setups: 0, filled: 0, cancelled: 0, gapSkip: 0, skippedGap: 0, skippedOverlap: 0, noBar: 0, noControl: 0 });
 
 /** SPY above/below its SMA20 by date, from SPY's own bars. */
 export function spyRegimeByDate(spy: readonly DailyBar[]): Map<string, Trade["regime"]> {
@@ -429,6 +553,7 @@ export function simulateSymbol(
   const setups = variant === "rolling" ? scanned.rollingSetups : scanned.setups;
   const info = scanned.info;
   const closes = bars.map((b) => b.close);
+  const atr = atrSeries(bars);
   const counts = emptyCounts();
   const trades: Trade[] = [];
   let openUntil = -1; // exit bar of the open trade; a trigger on the exit day itself is allowed
@@ -440,16 +565,17 @@ export function simulateSymbol(
     }
     const e = entryOnNextBar(bars[s.i + 1], s.dir, s.entry, s.stop);
     if (e.status === "cancelled") counts.cancelled++;
+    else if (e.status === "gap_skip") counts.gapSkip++;
     else if (e.status === "skipped_gap") counts.skippedGap++;
     else if (e.status === "no_bar") counts.noBar++;
     if (e.status !== "filled") continue;
     counts.filled++;
-    const x = simulateExit(bars, closes, s.i + 1, s.dir, e.fill, e.risk, s.stop, s.fudge, rule);
+    const x = simulateExit(bars, closes, atr, s.i + 1, s.dir, e.fill, e.risk, s.stop, s.fudge, s.type, rule);
     openUntil = x.exitIndex;
-    const control = matchedControl(s, bars, closes, info, rule);
+    const control = matchedControl(s, bars, closes, info, rule, CONTROL_SEED, atr);
     if (!control) counts.noControl++;
     trades.push({
-      ...entryLocation(bars, s.i, e.fill, s.dir, e.risk, EXIT_RULES[rule].targetR),
+      ...entryLocation(bars, s.i, e.fill, s.dir, e.risk, TRAIL_AFTER_R),
       variant,
       alignment: htfAlignment(s.htf, s.dir),
       symbol,
@@ -469,6 +595,11 @@ export function simulateSymbol(
       netR: x.netR,
       reason: x.reason,
       holding: x.holding,
+      adds: x.adds,
+      addGapSkips: x.addGapSkips,
+      reached3R: x.reached3R,
+      size: x.size,
+      initialUnitR: x.initialUnitR,
       controlNetR: control?.netR ?? null,
       regime: opts.regime?.get(s.date) ?? null,
       quarter: quarterOf(s.date),
@@ -494,6 +625,17 @@ export interface GroupMetrics {
   controls: number;
   controlExpectancy: number | null;
   edge: number | null; // expectancy − controlExpectancy
+  /** Exit B management (§1e). */
+  addRate: number | null; // share of trades with at least one add
+  avgAdds: number | null;
+  maxAdds: number | null;
+  addGapSkips: number;
+  reached3RRate: number | null;
+  beExitRate: number | null;
+  avgRReached3R: number | null;
+  avgRNot3R: number | null;
+  timeCaps: number;
+  avgInitialUnitR: number | null;
 }
 
 const mean = (xs: readonly number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null);
@@ -542,6 +684,16 @@ export function groupMetrics(trades: readonly Trade[]): GroupMetrics {
     controls: ctrl.length,
     controlExpectancy: cExp,
     edge: exp != null && cExp != null ? exp - cExp : null,
+    addRate: trades.length ? trades.filter((t) => t.adds > 0).length / trades.length : null,
+    avgAdds: mean(trades.map((t) => t.adds)),
+    maxAdds: trades.length ? Math.max(...trades.map((t) => t.adds)) : null,
+    addGapSkips: trades.reduce((s, t) => s + t.addGapSkips, 0),
+    reached3RRate: trades.length ? trades.filter((t) => t.reached3R).length / trades.length : null,
+    beExitRate: trades.length ? trades.filter((t) => t.reason === "be_stop").length / trades.length : null,
+    avgRReached3R: mean(trades.filter((t) => t.reached3R).map((t) => t.netR)),
+    avgRNot3R: mean(trades.filter((t) => !t.reached3R).map((t) => t.netR)),
+    timeCaps: trades.filter((t) => t.reason === "time_cap").length,
+    avgInitialUnitR: mean(trades.map((t) => t.initialUnitR)),
   };
 }
 
@@ -604,7 +756,8 @@ export const PRIMARY_GROUPS: ReadonlyArray<{ group: string; match: (t: GroupKey)
  * Split once over every trade (newest 30% of trigger dates held out; 3 expanding folds
  * by trigger date) and apply the same date cut to each group, so groups share one split.
  */
-export function evaluateGroups(trades: readonly Trade[]): GroupResult[] {
+export function evaluateGroups(trades: readonly Trade[], opts: { verdicts?: boolean } = {}): GroupResult[] {
+  const verdicts = opts.verdicts ?? true;
   const { test } = timeSplit(trades);
   const heldIds = new Set(test.map((t) => t.scanId));
   const foldIds = walkForwardFolds(trades).map((f) => new Set(f.test.map((t) => t.scanId)));
@@ -620,8 +773,8 @@ export function evaluateGroups(trades: readonly Trade[]): GroupResult[] {
     const heldOutPasses = passes(heldOut, MIN_HELDOUT_ROWS) && beatsBench(heldOut, heldIds);
     const foldsPassed = folds.filter((f, k) => passes(f, MIN_FOLD_ROWS) && beatsBench(f, foldIds[k])).length;
     let verdict: SimVerdict | null = null;
-    let reason = "descriptive only";
-    if (primary) {
+    let reason = primary && !verdicts ? "reference exit: no verdict" : "descriptive only";
+    if (primary && verdicts) {
       if (heldOut.trades < MIN_HELDOUT_ROWS) {
         verdict = "INSUFFICIENT";
         reason = `${heldOut.trades} held-out trades (need ${MIN_HELDOUT_ROWS})`;
