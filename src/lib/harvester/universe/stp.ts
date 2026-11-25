@@ -41,7 +41,7 @@ export interface StpResult {
 const dateOf = (b: DailyBar | undefined): string | null => (b?.time != null ? etParts(new Date(b.time * 1000)).date : null);
 
 /** Open of the first bar of bar i's week (or month); null if that period may start before the window. */
-function periodOpenAt(bars: readonly DailyBar[], i: number, kind: "week" | "month"): number | null {
+export function periodOpenAt(bars: readonly DailyBar[], i: number, kind: "week" | "month"): number | null {
   const d = dateOf(bars[i]);
   if (!d) return null;
   const key = (x: string) => (kind === "week" ? weekStart(x) : x.slice(0, 7));

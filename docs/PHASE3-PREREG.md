@@ -318,5 +318,28 @@ At a nominal 5%, about 0.5 KEEP could come from chance before the fold rule.
 
 **Descriptive only:** top-3 and all-passing populations; the low + fudge limit; event-halved vs not; `open_air` vs a level; counter-trend shorts and their size distribution; trades by event tier and how each exited; earnings exits; account view (peak open positions and open risk, no cap); the 5 largest losses and gains.
 
+## Aligned-trend setups (P3-0k): 4 comparisons, written before any run
+
+Spec: `docs/PHASE3-PREP.md` §P3-0k (Chris, 2026-11-25: "good stocks near an optimal entry with at least 3:1 risk reward"). Code: `src/lib/eval/aligned.ts`, `src/lib/eval/aligned-sim.ts`, `scripts/simulate-aligned.ts`. EGOP isn't a primary entry from here on (descriptive only).
+
+**Fixed before the run:**
+- **Alignment (every layer: the stock, its industry ETF, its sector SPDR, the market by a 2-of-3 vote of SPY, QQQ, DIA), completed bars ≤ D:** opens green (close above the monthly, weekly, rolling 20-session and rolling 5-session opens; crypto 30 / 7) **and** MAs stacked and sloped (close > sma10 > sma20 > sma50 > sma200, each above its value 5 sessions earlier). Aligned when both hold, against when both hold the other way, mixed otherwise or when a value is missing.
+- **Candidate:** Finviz base; the stock aligned in the trade's direction; no own earnings within 5 sessions.
+- **Entry:** a calendar or rolling STP trigger of type inside, U-turn, mech1 or mech2 in that direction (the calendar one kept when both fire); R/R ≥ 3 to the nearest level (P3-0j step 3); **optimal entry**: the stop at most 0.5 ATR beyond the nearest support below the entry (sma10, sma20, sma50, a confirmed k = 2 swing low, the weekly or monthly open; shorts mirrored).
+- **Size:** 1.0 when industry, sector and market are all aligned; each mixed, against or missing layer halves it; × 0.5 for an out-of-hours event within 5 sessions; floor 0.25; $200 × size.
+- **Management:** exit B (adds every 2 × ATR, max 3, breakeven, trail after 3R) plus the P3-0j event stop and earnings rules. Stop entry for the verdicts.
+- **Controls:** the after-trigger matched control (P3-0j3).
+
+**Pre-registered, KEEP rule as P3-0i:**
+
+| # | comparison | baseline |
+|---|---|---|
+| 1–2 | aligned + optimal entry vs all STP trades of these types, long / short | the same triggers with no gates, same size rule and management |
+| 3–4 | aligned + optimal entry vs its after-trigger matched control, long / short | P3-0j3 control |
+
+At a nominal 5%, about 0.2 KEEP could come from chance before the fold rule. **A small sample is expected; INSUFFICIENT means wait for more data, not a rule change.**
+
+**Descriptive only:** results by layer size (1, 0.5, 0.25); without the optimal-entry gate; opens-only and MAs-only alignment; the pullback entry (after the P3-0j3 sizing fix); calendar vs rolling trigger; layer-state counts; candidates left after each gate.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.
