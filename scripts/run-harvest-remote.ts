@@ -9,7 +9,9 @@ import { fetchDailyChart, peekDailyChart } from "../src/lib/harvester/yahoo-char
 import { parseChartBars } from "../src/lib/harvester/universe/bar-metrics.js";
 import { applyFunnelRanks, liveStpKeys } from "../src/lib/harvester/universe/stp-live.js";
 import { calendarExpiry, macroCalendar } from "../src/lib/harvester/macro-calendar.js";
-import { barStoreLine, updateBarStore } from "../src/lib/harvester/universe/bar-store.js";
+import { barStoreLine, swingHistory, updateBarStore } from "../src/lib/harvester/universe/bar-store.js";
+import { barDateOf } from "../src/lib/harvester/universe/backfill.js";
+import { alignmentSeries, type Alignment } from "../src/lib/eval/aligned.js";
 import { fsBarStoreIO } from "../src/lib/harvester/universe/bar-store-fs.js";
 import { PYRAMID_SECTOR_MIN_SHARE, pyramidCoverage, pyramidCoverageLine } from "../src/lib/health/harvest-health.js";
 import {
@@ -18,6 +20,8 @@ import {
   computeRegimeExtras,
   computeSectorExtras,
   computeMacroExtras,
+  alignLayersFor,
+  LAYER_ETFS,
   liveContextFor,
   loadLiveEtfStates,
   computeOptionsExtras,
@@ -133,8 +137,9 @@ async function main() {
   // P3-0i2b: persistent bar store for the swing keys (append this run's charts; never stops the harvest)
   let storeHistories = new Map<string, ReturnType<typeof parseChartBars>>();
   try {
+    // P3-0k: the layer ETFs too, so their sma200 and its slope are computable live
     const store = await updateBarStore(
-      prep.scanSymbols,
+      [...new Set([...prep.scanSymbols, ...LAYER_ETFS])],
       async (sym) => {
         const p = peekDailyChart(sym);
         const res = p ? await p.catch(() => null) : null;
@@ -149,8 +154,16 @@ async function main() {
   } catch (err) {
     console.warn(`[bar-store] update failed, swing keys use the chart only: ${err instanceof Error ? err.message : err}`);
   }
+  // P3-0k: layer ETF alignment from the store plus this run's chart
+  const liveAlign = new Map<string, Map<string, Alignment>>();
+  for (const etf of LAYER_ETFS) {
+    const p = peekDailyChart(etf);
+    const res = p ? await p.catch(() => null) : null;
+    if (!res?.ok) continue;
+    liveAlign.set(etf, alignmentSeries(swingHistory(storeHistories.get(etf), parseChartBars(res.json)), barDateOf));
+  }
   const liveKeys = (s: string, bars: Parameters<typeof liveStpKeys>[0], r: Parameters<typeof liveStpKeys>[1]) =>
-    liveStpKeys(bars, r, { ...liveContextFor(s, prep.profiles, liveEtfStates), history: storeHistories.get(s) });
+    liveStpKeys(bars, r, { ...liveContextFor(s, prep.profiles, liveEtfStates), history: storeHistories.get(s), alignLayers: alignLayersFor(s, prep.profiles, liveAlign) });
   const snapshot = await computeSnapshotRows(prep.scanSymbols, stp, undefined, { profiles: prep.profiles, rotation: sectorRotation }, liveKeys);
   // The same keys on the signal tickers' features (no new requests: their charts are cached)
   let liveTickers = 0;

@@ -21,6 +21,8 @@ import { fetchOptionsRaw, normalizeChain, type NormalizedChain } from "../option
 import { computeOptionsFeatures, daysToExpiry, MIN_NEAR_DAYS, pickExpiry, type OptionsFeatures } from "./options-features";
 import { fetchDailyChart, fetchYahooChart, peekDailyChart } from "../yahoo-chart";
 import { etfStates, MARKET_ETFS, type EtfState } from "./pyramid";
+import type { Alignment } from "@/lib/eval/aligned";
+import type { LayerSeries } from "@/lib/eval/aligned-sim";
 import type { LiveContext } from "./stp-live";
 import { fetchCryptoListings } from "../crypto/provider";
 import { buildCryptoUniverse } from "../crypto/universe";
@@ -299,10 +301,24 @@ export async function computeRegimeExtras(getChart: typeof fetchDailyChart = fet
  * sector-rotation fetch already loaded SPY, QQQ, DIA, the SPDRs and the industry ETFs).
  * Never makes a request; an ETF that isn't cached has no states (its layer logs null).
  */
+/** The Power Pyramid / P3-0k layer ETFs: SPY, QQQ, DIA, the sector SPDRs and the mapped industry ETFs. */
+export const LAYER_ETFS: readonly string[] = [...new Set([...MARKET_ETFS, ...Object.values(SECTOR_ETFS), ...Object.values(INDUSTRY_ETFS)])];
+
+/** P3-0k live: the stock's industry, sector and market alignment series (long direction, by date). */
+export function alignLayersFor(symbol: string, profiles: MemberProfiles, align: ReadonlyMap<string, ReadonlyMap<string, Alignment>>): LayerSeries {
+  const p = profiles[symbol];
+  const sectorEtf = p?.sector ? SECTOR_ETFS[p.sector] ?? null : null;
+  const industryEtf = industryEtfFor(p?.industry);
+  return {
+    industry: industryEtf ? align.get(industryEtf) ?? null : null,
+    sector: sectorEtf ? align.get(sectorEtf) ?? null : null,
+    market: MARKET_ETFS.map((e) => align.get(e) ?? null),
+  };
+}
+
 export async function loadLiveEtfStates(peek: (s: string) => ReturnType<typeof peekDailyChart> = peekDailyChart): Promise<Map<string, Map<string, EtfState>>> {
   const out = new Map<string, Map<string, EtfState>>();
-  const etfs = [...new Set([...MARKET_ETFS, ...Object.values(SECTOR_ETFS), ...Object.values(INDUSTRY_ETFS)])];
-  for (const etf of etfs) {
+  for (const etf of LAYER_ETFS) {
     const p = peek(etf);
     if (!p) continue;
     try {

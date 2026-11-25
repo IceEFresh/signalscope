@@ -62,8 +62,8 @@ import {
   type RiskReward,
 } from "./funnel";
 
-/** P3-0j3: top5_noair is the descriptive ranking with open_air candidates left out. */
-export type Population = "all" | "funnel" | "top5" | "top3" | "top5_noair";
+/** P3-0j3: top5_noair is the descriptive ranking with open_air candidates left out. P3-0k populations start with "p3k". */
+export type Population = "all" | "funnel" | "top5" | "top3" | "top5_noair" | "p3k" | "p3k_all" | "p3k_noopt" | "p3k_opens" | "p3k_mas";
 
 export interface SymbolInput {
   symbol: string;
@@ -163,6 +163,12 @@ export interface FunnelTrade extends Trade {
   /** P3-0j3: the same trade with the event stop rule off (top5 only; null elsewhere). */
   netRNoEvent: number | null;
   stopAtr: number | null;
+  /** P3-0k: size from the layers before the event halving (1, 0.5, 0.25), and the layer states. */
+  p3kLayerSize?: number;
+  alignIndustry?: string | null;
+  alignSector?: string | null;
+  alignMarket?: string | null;
+  setupVariant?: "calendar" | "rolling";
 }
 
 function entryFor(arm: EntryArm, bars: readonly DailyBar[], i: number, dir: Dir, entry: number, stop: number, fudge: number): EntryOutcome {
@@ -223,13 +229,17 @@ export interface FunnelCounts {
   noControl: number;
 }
 
-/** Steps 4–6 for one symbol, one population and one arm, one position per ticker. */
+/**
+ * Steps 4–6 for one symbol, one population and one arm, one position per ticker.
+ * P3-0k reuses it with its own membership and size (`opts`).
+ */
 export function simulateFunnelSymbol(
   input: SymbolInput,
   cands: readonly Candidate[],
   population: Population,
   arm: EntryArm,
   ctx: FunnelContext,
+  opts: { member?: (c: Candidate) => boolean; size?: (c: Candidate) => number; tag?: (c: Candidate) => Partial<FunnelTrade> } = {},
 ): { trades: FunnelTrade[]; counts: FunnelCounts } {
   const { bars, scanned, pyramid, earnings, symbol } = input;
   const closes = bars.map((b) => b.close);
@@ -240,7 +250,7 @@ export function simulateFunnelSymbol(
   const trades: FunnelTrade[] = [];
   let openUntil = -1;
   for (const c of cands) {
-    if (!inPopulation(c, population)) continue;
+    if (!(opts.member ? opts.member(c) : inPopulation(c, population))) continue;
     counts.candidates++;
     const s = c.setup;
     if (s.i < openUntil) {
@@ -254,7 +264,7 @@ export function simulateFunnelSymbol(
     }
     const layers = pyramidLayers(pyramid, s.date, s.dir);
     const stock = stockFactor(s.htf, s.maState, s.dir);
-    const size = funnelSize(stock, layers.sizeMult, c.eventHalf);
+    const size = opts.size ? opts.size(c) : funnelSize(stock, layers.sizeMult, c.eventHalf);
     const baseRisk = BASE_RISK_DOLLARS * size;
     if (initialShares(baseRisk, e.risk) < 1) {
       counts.sizeSkip++;
@@ -289,6 +299,7 @@ export function simulateFunnelSymbol(
       netRNoEvent: noEvent,
       stopAtr: c.stopAtr,
       regime: ctx.regime?.get(s.date) ?? null, quarter: quarterOf(s.date),
+      ...(opts.tag ? opts.tag(c) : {}),
     });
   }
   return { trades, counts };

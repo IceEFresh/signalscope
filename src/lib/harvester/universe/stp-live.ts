@@ -32,6 +32,8 @@ import { swingHistory } from "./bar-store";
 import { pyramidLayers } from "./pyramid";
 import { inHoursOn, macroCalendar, nextEvent, outOfHoursWithin, type MacroEvent } from "../macro-calendar";
 import { funnelGates, LEVEL_SWING_K, riskReward, RR_MIN } from "@/lib/eval/funnel";
+import { alignmentAt, marketAlignment, optimalEntry, p3kSize, type Alignment } from "@/lib/eval/aligned";
+import { layerStates, P3K_TYPES, type LayerSeries } from "@/lib/eval/aligned-sim";
 
 export type LiveValue = number | string | boolean | null;
 
@@ -49,11 +51,15 @@ export interface LiveContext {
   events?: readonly MacroEvent[];
   /** P3-0j: whether the stock reports earnings within 5 sessions (Yahoo); null/undefined = unknown, not blocking. */
   earnings5?: boolean | null;
+  /** P3-0k: long-direction alignment by date for the stock's industry, sector and market ETFs (store + chart). */
+  alignLayers?: LayerSeries;
 }
 
 /** P3-0i2 keys, all logged for every row (null when not computable), so the health report sees each family. */
 export const LIVE_STP_KEY_PREFIXES = ["stp_htf_opens_rolling", "stp_trigger_rolling", "stp_trigger_type_rolling", "stp_size_factor_long", "stp_size_factor_short", "size_combined_", "pyramid_", "finviz_", "swing_k"] as const;
 /** P3-0j funnel keys (stock rows; log only). funnel_rank is set across the run's rows by applyFunnelRanks. */
+/** P3-0k aligned-trend keys (stock rows; log only). */
+export const LIVE_P3K_KEYS = ["align_stock", "align_industry", "align_sector", "align_market", "optimal_entry", "p3k_candidate", "p3k_size_long", "p3k_size_short"] as const;
 export const LIVE_FUNNEL_KEYS = [
   "funnel_pass", "gate_finviz", "gate_earnings5", "gate_rr", "event_half", "event_today_inhours", "rr", "rr_level", "open_air", "funnel_rank", "countertrend", "next_event", "next_event_days",
 ] as const;
@@ -165,6 +171,40 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
       out.countertrend = g.countertrend;
       out.gate_rr = rr.rr == null ? null : rr.rr >= (g.countertrend ? g.rrMin : RR_MIN);
       out.funnel_pass = g.pass;
+    }
+
+    // P3-0k aligned-trend keys. align_*: "long" (aligned for a long), "short" (aligned for a short),
+    // "mixed", or null when not computable (sma200 + slope need ~205 bars).
+    const L: LayerSeries = ctx.alignLayers ?? { industry: null, sector: null, market: [null, null, null] };
+    const code = (a: Alignment | null | undefined) => (!a || !a.complete ? null : a.state === "aligned" ? "long" : a.state === "against" ? "short" : "mixed");
+    const at = (m: ReadonlyMap<string, Alignment> | null) => (date && m ? m.get(date) : undefined);
+    const sbCloses = sb.map((b) => b.close);
+    out.align_stock = sb.length ? code(alignmentAt(sb, sbCloses, st, 1)) : null;
+    out.align_industry = code(at(L.industry));
+    out.align_sector = code(at(L.sector));
+    const mkt = marketAlignment(L.market.map((m) => (at(m)?.complete ? at(m)!.state : null)));
+    out.align_market = mkt == null ? null : mkt === "aligned" ? "long" : mkt === "against" ? "short" : "mixed";
+    const halfP3k = out.event_half === true;
+    const sizeFor = (d: 1 | -1) => {
+      const l = layerStates(L, date ?? "", d);
+      return date ? p3kSize([l.industry, l.sector, l.market], halfP3k) : null;
+    };
+    out.p3k_size_long = sizeFor(1);
+    out.p3k_size_short = sizeFor(-1);
+    out.optimal_entry = null;
+    out.p3k_candidate = null;
+    // The calendar trigger first, else the rolling one (P3-0k takes both)
+    const cal = trig && trig.triggerType && P3K_TYPES.has(trig.triggerType) ? { d: trig.trigger as 1 | -1, entry: trig.entry!, stop: trig.stop! } : null;
+    const rol = r && (r.trigger === 1 || r.trigger === -1) && r.entry != null && r.stop != null ? { d: r.trigger as 1 | -1, entry: r.entry, stop: r.stop } : null;
+    const p = cal ?? rol;
+    if (p && sb.length) {
+      const sbAtr = atrOf(sb);
+      const piv = zigzag(sb, LEVEL_SWING_K);
+      const opt = optimalEntry(sb, sbCloses, st, p.d, p.entry, p.stop, sbAtr[st], piv);
+      const rr = riskReward(sb, sbCloses, st, p.d, p.entry, p.stop, sbAtr[st], piv);
+      out.optimal_entry = opt.optimal;
+      out.p3k_candidate =
+        out.finviz_base === true && alignmentAt(sb, sbCloses, st, p.d).state === "aligned" && ctx.earnings5 !== true && rr.rr != null && rr.rr >= RR_MIN && opt.optimal;
     }
   }
   return out;
