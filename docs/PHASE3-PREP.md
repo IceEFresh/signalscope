@@ -223,11 +223,15 @@ Besides the calendar weekly and monthly opens, test **rolling** opens for the tw
 
 **Exit B: STP management. This is now the PRIMARY exit and the one that gets KEEP verdicts.**
 1. **Start:** 1 unit at `entry`. Stop = trigger-bar `low − fudge` (shorts: `high + fudge`). `R = entry − stop`.
-2. **Add:** a stop-limit order at `add = entry + 2 × ATR14` (the trigger bar's Wilder ATR; shorts mirrored) for **0.5 unit**, live from the fill bar on.
-   - Same no-gap-fill rule.
-   - Only one add.
-   - If the add and the stop are both touched on the same bar, the stop wins and there's no add.
-3. **After the add fills:** the stop for the **whole** position moves to breakeven: `BE = (2 × entry + add) / 3`, the average cost of 1 + 0.5 units.
+2. **Adds (Chris, 2026-11-25, replaces the single 2 ATR add): pyramid every 2R.**
+   - Add levels: `entry + 2R`, `entry + 4R`, `entry + 6R`, and so on. Shorts mirrored.
+   - Each add buys **50% of the current position size**: 1 → 1.5 → 2.25 → 3.375 units, and so on.
+   - Each add is a stop-limit order with the same no-gap-fill rule. If a bar opens above an add level, that add is skipped, and the next level stays live.
+   - If the stop and an add level are both touched on one bar, the stop wins and that add doesn't happen.
+   - There's no limit on the number of adds. Report the add count per trade, and the maximum.
+3. **After every add,** the stop for the **whole** position moves to its breakeven: the size-weighted average cost of all units held, plus nothing for costs.
+   - It moves only if that's tighter than the current stop.
+   - From then on, the stop is the **greater** of the current breakeven and any trailing stop, for longs. The stop never loosens.
 4. **Before 3R is reached** (a high ≥ `entry + 3R`), the stop is the initial stop, or BE once the add has filled. No trailing, and no exit at the target.
 5. **Once 3R has been touched,** trail on each completed bar and apply the new stop from the next bar. The stop only tightens, and never goes below BE (or the initial stop if there was no add):
    - **Bar stop:** when `close − sma10 > 1 × ATR14` (the 10-day SMA is more than 1 ATR away), stop = that bar's `low − fudge`.
@@ -235,13 +239,13 @@ Besides the calendar weekly and monthly opens, test **rolling** opens for the tw
    - **Otherwise, for every other trade type: pmX.** When the trend direction on the prior bar is ≥ 1 and the close crosses below sma10, stop = that bar's `low − fudge`.
    - Shorts mirror all of the above.
 6. **No target exit.** A safety time cap of **60 sessions** exits at that close. Report how many trades hit it.
-7. **P&L in R:** total P&L over all units divided by the initial 1-unit risk R. Costs are 0.10% of notional per leg, the entry, the add and the exit, converted into R.
+7. **P&L in R:** total P&L over all units divided by the initial 1-unit risk R. Costs are 0.10% of notional per leg (the entry, every add and the exit), converted into R. Also report the R of the initial unit alone, so the pyramid's effect can be seen separately.
 8. **Same-bar order:** when a bar touches both the stop and a level, the stop comes first (conservative).
 
 **Exit A: secondary reference, no verdicts.** A fixed 3R target as a limit order (a gap through it fills at the open), the stop, and a 10-session time exit. Same entry and gap rules, no add.
 
 **Metrics** for exit B, in addition to step 4:
-- the add rate;
+- the add rate and the add-count distribution;
 - the share of trades that reach 3R;
 - the share that exit at BE;
 - average R for trades that reached 3R and for those that didn't;
@@ -253,14 +257,15 @@ The control uses the same management.
 
 **Tests**, in addition to step 7:
 - the stop-limit gap skip for the entry and the add;
-- the add fills, then the stop moves to BE for the whole position;
+- adds at 2R and 4R, each 50% of the current size, with the stop moving to the new size-weighted breakeven after each;
+- a gapped-over add is skipped and the next level stays live;
 - the stop and the add on the same bar;
 - no trailing before 3R;
 - the bar stop when sma10 is more than 1 ATR away;
 - mX for a mech trade and pmX for an inside trade;
 - the stop never drops below BE;
 - the 60-session cap;
-- R across 1.5 units.
+- R across a pyramided position, and initial-unit R.
 
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
