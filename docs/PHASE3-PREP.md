@@ -197,7 +197,7 @@ Besides the calendar weekly and monthly opens, test **rolling** opens for the tw
   - **superseded by §1e:** a gap through the entry does NOT fill (stop-limit, day order);
   - a gap through the **target** exits at the **open** (the better price, which a resting limit order gets);
   - a gap through the stop exits at the open (already the rule).
-- **Entry location vs the normal move (a selection rule).** A late entry in a move has less room to reach 3R before the move ends. Measure it for each trade.
+- **Entry location vs the normal move: SUPERSEDED by §1f (swing structure).** The text below is kept for history only. A late entry in a move has less room to reach 3R before the move ends. Measure it for each trade.
 
   **Reviewer's working definition (Chris to correct):**
   - The normal weekly move `W` is the mean high−low range of the prior 10 completed calendar weeks.
@@ -267,6 +267,104 @@ The control uses the same management.
 - the stop never drops below BE;
 - the 60-session cap;
 - R across a pyramided position, and initial-unit R.
+
+### 1f. Entry location by swing structure (Chris, 2026-11-25). Replaces the weekly/monthly `week_used` / `month_used` test in §1d.
+Chris's selection rule: how far into a stock's *typical move* the entry sits. A late entry in a rally has less room to reach 3R before the rally ends. Measure it from each stock's own swing history.
+
+1. **Swings, by an ATR zigzag:**
+   - A swing high is confirmed once price falls `k × ATR14` from it, and a swing low once price rises `k × ATR14` from it.
+   - ATR14 is Wilder's, on the bar where the leg starts.
+   - **Run all three thresholds:** k = **1.5, 2 and 3**.
+   - Use confirmed swings only. On the trigger day, the current leg's start is the last confirmed swing, so there's no look-ahead.
+2. **Profile per stock**, from confirmed legs in the 250 sessions up to the trigger day (fewer than 4 legs of a kind means null):
+   - **Up-legs (rallies) and down-legs (pullbacks):** median and 75th-percentile size, in ATR units and in %; median duration in bars.
+3. **Entry scores for a long** (shorts mirrored: down-legs as the move, up-legs as the pullback):
+   - `rally_used = (fill − last swing low) / median rally size`
+   - `rally_age = bars since the last swing low / median rally bars`
+   - `room_3r = (median rally size − (fill − last swing low)) / (3 × R)`: ≥ 1 means a typical rally still has room for 3R
+   - `pullback_ratio`: the size of the most recent confirmed pullback before the leg, divided by the median pullback
+4. **Pre-registered test,** replacing §1d's 2 comparisons: trades with `rally_used < 0.5` **and** `room_3r ≥ 1`, versus all trades of that direction.
+   - One test per k (1.5, 2, 3) × direction (long, short): **6 comparisons per exit**.
+   - Same KEEP rule, plus it must beat all trades of that direction.
+5. **Descriptive,** for each k:
+   - expectancy and 3R-hit rate by `rally_used` bucket (`< 0.25`, `0.25–0.5`, `0.5–0.75`, `0.75–1`, `> 1`);
+   - the same by `room_3r` (`< 1`, `≥ 1`);
+   - the same by `rally_age` (`< 0.5`, `0.5–1`, `> 1`);
+   - the same by `pullback_ratio` (`< 0.5`, `0.5–1`, `> 1`).
+   - Also the per-stock profile distribution across the universe: median rally and pullback in ATR, and bars.
+6. **Code:** a pure module `src/lib/harvester/universe/swings.ts`.
+   - `zigzag(bars, k)` returns confirmed pivots.
+   - `swingProfile(bars, t, k)` and `entryLocation(bars, t, fill, R, dir, k)`.
+   - Reused later for live logging in P3-0i2.
+7. **Tests:**
+   - zigzag pivots on synthetic bars at each k;
+   - no pivot confirmed before the reversal bar (look-ahead);
+   - profile medians and percentiles;
+   - null with fewer than 4 legs;
+   - `rally_used`, `room_3r`, `rally_age` and `pullback_ratio` on a worked example;
+   - shorts mirrored.
+
+**P3-0i2** (live logging) also logs `swing_k{1.5,2,3}_{rally_used,rally_age,room_3r_at_entry,pullback_ratio}`, plus the profile medians, into the features JSON. `room_3r` uses the STP trigger's entry and stop when there is one; otherwise null.
+
+### 1g. The Stock Market Power Pyramid: position size by layer agreement (Chris, 2026-11-25)
+STP stacks order flow in four layers, top to bottom:
+1. the 3 major indices;
+2. the 11 sectors;
+3. the industry groups;
+4. the stock itself.
+
+The stock's trigger is the setup. The layers above it set the **size**:
+- everything agrees: **full size (1.0)**;
+- one layer disagrees: **half (0.5)**;
+- both the market and the sector disagree: **half again (0.25)**.
+
+**Layer state = opens AND trend** (Chris, 2026-11-24: the layers are about trend too, not just the opens). Both are computed on that layer's ETF on the trigger day, using completed bars only:
+- **Opens:** `stp_htf_opens` (close vs the weekly and monthly opens).
+- **Trend:** the MA trend STP's mechanicals use. Up = close > sma50 and sma20 > sma50. Down = the mirror. Anything else is neutral.
+- **Agrees** (for a long): opens = +1 and trend up. **Disagrees:** opens = −1 and trend down. **Anything else is mixed**, and mixed is not a disagreement.
+- Descriptive variants, same reports: opens-only and trend-only layer states.
+- **Market:** SPY, QQQ and DIA, each scored separately. The market layer agrees if the majority (2 of 3) is on the trade's side.
+- **Sector:** the stock's SPDR sector ETF (from `UniverseMember.sector`, through the P3-0d/1f map).
+- **Industry:** the stock's industry ETF (the 1f map). Null when the industry is unmapped.
+
+Shorts are mirrored.
+
+**Reviewer's assumptions:**
+- The size rule uses the **market and sector** layers: 0 disagreeing gives 1.0, 1 gives 0.5, 2 gives 0.25.
+- The industry layer is reported alongside. A variant also counts industry, with the size halved for each disagreeing layer.
+- Mixed counts as not disagreeing.
+- Chris can correct any of these before the run.
+
+**Simulation:**
+- Fetch the ETF bars for the backfill: SPY (already there), QQQ, DIA, the 11 sector SPDRs, and the mapped industry ETFs. Cache them next to the stock bars, sliced to day D like everything else.
+- Sector and industry use today's mapping (survivorship caveat).
+- Each trade gets `size_mult` (1, 0.5 or 0.25) and `pyramid_layers` (market, sector and industry, each agree, mixed or disagree).
+- Report **both** of these: unweighted R, the per-trade edge; and **size-weighted R** (R × size_mult), the portfolio effect of the sizing rule.
+- **Pre-registered, +2 comparisons per exit:** "all agree" trades (market and sector both agree) vs all trades, long and short. Same KEEP rule.
+- **Descriptive only:** expectancy and 3R-hit rate by size_mult (1, 0.5, 0.25), by each layer's state, and for the industry-included variant. Also total size-weighted R and max drawdown, with the sizing rule vs flat size.
+
+**Live logging (P3-0i2):**
+- `pyramid_market` with SPY, QQQ and DIA htf, plus the vote; `pyramid_sector` with the ETF and its htf; `pyramid_industry` with the ETF and its htf.
+- `pyramid_size_long` and `pyramid_size_short`.
+- Log only.
+
+**Tests:**
+- the 2-of-3 index majority;
+- opens agree but trend down is mixed, not agree;
+- mixed is not a disagreement;
+- size 1, 0.5 and 0.25 cases;
+- shorts mirrored;
+- a null industry;
+- ETF bars sliced to D (look-ahead).
+
+### 1h. Fixed dollar risk per position (Chris, 2026-11-24)
+Every position risks the same dollars. **Base risk = $100 × size_mult** (so $100, $50 or $25 after §1g).
+- **Initial shares** = floor(base risk / (entry − stop)), shorts mirrored. **0 shares means no trade**: log it as `size_skip` and count it per pattern.
+- **Each add** = floor(50% of current shares). 0 means no add. The add fills at its stop-limit level under §1e's gap rule.
+- **Dollar P&L** = shares × price move per unit, summed over units, minus 0.10% per leg on the traded value.
+- **R** stays defined as dollar P&L ÷ the initial base risk. With fixed risk, unweighted R is the per-trade view and dollar P&L (which already includes size_mult) replaces the separate "size-weighted R" in §1g.
+- **Report:** total dollar P&L, max drawdown in dollars, trades per day, and the largest number of open positions and total open risk on any day (no cap is applied; this sizes the account the method needs).
+- **Tests:** floor rounding, a wide stop giving 0 shares (`size_skip`), an add rounding to 0, a short.
 
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
