@@ -265,8 +265,9 @@ export async function buildEarnings(
 
 /**
  * The per-ticker output file (scripts/output/backfill-earnings/<SYMBOL>.json) → earnings sessions.
- * `excludeDuring` drops releases accepted during the session (09:30–16:00 ET): Chris, 2026-11-25,
- * they don't count for EGOP, whose gap must be at the open. The funnel's earnings gate and
+ * `excludeDuring` drops releases accepted during the session (09:30–16:00 ET) for EGOP
+ * (Chris, 2026-11-25, after the first EGOP backfill run): a definition fix, since EGOP trades
+ * the opening gap and a release during the session can't produce one. The funnel's earnings gate and
  * exit rule keep them (they're still earnings).
  */
 export function earningsSessionsFromFile(json: unknown, opts: { excludeDuring?: boolean } = {}): Set<string> {
