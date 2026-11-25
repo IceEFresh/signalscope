@@ -318,15 +318,16 @@ The stock's trigger is the setup. The layers above it set the **size**:
 - one layer disagrees: **half (0.5)**;
 - both the market and the sector disagree: **half again (0.25)**.
 
-**Order flow per layer:** `stp_htf_opens` (close vs the weekly and monthly opens) computed on that layer's ETF, on the trigger day, using completed bars only.
+**Layer state = opens AND trend** (Chris, 2026-11-24: the layers are about trend too, not just the opens). Both are computed on that layer's ETF on the trigger day, using completed bars only:
+- **Opens:** `stp_htf_opens` (close vs the weekly and monthly opens).
+- **Trend:** the MA trend STP's mechanicals use. Up = close > sma50 and sma20 > sma50. Down = the mirror. Anything else is neutral.
+- **Agrees** (for a long): opens = +1 and trend up. **Disagrees:** opens = −1 and trend down. **Anything else is mixed**, and mixed is not a disagreement.
+- Descriptive variants, same reports: opens-only and trend-only layer states.
 - **Market:** SPY, QQQ and DIA, each scored separately. The market layer agrees if the majority (2 of 3) is on the trade's side.
 - **Sector:** the stock's SPDR sector ETF (from `UniverseMember.sector`, through the P3-0d/1f map).
 - **Industry:** the stock's industry ETF (the 1f map). Null when the industry is unmapped.
 
-**Agree or disagree, for a long** (shorts mirrored):
-- `+1` (above both opens) **agrees**;
-- `−1` (below both) **disagrees**;
-- `±0.5` (between the two opens) is **mixed**, and counts as neither.
+Shorts are mirrored.
 
 **Reviewer's assumptions:**
 - The size rule uses the **market and sector** layers: 0 disagreeing gives 1.0, 1 gives 0.5, 2 gives 0.25.
@@ -349,11 +350,21 @@ The stock's trigger is the setup. The layers above it set the **size**:
 
 **Tests:**
 - the 2-of-3 index majority;
+- opens agree but trend down is mixed, not agree;
 - mixed is not a disagreement;
 - size 1, 0.5 and 0.25 cases;
 - shorts mirrored;
 - a null industry;
 - ETF bars sliced to D (look-ahead).
+
+### 1h. Fixed dollar risk per position (Chris, 2026-11-24)
+Every position risks the same dollars. **Base risk = $100 × size_mult** (so $100, $50 or $25 after §1g).
+- **Initial shares** = floor(base risk / (entry − stop)), shorts mirrored. **0 shares means no trade**: log it as `size_skip` and count it per pattern.
+- **Each add** = floor(50% of current shares). 0 means no add. The add fills at its stop-limit level under §1e's gap rule.
+- **Dollar P&L** = shares × price move per unit, summed over units, minus 0.10% per leg on the traded value.
+- **R** stays defined as dollar P&L ÷ the initial base risk. With fixed risk, unweighted R is the per-trade view and dollar P&L (which already includes size_mult) replaces the separate "size-weighted R" in §1g.
+- **Report:** total dollar P&L, max drawdown in dollars, trades per day, and the largest number of open positions and total open risk on any day (no cap is applied; this sizes the account the method needs).
+- **Tests:** floor rounding, a wide stop giving 0 shares (`size_skip`), an add rounding to 0, a short.
 
 ### 2. Trades
 Simulate from the backfill bars: the on-disk cache `scripts/output/backfill-bars/`, or the DB backfill rows if the cache is gone. Same survivorship caveat as the backfill.
