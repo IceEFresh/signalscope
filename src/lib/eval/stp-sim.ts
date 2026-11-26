@@ -244,6 +244,8 @@ export type EventTier = "event_bar" | "event_be" | "event_hold";
 export interface ExitExtras {
   eventBefore?: ReadonlySet<number>;
   earningsAt?: number | null;
+  /** P3-0k3 descriptive "build to layer size": the add's quantity on bar j given the current shares (default floor(50%)). */
+  addQty?: (j: number, currentShares: number) => number;
 }
 
 export interface TradeExit {
@@ -408,7 +410,7 @@ export function simulateExitB(
       }
       if (dir === 1 ? b.high < level : b.low > level) break;
       nextAdd++;
-      const qty = Math.floor(size() * ADD_FRACTION);
+      const qty = extra?.addQty ? extra.addQty(j, size()) : Math.floor(size() * ADD_FRACTION);
       if (qty < 1) continue; // §1h: an add rounding to 0 is no add
       legs.push({ qty, price: level });
       const be = avgCost();

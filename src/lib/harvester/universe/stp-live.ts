@@ -35,6 +35,7 @@ import { funnelGates, LEVEL_SWING_K, riskReward, RR_MIN } from "@/lib/eval/funne
 import { alignmentAt, marketAlignment, optimalEntry, p3kSize, type Alignment } from "@/lib/eval/aligned";
 import { layerStates, P3K_TYPES, type LayerSeries } from "@/lib/eval/aligned-sim";
 import type { WatchKeys } from "../watchlist";
+import { maOrderAt, monthlyAndRolling20Green, opensV2, p3k3Size, passingNamedScreens, roomEarly } from "@/lib/eval/aligned-v2";
 
 export type LiveValue = number | string | boolean | null;
 
@@ -62,6 +63,8 @@ export interface LiveContext {
 export const LIVE_STP_KEY_PREFIXES = ["stp_htf_opens_rolling", "stp_trigger_rolling", "stp_trigger_type_rolling", "stp_size_factor_long", "stp_size_factor_short", "size_combined_", "pyramid_", "finviz_", "swing_k"] as const;
 /** P3-0j funnel keys (stock rows; log only). funnel_rank is set across the run's rows by applyFunnelRanks. */
 /** P3-0k aligned-trend keys (stock rows; log only). */
+/** P3-0k3 aligned trend v2 keys (stock rows; log only). */
+export const LIVE_P3K3_KEYS = ["p3k3_candidate", "p3k3_size_long", "p3k3_size_short", "p3k3_ma_order"] as const;
 /** P3-0l watchlist keys (stock rows; log only). */
 export const LIVE_WATCH_KEYS = ["watch_sources", "watch_first_seen", "watch_direction", "watch_direction_source", "watch_entry_ready", "watch_size", "watch_only"] as const;
 export const LIVE_P3K_KEYS = ["align_stock", "align_industry", "align_sector", "align_market", "optimal_entry", "p3k_candidate", "p3k_size_long", "p3k_size_short"] as const;
@@ -210,6 +213,36 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
       out.optimal_entry = opt.optimal;
       out.p3k_candidate =
         out.finviz_base === true && alignmentAt(sb, sbCloses, st, p.d).state === "aligned" && ctx.earnings5 !== true && rr.rr != null && rr.rr >= RR_MIN && opt.optimal;
+    }
+
+    // P3-0k3 aligned trend v2 (provisional): candidate, size per direction, and the MA order
+    {
+      const indAt = (d: 1 | -1) => {
+        const a = date && L.industry ? L.industry.get(date) : undefined;
+        return a && a.complete ? (d === 1 ? a.state : a.state === "aligned" ? "against" : a.state === "against" ? "aligned" : "mixed") : null;
+      };
+      const size3 = (d: 1 | -1) => {
+        if (!date || !sb.length) return null;
+        const l = layerStates(L, date, d);
+        return p3k3Size({ monthlyR20Green: monthlyAndRolling20Green(sb, st, d), sector: l.sector, market: l.market, industry: indAt(d) }, halfP3k);
+      };
+      out.p3k3_size_long = size3(1);
+      out.p3k3_size_short = size3(-1);
+      const mL = sb.length ? maOrderAt(sbCloses, st, 1) : { pass: false, order: null };
+      const mS = sb.length ? maOrderAt(sbCloses, st, -1) : { pass: false, order: null };
+      out.p3k3_ma_order = mL.pass ? mL.order : mS.pass ? mS.order : null;
+      out.p3k3_candidate = null;
+      if (p && sb.length) {
+        const sbAtr = atrOf(sb);
+        const piv = zigzag(sb, LEVEL_SWING_K);
+        const ma = maOrderAt(sbCloses, st, p.d);
+        const screens = bars.length ? passingNamedScreens(screensOn(bars, t, atrOf(bars)), p.d) : [];
+        const rr = riskReward(sb, sbCloses, st, p.d, p.entry, p.stop, sbAtr[st], piv);
+        const opt = optimalEntry(sb, sbCloses, st, p.d, p.entry, p.stop, sbAtr[st], piv);
+        const room = roomEarly(sb, st, p.d, p.entry, p.stop, sbAtr[st], piv, (x) => swingProfile(sb, x, LEVEL_SWING_K, piv));
+        out.p3k3_candidate =
+          ma.pass && opensV2(sb, st, p.d) && screens.length > 0 && ctx.earnings5 !== true && rr.rr != null && rr.rr >= RR_MIN && opt.optimal && room.pass;
+      }
     }
 
     // P3-0l watchlist: entry readiness needs only an STP trigger (any calendar type, or rolling) in

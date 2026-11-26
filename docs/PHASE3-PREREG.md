@@ -341,5 +341,29 @@ At a nominal 5%, about 0.2 KEEP could come from chance before the fold rule. **A
 
 **Descriptive only:** results by layer size (1, 0.5, 0.25); without the optimal-entry gate; opens-only and MAs-only alignment; the pullback entry (after the P3-0j3 sizing fix); calendar vs rolling trigger; layer-state counts; candidates left after each gate.
 
+## Aligned trend v2 (P3-0k3): 4 comparisons, provisional, written before any P3-0k3 run
+
+Spec: `docs/PHASE3-PREP.md` §P3-0k3, including the room-to-3R gate and the build-to-layer-size variant (branch `docs/p3-0k3-room-early`). Code: `src/lib/eval/aligned-v2.ts`, `src/lib/eval/aligned-v2-sim.ts`, run inside `scripts/simulate-aligned.ts` beside P3-0k.
+
+**Defined after the first P3-0k run** (INSUFFICIENT; aligned long −0.62R held out), from the criteria alone, before its gate or size breakdowns were seen. **Any KEEP is provisional** until it's confirmed on live data. P3-0k is unchanged.
+
+**Fixed before the run (long; shorts mirrored), completed bars ≤ D:**
+- MAs: close > max(sma20, sma50) and min(sma20, sma50) > sma200 (either order; ties fail; no sma10, no slope).
+- Opens: close > the weekly open **or** > the rolling 5-session open (crypto 7).
+- At least one of Chris's named Finviz screens in the trade direction (long F28, F26, F25, F23, F22, F21, F19, F18, F04; short F28, F10, F08, F12, F13, F14, F03). F18 and F19 need short float: null on the backfill.
+- No own earnings within 5 sessions; a calendar or rolling STP trigger (inside, U-turn, mech1, mech2); R/R ≥ 3; optimal entry (stop ≤ 0.5 ATR beyond the nearest support).
+- **Room to 3R early in the leg:** the k = 2 swing profile (250 sessions, ≥ 4 legs, pivots confirmed by D); leg so far = |entry − last confirmed swing low| ÷ ATR14(D); room left = median rally (ATR) − leg so far ≥ 3 × (entry − stop) ÷ ATR14(D). No profile → no candidate (counted).
+- **Size:** 1.0, halved once if the monthly or rolling-20 open isn't green, once each for sector and market not aligned, once for industry not aligned (no industry ETF or no complete data is neutral); × 0.5 for an out-of-hours event; floor 0.25; $200 × size.
+- **Management:** exit B (adds 50% at +2/+4/+6 ATR, max 3, breakeven, trail after 3R) plus the event and earnings rules; stop entry; fudge 11%; after-trigger matched control.
+
+**Pre-registered (KEEP rule as P3-0i; every KEEP provisional):**
+
+| # | comparison | baseline |
+|---|---|---|
+| 1–2 | `p3k3` vs all STP trades of these types, long / short | the same triggers with no gates, the v2 size rule |
+| 3–4 | `p3k3` vs its after-trigger matched control, long / short | P3-0j3 control |
+
+**Descriptive only:** gate counts step by step, calendar vs rolling; per named screen and the plain Finviz base instead; by size and by each sizing input; order 20 > 50 vs 50 > 20; the slope variant; without the room gate and its failures; the 75th-percentile rally; `rally_used` quintiles; fudge 23%; stopped within 3 sessions; "build to layer size" (adds up to the day's layer size, never beyond full) vs the primary adds; side by side with P3-0k.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.
