@@ -779,6 +779,30 @@ Same KEEP rule.
 - **Tests:** butn at, above and below average (start and entry); inside at, above and below; short mirror; missing volume.
 - **Live keys:** `move_pauses` and `p3k4_candidate` use the same rule.
 
+**Amendment, Livermore rules (Chris, 2026-11-26, before any P3-0k4 run).** From *Reminiscences of a Stock Operator*; Chris approved all five. Provisional, like the rest of P3-0k4. Volume average = the 20 sessions before the bar.
+
+1. **Exit D, hold to the move end** (Chris: "that is the intent of the pmX and the close below the 10"). Same entry, initial stop, adds (+2/+4/+6 ATR, max 3), breakeven after each add, event and earnings rules, 60-session cap and costs as exit B, but **no 3R trigger for the trail**. The trade exits at the next open after the move detector ends the move it entered (any primary end rule, including saturation below), or on its stop, whichever comes first. A trade entered with no active move uses exit B. `p3k4` runs under both exits; exit B stays primary for the 4 existing comparisons.
+2. **Follows its group** (gate in `p3k4`): RS20 = the stock's 20-session return − its sector ETF's 20-session return, at D. Longs need RS20 ≥ 0, shorts ≤ 0. No sector ETF or no data → passes (neutral), counted in the gate table.
+3. **Failing leaders** (gate in `p3k4`): a sector's leaders at D = the 5 universe members of that sector with the highest RS60 (60-session return − the sector ETF's), at least 8 members with data, else the rule is neutral. **Block new longs** in the sector when ≥ 3 of its 5 leaders had a long move end in the last 10 sessions and haven't started a new long move by D, while the sector ETF closes above its sma20 (money leaving the winners while the group still looks fine). Shorts mirror with the 5 lowest RS60 and short moves. Needs a two-pass run: moves for every symbol first, then candidates. Only bars ≤ D are used.
+4. **Saturation** (new primary end rule, also an exit D trigger): a bar with volume > 2 × average, a high within 0.5 × ATR14 of the move high (or a new move high), and a close in the lower half of its range (long; shorts mirrored). End type `saturation`. Descriptive: legs per move with saturation off.
+5. **Confirmed breakout entry** (new population `p3k4_brk`). Chris: "we need confidence it's an actual breakout and not noise." The trigger bar is a move start of type breakout (≤ 3 ATR 20-session range, F25/F22, rules above) **plus all of these (reviewer's defaults):**
+   - volume ≥ 1.5 × average;
+   - close ≥ range high + 0.25 × ATR14 (shorts: ≤ range low − 0.25 ATR);
+   - close in the top 25% of the bar's range (shorts: bottom 25%);
+   - the P3-0k3 stock gates (MAs, opens, no earnings ≤ 5, R/R ≥ 3) plus rules 2 and 3. Not the screen gate (F25/F22 already applies), not optimal entry, not the pauses gate. `move_used` ≤ 0.5 still applies.
+   - Entry, stop and sizing as STP: entry = high + fudge, stop = low − fudge, P3-0k3 size rule, exit B (exit D descriptive).
+   - Inside days are already a breakout entry (Chris) and stay in `p3k4`.
+
+**Pre-registered additions (provisional):**
+- `p3k4:exitD-vs-exitB:long/short`: the same `p3k4` trades, exit D vs exit B, paired by trade. KEEP needs the paired mean difference > 0 held out and in each fold.
+- `p3k4_brk:vs-control:long/short`: confirmed breakouts vs their after-trigger matched control.
+
+**Descriptive:** each rule's gate count and "failed rule" results (RS20 < 0; blocked by failing leaders); exit D with saturation off; breakouts without each confirmation filter, one at a time; breakout results by relvol band.
+
+**Tests:** exit D exits on the move end, not on 3R, and the breakeven after an add still applies; RS20 edges and neutral; leader rule at 2 vs 3 of 5, fewer than 8 members neutral, a leader that restarted a move not counted, sector ETF below sma20 → no block, look-ahead (a move ending after D isn't seen); saturation each condition alone fails; breakout each filter alone fails; short mirrors.
+
+**Live keys (log-only):** `rs20_sector`, `sector_leaders_failing` (count of 5), `p3k4_brk_candidate`, `move_end_type` (on the bar a move ends).
+
 ## P3-0k5: 5-year backfill window (Chris, 2026-11-26)
 
 **Why:** P3-0k3 without the room gate gives 149 trades in 2 years, about 45 held out against the 100 KEEP needs. 5 years gives roughly 375 / 110 at the same rate, and enough completed moves per stock for the P3-0k4 profile.

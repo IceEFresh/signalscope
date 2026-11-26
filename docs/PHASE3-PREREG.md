@@ -375,6 +375,9 @@ Spec: `docs/PHASE3-PREP.md` §P3-0k4, §P3-0k5. Set by Chris on 2026-11-26 after
 - Descriptive only: the profile, `pauses_so_far` and `move_used` breakdowns, end-rule variants, range-width variants, the old room gate.
 
 - **Volume amendment (Chris, 2026-11-26, before any P3-0k4 run):** in `p3k4`, a butn/brutn (move start, pause or entry) needs volume > the prior-20-session average, and an inside day needs volume < it. Equal or missing volume doesn't count. P3-0k3 unchanged.
+- **Livermore amendment (Chris, 2026-11-26, before any P3-0k4 run), spec §P3-0k4:** `p3k4` adds two gates, RS20 vs the sector ETF ≥ 0 (shorts ≤ 0; no data neutral) and no failing-leaders block (≥ 3 of the sector's 5 RS60 leaders ended a move in the last 10 sessions while the sector ETF is above sma20); saturation (volume > 2× average, high within 0.5 ATR of the move high, close in the lower half) joins the primary end rules.
+  - `p3k4:exitD-vs-exitB:long/short`: exit D (hold until the move ends; no 3R trail trigger) vs exit B on the same trades, paired; KEEP needs a positive paired mean held out and in every fold.
+  - `p3k4_brk:vs-control:long/short`: confirmed breakouts (breakout start + volume ≥ 1.5× average, close ≥ range edge + 0.25 ATR, close in the top 25% of the bar) under the stock gates and RS20 / leaders gates, vs the after-trigger matched control. Filter thresholds are the reviewer's defaults, fixed here.
 
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.
