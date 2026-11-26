@@ -764,7 +764,7 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
   F18 and F19 need short float, which has no history, so they're **live only**. On the backfill, the candidate set is the other 7 screens. The report shows trades and results per screen (descriptive).
 - Unchanged:
   - no earnings within 5 sessions;
-  - an STP trigger (calendar or rolling: inside, butn, brutn, mech1 or mech2);
+  - an STP trigger. **Calendar inside and U-turn triggers are dropped** (Chris, 2026-11-25, before any P3-0k3 run). Inside, butn and brutn use the **rolling** 5/20 version only. mech1 and mech2 take their trend from the MAs, not the opens, so they're unaffected and stay in.
   - R/R ≥ 3;
   - optimal entry, with the stop ≤ 0.5 ATR beyond the nearest support.
 - **The industry ETF is not part of alignment.**
