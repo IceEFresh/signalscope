@@ -836,6 +836,15 @@ The P3-0k KEEP rule applies, and any KEEP is marked provisional (defined after a
 ## P3-0m: wider Yahoo options-flow coverage, log-only (Chris, 2026-11-25)
 **Why:** the Yahoo options-flow source scans a fixed list of 89 large caps (`SCAN_SYMBOLS`). The universe, the P3-0k3 candidates and the watchlist's off-universe names (often small caps, where insiders show up) never get scanned, so options hits rarely line up with our candidates.
 
+**Amendment (Chris, 2026-11-26, as built in #91):** the premise above was wrong. Since PR 1-0 options-flow has scanned the whole universe (`prep.scanSymbols`); the 89 `SCAN_SYMBOLS` were only the fallback when no universe loads, so priorities 2 and 3 were already covered and the 89 weren't scanned at all. Chris chose to re-scope and add the 89. What shipped:
+- universe snapshot rows get the `opt_*` keys from this run's cached chains (no new requests);
+- `watch_only` names (cap 150, `WATCH_ONLY_CAP`) are fetched for the `opt_*` keys only, with no `OPTIONS_FLOW` Signal rows;
+- the 89 `SCAN_SYMBOLS` outside the universe are back in the options-flow scan and **do** create `OPTIONS_FLOW` signals, as before PR 1-0 (a scoring input, Chris's explicit choice); volume-spike still scans the universe only;
+- the cap-300 priority list below is dropped;
+- `opt_unusual_n` counts calls and puts meeting vol/OI ≥ 3, volume ≥ 1,000, OI ≥ 100 (OTM is a flag in `options-flow.ts`, not a filter); `opt_sweep` is unusual calls on 3+ strikes of one expiry; `opt_net_premium`, `opt_call_premium_ratio` and `opt_top_type` are null when no contract traded.
+
+The original text follows, superseded where it conflicts with the amendment.
+
 **Coverage, per harvest, with a priority order and a cap of 300 symbols:**
 1. names on the P3-0l watchlist (universe and `watch_only`);
 2. today's `p3k3_candidate` stocks and any named Finviz screen hits (§P3-0k3);
