@@ -740,6 +740,79 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
 - a source with no data is null, not false;
 - the zero-hit health warning.
 
+## P3-0k3: aligned trend v2, with looser stock criteria and more sizing inputs (Chris, 2026-11-25)
+**Set after the first P3-0k run** (2026-11-26 12:xx UTC, INSUFFICIENT, aligned long −0.62R held out). Chris defined it from the criteria alone, before seeing that report's gate or size breakdowns. It's a new hypothesis, so a backfill KEEP is **provisional** until it's confirmed on live data. P3-0k stays as it was; this one runs beside it.
+
+**Stock candidate (gates), for a long; shorts mirrored:**
+- **MAs:** close > sma20 > sma50 > sma200 **or** close > sma50 > sma20 > sma200. Put another way, close > max(sma20, sma50) and min(sma20, sma50) > sma200. **sma10 isn't used.**
+  - Reviewer's assumption: Chris restated the MA rule without slopes, so the slope requirement is dropped from the gate. A descriptive variant keeps "sma50 and sma200 rising over 5 sessions".
+- **Opens:** close > the **weekly** open **or** > the **rolling 5-session** open (crypto: weekly or rolling 7). Chris, 2026-11-25.
+- **Chris's named Finviz screens replace the plain Finviz base.** The stock must pass at least one screen in the trade direction on D. Each screen includes the base filter. The mapping to FINVIZ-SCREENS.md IDs was confirmed by Chris on 2026-11-25:
+
+  | Chris's name | Long | Short (mirror) |
+  |---|---|---|
+  | Double Volume | F28 (relvol > 2) | F28 |
+  | Above SMA20 | F26 (up ≥ 2% from open, close > sma20) | F10 (down ≥ 2%, close < sma20) |
+  | New 20-Day High | F25 (up on the day, up ≥ 2% from open, new 20-day high; confirmed by Chris) | F08 (down ≥ 2% from open, new 20-day low) |
+  | Month up Week up | F23 (up ≥ 2%, 4-wk and 1-wk perf up) | F12 (down ≥ 2%, 4-wk and 1-wk perf down) |
+  | 20 Day Breakout 75% Volume | F22 (relvol > 0.75, up from open, new 20-day high) | F13 (relvol > 0.75, down from open, new 20-day low) |
+  | Strong Stock Weak Close | F21 (down ≥ 2% from open, 4-wk up, above sma20 and sma50) | F14 (up ≥ 2% from open, 4-wk down, below sma20 and sma50) |
+  | Short Interest 20-day high | F19 (short float > 20%, new 20-day high) | n/a |
+  | Short Interest over 20 or 50 SMA | F18 (short float > 20%, close > sma20 and sma50) | n/a |
+  | Setting up for The Mechanical | F04 (up from open, crossed above sma20, sma50 < sma20) | F03 (down from open, crossed below sma20, sma50 > sma20) |
+
+  F18 and F19 need short float, which has no history, so they're **live only**. On the backfill, the candidate set is the other 7 screens. The report shows trades and results per screen (descriptive).
+- Unchanged:
+  - no earnings within 5 sessions;
+  - an STP trigger (calendar or rolling: inside, butn, brutn, mech1 or mech2);
+  - R/R ≥ 3;
+  - optimal entry, with the stop ≤ 0.5 ATR beyond the nearest support.
+- **The industry ETF is not part of alignment.**
+
+**Size:** start at 1.0 and halve for each of these, with a floor of 0.25:
+1. the stock's **monthly** open or **rolling 20-session** open isn't green in the trade direction (one halving if either fails);
+2. the **sector** layer isn't aligned (the P3-0k definition, unchanged);
+3. the **market** layer isn't aligned (P3-0k, 2-of-3 vote of SPY, QQQ and DIA, unchanged);
+4. the **industry** layer isn't aligned (the P3-0k layer definition, used for sizing only). **No industry ETF, or no data, is neutral and doesn't halve.** In P3-0k, 429 of the 1,229 candidates (35%) had no industry data. Reviewer's default; Chris didn't object.
+
+Then × 0.5 for an out-of-hours event within 5 sessions, still floored at 0.25. Base risk is $200.
+
+**Management:** as P3-0k (exit B, adds every 2 × ATR, max 3, the event and earnings rules). Fudge stays at 11%, with a descriptive variant at 23% on entry and stop (see the P3-0k2 sweep).
+
+**Pre-registered, 4 comparisons**, the same shape as P3-0k:
+1. `p3k3` vs all STP trades, long;
+2. the same, short;
+3. `p3k3` vs its after-trigger control, long;
+4. the same, short.
+
+The P3-0k KEEP rule applies, and any KEEP is marked provisional (defined after a P3-0k run).
+
+**Descriptive:**
+- gate counts, step by step;
+- per named screen, and "any screen" vs the plain Finviz base;
+- results by size (1 / 0.5 / 0.25) and by each sizing input separately (monthly + rolling 20 green or not; sector, market and industry aligned or not);
+- the order 20 > 50 vs the order 50 > 20;
+- with the slope variant;
+- fudge 23%;
+- stopped within 3 sessions;
+- side by side with P3-0k.
+
+**Live keys (log-only):** `p3k3_candidate`, `p3k3_size_long`, `p3k3_size_short`, `p3k3_ma_order` (`20>50` / `50>20`).
+
+**Required check before the run (bug suspect):** P3-0k reported **0** rolling-trigger trades among `p3k` (`aligned + optimal, rolling trigger: 0`), even though earlier runs had about 22k rolling-only triggers. Find the cause (likely the calendar/rolling dedup, or the rolling setups' type or opens fields), fix it in P3-0k as well, and add a test that a rolling-only trigger passing every gate becomes a candidate. The report prints calendar vs rolling counts at each gate.
+
+**Tests:**
+- both MA orders pass;
+- sma20 = sma50 counts as one order (`>` is strict, so ties fail);
+- close below either of the two MAs fails;
+- the weekly-or-rolling-5 edges (either alone passes, neither fails);
+- the screen gate: at least one screen in the trade direction, with F18/F19 null on the backfill;
+- monthly or rolling-20 not green halves the size, and only once;
+- industry affects size, never the gate; no industry data doesn't halve;
+- the floor at 0.25 after 4 halvings and the event;
+- crypto 7;
+- look-ahead.
+
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
 
