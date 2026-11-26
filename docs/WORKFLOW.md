@@ -46,6 +46,9 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 22g. **P3-0l**: smart-money and sentiment watchlist (live log-only, entry readiness at R/R ≥ 3, volume-spike backfill descriptive). After 22f.
 22h. **P3-0k3**: aligned trend v2 (stock MAs close > 20/50 in either order > 200, weekly or rolling-5 open, one of the named Finviz screens; monthly, rolling-20, sector, market and industry feed size only), 4 pre-registered comparisons, provisional.
 22i. **P3-0m**: wider Yahoo options-flow coverage (watchlist, P3-0k3 candidates and screen hits, top universe by dollar volume; cap 300) as log-only features; no new OPTIONS_FLOW signals.
+22k. **P3-0p**: House Clerk PTR congress trades (2-yr backfill, filing-date), Capitol Trades as fallback.
+22l. **P3-0q**: ApeWisdom Reddit mentions (verify free access first), Reddit scraper as fallback.
+22m. **P3-0o**: IBKR options via local IB Gateway, paper and read-only; side-classified premium. **Blocked until Chris approves the `@stoqey/ib` dependency and finishes the IB setup.**
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.
