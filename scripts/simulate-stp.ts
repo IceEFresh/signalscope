@@ -13,7 +13,7 @@
 //     -v "$PWD/scripts/backtesting-experiments.md:/app/scripts/backtesting-experiments.md" \
 //     -e NODE_OPTIONS=--max-old-space-size=6144 -e GIT_COMMIT=$(git rev-parse --short HEAD) \
 //     harvester npx tsx scripts/simulate-stp.ts --dataset backfill
-// Options: --exit A|B|C (default all three), --years 2, --dry-run (summary only). Exit B (STP
+// Options: --exit A|B|C (default all three), --years 2, --dry-run (summary only), --warmup-days N (default 300), --refresh (refetch the cached ETFs). Exit B (STP
 // management, §1e/§1j) is primary and gets the verdicts; exit A (fixed 3R) is a reference and
 // exit C (the §1j "choppy" variant: adds every 1 × ATR, trail from 2R) is descriptive, neither
 // with verdicts.
@@ -25,7 +25,7 @@ import { prisma } from "@/lib/prisma";
 import { fetchYahooChart } from "@/lib/harvester/yahoo-chart";
 import { parseChartBars, etParts, type DailyBar } from "@/lib/harvester/universe/bar-metrics";
 import { BENCHMARK_SYMBOL } from "@/lib/harvester/universe/snapshot";
-import { backfillSessions, WARMUP_DAYS } from "@/lib/harvester/universe/backfill";
+import { backfillSessions, warmupDaysArg } from "@/lib/harvester/universe/backfill";
 import { SECTOR_ETFS, industryEtfFor, INDUSTRY_ETFS } from "@/lib/harvester/universe/sector-rotation";
 import { loadUniverse, loadUniverseProfiles, type UniverseProfiles } from "@/lib/harvester/universe/store";
 import { etfStates, MARKET_ETFS, type EtfState, type PyramidInputs } from "@/lib/harvester/universe/pyramid";
@@ -94,15 +94,19 @@ async function main() {
   mkdirSync(ETF_DIR, { recursive: true });
   const etfList = [...new Set(["QQQ", "DIA", ...Object.values(SECTOR_ETFS), ...Object.values(INDUSTRY_ETFS)])].sort();
   const period2 = Math.floor(now.getTime() / 1000);
-  const period1 = Math.floor((now.getTime() - (years * 365 + WARMUP_DAYS) * DAY) / 1000);
+  // P3-0k2: --warmup-days (default 300); --refresh refetches the cached ETFs (a failed fetch keeps the old file)
+  const period1 = Math.floor((now.getTime() - (years * 365 + warmupDaysArg(process.argv)) * DAY) / 1000);
+  const refreshEtfs = process.argv.includes("--refresh");
   const states = new Map<string, Map<string, EtfState>>([[BENCHMARK_SYMBOL, etfStates(spy)]]);
   let fetched = 0;
   for (const etf of etfList) {
     const file = `${etf}.json`;
-    if (!existsSync(join(ETF_DIR, file))) {
+    if (refreshEtfs || !existsSync(join(ETF_DIR, file))) {
       const res = await fetchYahooChart(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(etf)}?interval=1d&period1=${period1}&period2=${period2}`);
       if (!res.ok) {
-        console.warn(`[stp-sim] ETF ${etf}: chart failed (status ${res.status ?? "network"}); its layer is null (mixed)`);
+        const keep = existsSync(join(ETF_DIR, file));
+        console.warn(`[stp-sim] ETF ${etf}: chart failed (status ${res.status ?? "network"}); ${keep ? "keeping the cached file" : "its layer is null (mixed)"}`);
+        if (keep) states.set(etf, etfStates(loadFrom(ETF_DIR, file)));
         continue;
       }
       writeFileSync(join(ETF_DIR, file), JSON.stringify(res.json));

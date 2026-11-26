@@ -176,7 +176,7 @@ function entryFor(arm: EntryArm, bars: readonly DailyBar[], i: number, dir: Dir,
   return limitEntryOnNextBar(bars[i + 1], dir, pullbackLimit(bars[i], dir, fudge, arm), stop);
 }
 
-function extrasFor(f: number, dates: readonly string[], eventBefore: ReadonlySet<number>, earnings: ReadonlySet<string> | undefined): { extra: ExitExtras; e: string | null } {
+export function extrasFor(f: number, dates: readonly string[], eventBefore: ReadonlySet<number>, earnings: ReadonlySet<string> | undefined): { extra: ExitExtras; e: string | null } {
   const e = nextEarnings(dates[f - 1], earnings);
   const eIdx = e ? dates.findIndex((d, k) => k >= f && d >= e) : -1;
   return { extra: { eventBefore, earningsAt: eIdx >= 0 ? eIdx : null }, e };
