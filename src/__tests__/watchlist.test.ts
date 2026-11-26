@@ -35,9 +35,9 @@ describe("the 10-session watch window", () => {
   it("a new hit extends the window; first_seen stays; an expired source drops out of watch_sources", () => {
     let s = updateWatchStore(null, [{ symbol: "ABC", source: "insider", direction: "bullish" }], "2026-01-05");
     s = updateWatchStore(s, [{ symbol: "ABC", source: "reddit", direction: null }], "2026-01-15");
-    expect(watchKeys(s.entries.ABC, "2026-01-19")).toEqual({ watch_sources: "reddit insider", watch_first_seen: "2026-01-05", watch_direction: "bullish" });
+    expect(watchKeys(s.entries.ABC, "2026-01-19")).toEqual({ watch_sources: "reddit insider", watch_first_seen: "2026-01-05", watch_direction: "bullish", directional: true });
     s = updateWatchStore(s, [], "2026-01-20"); // insider (01-05) is 11 sessions old; reddit (01-15) isn't
-    expect(watchKeys(s.entries.ABC, "2026-01-20")).toEqual({ watch_sources: "reddit", watch_first_seen: "2026-01-05", watch_direction: null });
+    expect(watchKeys(s.entries.ABC, "2026-01-20")).toEqual({ watch_sources: "reddit", watch_first_seen: "2026-01-05", watch_direction: null, directional: false });
   });
   it("an unreadable store starts fresh", () => {
     expect(parseWatchStore({ version: 2 }).entries).toEqual({});
@@ -106,7 +106,7 @@ describe("watch_entry_ready", () => {
   const barDate = new Date(last.time! * 1000).toISOString().slice(0, 10);
   const stp = (trigger: 1 | -1, entry: number, stop: number) =>
     ({ barDate, trigger, triggerType: "inside", entry, stop, htfOpens: 1, maState: 1, firedRules: [], fudge: 0.2 }) as unknown as StpResult;
-  const watched = (dir: "bullish" | "bearish" | null) => ({ watch_sources: "volume", watch_first_seen: "2025-10-01", watch_direction: dir });
+  const watched = (dir: "bullish" | "bearish" | null) => ({ watch_sources: "volume", watch_first_seen: "2025-10-01", watch_direction: dir, directional: dir != null });
   const keys = (s: StpResult | undefined, w?: ReturnType<typeof watched>) => liveStpKeys(bars, s, { assetClass: "stock", events: [], watch: w });
 
   it("true with a trigger in the watch direction and R/R ≥ 3; false when R/R < 3 or the trigger points the other way", () => {
@@ -115,10 +115,10 @@ describe("watch_entry_ready", () => {
     expect(keys(stp(1, last.high + 0.2, last.low - 0.2), watched("bearish")).watch_entry_ready).toBe(false);
     expect(keys(undefined, watched("bullish")).watch_entry_ready).toBe(false); // watched, no trigger today
   });
-  it("not watched, or watched with no direction → null, not false; the size follows the P3-0k layer rule", () => {
+  it("not watched → null, not false; a directionless watch takes the trigger's direction (P3-0l2); the size follows the P3-0k layer rule", () => {
     const off = keys(stp(1, last.high + 0.2, last.low - 0.2));
     expect([off.watch_sources, off.watch_direction, off.watch_entry_ready, off.watch_size]).toEqual([null, null, null, null]);
-    expect(keys(stp(1, last.high + 0.2, last.low - 0.2), watched(null)).watch_entry_ready).toBeNull();
+    expect(keys(stp(1, last.high + 0.2, last.low - 0.2), watched(null))).toMatchObject({ watch_entry_ready: true, watch_direction: "bullish", watch_direction_source: "trigger" });
     expect(keys(stp(1, last.high + 0.2, last.low - 0.2), watched("bullish")).watch_size).toBe(0.25); // three unknown layers
     for (const k of LIVE_WATCH_KEYS) expect(isLiveStpKey(k)).toBe(true);
   });
@@ -155,5 +155,64 @@ describe("volume-spike backfill (descriptive)", () => {
     expect(watchMember("watch_volume", spikes)(c(12, 1, 2.9))).toBe(false);
     expect(watchMember("watch_volume", spikes)(c(12, 1, 3))).toBe(true);
     expect(watchMember("watch_volume_any", spikes)(c(12, 1, 0.5))).toBe(true);
+  });
+});
+
+describe("P3-0l2: directionless sources take the trigger's direction", () => {
+  const bars: DailyBar[] = (() => {
+    let t = Date.UTC(2025, 0, 6, 14, 30) / 1000;
+    return Array.from({ length: 210 }, (_, k) => {
+      while ([0, 6].includes(new Date(t * 1000).getUTCDay())) t += 86_400;
+      const c = 100 + k;
+      const b = { open: c - 1, high: c + 0.5, low: c - 1.5, close: c, volume: 1, time: t };
+      t += 86_400;
+      return b;
+    });
+  })();
+  const last = bars[bars.length - 1];
+  const barDate = new Date(last.time! * 1000).toISOString().slice(0, 10);
+  const stp = (trigger: 1 | -1, entry: number, stop: number) =>
+    ({ barDate, trigger, triggerType: "inside", entry, stop, htfOpens: 1, maState: 1, firedRules: [], fudge: 0.2 }) as unknown as StpResult;
+  const social = { watch_sources: "reddit", watch_first_seen: "2025-10-01", watch_direction: null, directional: false };
+  const keys = (s: StpResult | undefined, w: typeof social | Record<string, unknown>) => liveStpKeys(bars, s, { assetClass: "stock", events: [], watch: w as never });
+
+  it("any trigger with R/R ≥ 3 → ready, the trigger's direction, flagged watch_direction_source = trigger", () => {
+    const k = keys(stp(1, last.high + 0.2, last.low - 0.2), social);
+    expect([k.watch_entry_ready, k.watch_direction, k.watch_direction_source, k.watch_size]).toEqual([true, "bullish", "trigger", 0.25]);
+  });
+  it("R/R < 3 or no trigger → not ready, direction stays null", () => {
+    const k = keys(stp(1, last.high + 0.2, last.high + 0.2 - 50), social);
+    expect([k.watch_entry_ready, k.watch_direction, k.watch_direction_source, k.watch_size]).toEqual([false, null, null, null]);
+    expect(keys(undefined, social).watch_entry_ready).toBe(false);
+  });
+  it("a directional source keeps its own direction (watch_direction_source = source); disagreeing sources stay null", () => {
+    const k = keys(stp(1, last.high + 0.2, last.low - 0.2), { watch_sources: "insider", watch_first_seen: "2025-10-01", watch_direction: "bullish", directional: true });
+    expect([k.watch_entry_ready, k.watch_direction, k.watch_direction_source]).toEqual([true, "bullish", "source"]);
+    const tie = keys(stp(1, last.high + 0.2, last.low - 0.2), { watch_sources: "options volume", watch_first_seen: "2025-10-01", watch_direction: null, directional: true });
+    expect([tie.watch_entry_ready, tie.watch_direction, tie.watch_direction_source]).toEqual([null, null, null]);
+  });
+  it("watchKeys marks whether any live hit has a direction", () => {
+    const s = updateWatchStore(null, [{ symbol: "ABC", source: "reddit", direction: null }, { symbol: "XYZ", source: "insider", direction: "bullish" }], "2026-01-05");
+    expect(watchKeys(s.entries.ABC, "2026-01-05").directional).toBe(false);
+    expect(watchKeys(s.entries.XYZ, "2026-01-05").directional).toBe(true);
+  });
+});
+
+describe("P3-0l2: watch_only rows", () => {
+  it("picks watched names outside the universe, most recent hit first, capped at 150", async () => {
+    const { watchOnlySymbols, WATCH_ONLY_CAP } = await import("@/lib/harvester/watchlist");
+    let s = updateWatchStore(null, [{ symbol: "OLD", source: "insider", direction: "bullish" }, { symbol: "AAPL", source: "reddit", direction: null }], "2026-01-05");
+    s = updateWatchStore(s, [{ symbol: "NEW", source: "volume", direction: "bullish" }], "2026-01-07");
+    expect(watchOnlySymbols(s, ["aapl", "MSFT"])).toEqual({ symbols: ["NEW", "OLD"], skipped: 0 });
+    expect(watchOnlySymbols(s, [], 1)).toEqual({ symbols: ["NEW"], skipped: 2 });
+    expect(WATCH_ONLY_CAP).toBe(150);
+  });
+  it("the P3-0c/P3-0d universe dataset drops watch_only rows", async () => {
+    const { buildUniverseRows } = await import("@/lib/eval/universe-dataset");
+    const row = (symbol: string, features: Record<string, unknown>) => ({
+      scanId: "s1", scanStartedAt: new Date("2026-11-25T13:30:00Z"), symbol, sessionDate: "2026-11-24", close: 1, features, regimeFeatures: null,
+    });
+    const rows = buildUniverseRows([row("AMD", { rsi14: 50 }), row("TINY", { rsi14: 40, watch_only: true })], [{ date: "2026-11-24", close: 1 }]);
+    expect(rows.map((r) => r.symbol)).toEqual(["AMD"]);
   });
 });

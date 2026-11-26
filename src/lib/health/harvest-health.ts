@@ -42,7 +42,7 @@ export function isLiveStpKey(key: string): boolean {
     // P3-0k aligned-trend keys (log only)
     /^(align_(stock|industry|sector|market)|optimal_entry|p3k_candidate|p3k_size_long|p3k_size_short)$/.test(key) ||
     // P3-0l watchlist keys (log only)
-    /^watch_(sources|first_seen|direction|entry_ready|size)$/.test(key)
+    /^watch_(sources|first_seen|direction|direction_source|entry_ready|size|only)$/.test(key)
   );
 }
 

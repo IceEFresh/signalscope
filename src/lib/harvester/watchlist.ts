@@ -129,6 +129,8 @@ export interface WatchKeys {
   watch_sources: string | null;
   watch_first_seen: string | null;
   watch_direction: WatchDirection | null;
+  /** P3-0l2: a live hit carries a direction. False = only directionless sources (social, Polymarket): the trigger sets it. */
+  directional?: boolean;
 }
 
 /**
@@ -137,7 +139,7 @@ export interface WatchKeys {
  */
 export function watchKeys(entry: WatchEntry | undefined, today: string): WatchKeys {
   const live = Object.entries(entry?.sources ?? {}).filter(([, h]) => h && withinWatch(h.last, today)) as Array<[WatchSource, WatchSourceHit]>;
-  if (!entry || !live.length) return { watch_sources: null, watch_first_seen: null, watch_direction: null };
+  if (!entry || !live.length) return { watch_sources: null, watch_first_seen: null, watch_direction: null, directional: false };
   const directional = live.filter(([, h]) => h.direction != null);
   const latest = directional.reduce<string | null>((m, [, h]) => (m == null || h.last > m ? h.last : m), null);
   const dirs = new Set(directional.filter(([, h]) => h.last === latest).map(([, h]) => h.direction));
@@ -145,6 +147,7 @@ export function watchKeys(entry: WatchEntry | undefined, today: string): WatchKe
     watch_sources: live.map(([s]) => s).sort((a, b) => WATCH_SOURCES.indexOf(a) - WATCH_SOURCES.indexOf(b)).join(" "),
     watch_first_seen: entry.firstSeen,
     watch_direction: dirs.size === 1 ? [...dirs][0]! : null,
+    directional: directional.length > 0,
   };
 }
 
@@ -153,6 +156,19 @@ export function hitCounts(hits: readonly WatchHit[]): Record<WatchSource, number
   const out = Object.fromEntries(WATCH_SOURCES.map((s) => [s, 0])) as Record<WatchSource, number>;
   for (const h of hits) out[h.source]++;
   return out;
+}
+
+/** P3-0l2: at most this many watched names outside the universe get a chart and a watch_only row per run. */
+export const WATCH_ONLY_CAP = 150;
+
+/** Watched names outside the universe, most recent hit first (then symbol), capped. */
+export function watchOnlySymbols(store: WatchStore, universe: Iterable<string>, cap = WATCH_ONLY_CAP): { symbols: string[]; skipped: number } {
+  const inUniverse = new Set([...universe].map((s) => s.toUpperCase()));
+  const all = Object.entries(store.entries)
+    .filter(([s]) => !inUniverse.has(s))
+    .sort((a, b) => b[1].lastSeen.localeCompare(a[1].lastSeen) || a[0].localeCompare(b[0]))
+    .map(([s]) => s);
+  return { symbols: all.slice(0, cap), skipped: Math.max(0, all.length - cap) };
 }
 
 /** A watch source with zero hits for this many runs in a row gets a health warning. */

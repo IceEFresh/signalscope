@@ -12,7 +12,8 @@ import { calendarExpiry, macroCalendar } from "../src/lib/harvester/macro-calend
 import { barStoreLine, swingHistory, updateBarStore } from "../src/lib/harvester/universe/bar-store.js";
 import { barDateOf } from "../src/lib/harvester/universe/backfill.js";
 import { etParts } from "../src/lib/harvester/universe/bar-metrics.js";
-import { parseWatchStore, updateWatchStore, watchHits, watchKeys, watchRunLine, type WatchStore } from "../src/lib/harvester/watchlist.js";
+import { parseWatchStore, updateWatchStore, watchHits, watchKeys, watchOnlySymbols, watchRunLine, WATCH_ONLY_CAP, type WatchStore } from "../src/lib/harvester/watchlist.js";
+import { BENCHMARK_SYMBOL } from "../src/lib/harvester/universe/snapshot.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { alignmentSeries, type Alignment } from "../src/lib/eval/aligned.js";
 import { fsBarStoreIO } from "../src/lib/harvester/universe/bar-store-fs.js";
@@ -225,6 +226,23 @@ async function main() {
   console.log(
     `[snapshot] ${snapshot.rows.length} rows built, ${snapshot.missing} symbols without a cached chart, ${Object.keys(prep.profiles).length} members with a sector profile`,
   );
+
+  // P3-0l2: watched names outside the universe get a chart (one request each, capped) and a
+  // snapshot row marked watch_only, so their entry readiness is logged every session they're
+  // watched. Added after the funnel ranks and coverage lines, which are universe-only; the
+  // P3-0c/P3-0d harness and the health report filter these rows out.
+  try {
+    const wo = watchOnlySymbols(watch, prep.scanSymbols);
+    if (wo.symbols.length) {
+      const stpW = await computeStpExtras(wo.symbols);
+      const built = await computeSnapshotRows(wo.symbols, stpW, undefined, { profiles: prep.profiles, rotation: sectorRotation }, liveKeys);
+      const rows = built.rows.filter((r) => r.symbol !== BENCHMARK_SYMBOL).map((r) => ({ ...r, features: { ...r.features, watch_only: true } }));
+      snapshot.rows.push(...rows);
+      console.log(`[watch] ${rows.length}/${wo.symbols.length} watched names outside the universe logged as watch_only rows${wo.skipped ? `; ${wo.skipped} over the cap of ${WATCH_ONLY_CAP} skipped` : ""}`);
+    }
+  } catch (err) {
+    console.warn(`[watch] watch_only rows failed: ${err instanceof Error ? err.message : err}`);
+  }
 
   // 1e''. Crypto snapshot rows for the weekly crypto universe (P3-0e, log only): one 3-month chart each,
   // complete UTC days only, BTC as the benchmark. Never enters the signal payload or ValidatedTicker.

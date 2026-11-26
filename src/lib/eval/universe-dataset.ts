@@ -51,7 +51,10 @@ const OFFSET: Record<Horizon, number> = { "1d": 1, "3d": 3, "7d": 7 };
 
 export function buildUniverseRows(rowsIn: readonly StoredSnapshotRow[], spy: readonly SpyClose[], opts: UniverseDatasetOptions = {}): EvalRow[] {
   const benchmark = opts.benchmark ?? BENCHMARK_SYMBOL;
-  const rows = rowsIn.filter((r) => isBackfillFeatures(r.features) === !!opts.backfill && (r.assetClass === "crypto") === !!opts.crypto);
+  // P3-0l2: watch_only rows are watched names outside the universe: never part of the universe dataset
+  const rows = rowsIn.filter(
+    (r) => isBackfillFeatures(r.features) === !!opts.backfill && (r.assetClass === "crypto") === !!opts.crypto && (r.features as Record<string, unknown> | null)?.watch_only !== true,
+  );
   const calendar = [...new Set(spy.map((c) => c.date))].sort();
   const pos = new Map(calendar.map((d, i) => [d, i]));
   const spyClose = new Map(spy.map((c) => [c.date, c.close]));
