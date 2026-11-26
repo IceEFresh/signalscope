@@ -50,6 +50,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 22k. **P3-0p**: House Clerk PTR congress trades (2-yr backfill, filing-date), Capitol Trades as fallback.
 22l. **P3-0q**: ApeWisdom Reddit mentions (verify free access first), Reddit scraper as fallback.
 22m. **P3-0o**: IBKR options via local IB Gateway, paper and read-only; side-classified premium. **Deferred (Chris, 2026-11-25): don't start.** Needs the IB setup and approval of the `@stoqey/ib` dependency first.
+22n. **OPS-1**: harvest dead-man's switch (optional `HEALTHCHECK_URL`, start/success/fail pings with health summary).
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.
