@@ -23,8 +23,21 @@ export const BACKFILL_SCAN_PREFIX = "backfill:v1";
 export const BACKFILL_SCAN_ERROR = `${BACKFILL_SCAN_PREFIX} synthetic scan for the P3-0g price backfill, not a harvest`;
 /** Calendar months of bars the live harvest fetches (dailyChartUrl range=3mo). */
 export const LIVE_WINDOW_MONTHS = 3;
-/** Warm-up before the first backfilled session (spec: 120 days). */
-export const WARMUP_DAYS = 120;
+/**
+ * Calendar days of bars fetched before the first backfilled session. P3-0k2: 300 (was 120,
+ * the P3-0g spec), so sma200 and its 5-session slope (~205 sessions) exist from the start
+ * of the window; override with --warmup-days. The live-window slices don't change.
+ */
+export const WARMUP_DAYS = 300;
+
+/** --warmup-days N (default WARMUP_DAYS); a non-positive or non-numeric value is an error. */
+export function warmupDaysArg(argv: readonly string[]): number {
+  const i = argv.indexOf("--warmup-days");
+  if (i < 0) return WARMUP_DAYS;
+  const n = Number(argv[i + 1]);
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`--warmup-days must be a positive whole number (got ${argv[i + 1]})`);
+  return n;
+}
 
 export class BackfillLookAheadError extends Error {}
 

@@ -498,6 +498,10 @@ export interface ControlResult {
   netR: number;
 }
 
+/** P3-0k2 descriptive: an exit at the initial stop (stop or stop_gap) within this many sessions, counting the fill day as session 1. */
+export const STOPPED_EARLY_SESSIONS = 3;
+export const stoppedEarly = (t: { reason: ExitReason; holding: number }) => (t.reason === "stop" || t.reason === "stop_gap") && t.holding < STOPPED_EARLY_SESSIONS;
+
 /** P3-0j3: verdict controls come from after the trigger; the ±20 window is kept as a descriptive control. */
 export type ControlMode = "after" | "window";
 
