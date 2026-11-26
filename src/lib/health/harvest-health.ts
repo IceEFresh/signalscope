@@ -50,7 +50,9 @@ export function isLiveStpKey(key: string): boolean {
     // P3-0n insider (EDGAR Form 4) and FINRA short keys (log only, descriptive)
     /^ins_(buy_n_30d|buy_usd_30d|buyers_30d|cluster|officer_buy|sell_usd_30d)$/.test(key) ||
     /^si_(shares|pct_float|days_to_cover|change_pct|high|settlement)$/.test(key) ||
-    /^sv_(ratio|ratio_20d|z)$/.test(key)
+    /^sv_(ratio|ratio_20d|z)$/.test(key) ||
+    // P3-0p House Clerk PTR keys (log only)
+    /^cong_(buy_n_30d|buy_amt_mid_30d|sell_n_30d|members_30d)$/.test(key)
   );
 }
 

@@ -61,3 +61,22 @@ export function writeFloats(file: FloatsFile, dir = FINRA_CACHE_DIR): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, FLOATS_FILE), JSON.stringify(file));
 }
+
+export const HOUSE_CACHE_DIR = process.env.HOUSE_CACHE_DIR || "scripts/output/house-ptr";
+
+/** P3-0p: House Clerk index ZIPs, PTR PDFs and parses (PDFs and ZIPs as is; JSON plain). */
+export function fsHouseCache(dir = HOUSE_CACHE_DIR): import("./house-ptr").HouseCache {
+  const p = (name: string) => join(dir, name);
+  return {
+    readBytes: (name) => (existsSync(p(name)) ? new Uint8Array(readFileSync(p(name))) : null),
+    writeBytes: (name, data) => {
+      mkdirSync(dirname(p(name)), { recursive: true });
+      writeFileSync(p(name), data);
+    },
+    readJson: (name) => (existsSync(p(name)) ? (JSON.parse(readFileSync(p(name), "utf8")) as unknown) : null),
+    writeJson: (name, json) => {
+      mkdirSync(dirname(p(name)), { recursive: true });
+      writeFileSync(p(name), JSON.stringify(json));
+    },
+  };
+}

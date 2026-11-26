@@ -7,7 +7,16 @@ import { optionsExtLine, scanOptionsExt, withOptFeatures, type OptFeatures } fro
 import { EdgarEarningsClient, edgarGetter, normTicker, parseTickerMap, TICKER_MAP_URL } from "../src/lib/harvester/edgar-earnings.js";
 import { finraGetter } from "../src/lib/harvester/finra.js";
 import { finraLive, form4Live, form4LiveLine } from "../src/lib/harvester/history-live.js";
-import { fsFinraCache, fsForm4Cache, readFloats } from "../src/lib/harvester/history-fs.js";
+import { fsFinraCache, fsForm4Cache, fsHouseCache, readFloats } from "../src/lib/harvester/history-fs.js";
+import {
+  congressCoverageLine,
+  congressFeaturesAt,
+  houseGetter,
+  houseLive,
+  houseVsCapitolLine,
+  newCongressBuys,
+  type CongressEvent,
+} from "../src/lib/harvester/house-ptr.js";
 import { computeAlpacaOptionsExtras } from "../src/lib/harvester/alpaca-options.js";
 import { chunk, computeSnapshotRows, type SnapshotRow } from "../src/lib/harvester/universe/snapshot.js";
 import { computeCryptoSnapshotRows } from "../src/lib/harvester/crypto/universe.js";
@@ -173,6 +182,24 @@ async function main() {
   }
   // P3-0l: smart-money watchlist (log only): today's hits from the harvested signals, kept for 10 sessions
   const today = etParts(new Date()).date;
+  // Session list from the bar store plus this run's SPY chart (P3-0n / P3-0p timing)
+  const histSessions = await (async () => {
+    const spyP = peekDailyChart(BENCHMARK_SYMBOL);
+    const spyRes = spyP ? await spyP.catch(() => null) : null;
+    const spyBars = swingHistory(storeHistories.get(BENCHMARK_SYMBOL), spyRes?.ok ? parseChartBars(spyRes.json) : []);
+    return [...new Set(spyBars.map(barDateOf).filter((d): d is string => d != null))].sort();
+  })();
+  // P3-0p: congress trades from the House Clerk's PTRs (log only). Its new purchases are the P3-0l
+  // congress hits; Capitol Trades' are the fallback when this fails.
+  let houseEvents: CongressEvent[] | null = null;
+  try {
+    const houseGet = houseGetter();
+    const house = await houseLive(today, histSessions, houseGet, fsHouseCache());
+    houseEvents = house.events;
+    console.log(`${congressCoverageLine(house.coverage)}; ${houseGet.requests()} House Clerk requests`);
+  } catch (err) {
+    console.warn(`[house-ptr] failed, congress hits fall back to Capitol Trades and cong_* keys are missing: ${err instanceof Error ? err.message : err}`);
+  }
   const WATCH_FILE = process.env.WATCHLIST_FILE || "data/watchlist/watchlist.json";
   let watch: WatchStore = parseWatchStore(null);
   let hits: ReturnType<typeof watchHits> = [];
@@ -187,6 +214,13 @@ async function main() {
       moves.set(sym, b.length >= 2 ? b[b.length - 1].close - b[b.length - 2].close : null);
     }
     hits = watchHits(signals, (sym) => moves.get(sym) ?? null);
+    if (houseEvents) {
+      const sale = /\b(sell|sells|sold|sale)\b/i;
+      const capitol = new Set(signals.filter((x) => x.source === "CONGRESS" && !sale.test(x.title ?? "")).map((x) => x.symbol.toUpperCase()));
+      const house = newCongressBuys(houseEvents, histSessions.at(-1) ?? today);
+      console.log(houseVsCapitolLine(house, capitol));
+      hits = [...hits.filter((h) => h.source !== "congress"), ...[...house].map((symbol) => ({ symbol, source: "congress" as const, direction: "bullish" as const }))];
+    }
     prevWatch = existsSync(WATCH_FILE) ? parseWatchStore(JSON.parse(readFileSync(WATCH_FILE, "utf8"))) : null;
   } catch (err) {
     watchOk = false;
@@ -281,10 +315,7 @@ async function main() {
   // snapshot row, log-only; the same code and caches as scripts/backfill-form4.ts and
   // backfill-finra.ts. Each part never stops the harvest.
   {
-    const spyP = peekDailyChart(BENCHMARK_SYMBOL);
-    const spyRes = spyP ? await spyP.catch(() => null) : null;
-    const spyBars = swingHistory(storeHistories.get(BENCHMARK_SYMBOL), spyRes?.ok ? parseChartBars(spyRes.json) : []);
-    const sessions = [...new Set(spyBars.map(barDateOf).filter((d): d is string => d != null))].sort();
+    const sessions = histSessions;
     const rows = snapshot.rows.map((r) => ({ symbol: r.symbol, sessionDate: r.sessionDate }));
     const extra = new Map<string, Record<string, unknown>>();
     const add = (f: Record<string, Record<string, unknown>>) => {
@@ -313,6 +344,10 @@ async function main() {
       (fin.warn ? console.warn : console.log)(fin.line);
     } catch (err) {
       console.warn(`[finra] live keys failed, si_*/sv_* keys are missing this run: ${err instanceof Error ? err.message : err}`);
+    }
+    if (houseEvents) {
+      const ev = houseEvents;
+      add(Object.fromEntries(rows.map((r) => [r.symbol, { ...congressFeaturesAt(ev, r.symbol, r.sessionDate) }])));
     }
     snapshot.rows = snapshot.rows.map((r) => (extra.has(r.symbol) ? { ...r, features: { ...r.features, ...extra.get(r.symbol) } } : r));
   }

@@ -936,6 +936,26 @@ The P3-0l congress hit uses these. Capitol Trades stays as a fallback, with a he
 - ticker extraction;
 - amount-range midpoints.
 
+**As built (P3-0p PR):**
+- **PDF text:** `unpdf` 1.9.1 (pdf.js, pure JS), approved by Chris on 2026-11-26: the newest release whose engines allow Node 22 (2.x needs Node ≥ 24; CI and the images run 22).
+- **Paper filings:** scanned paper PTRs (DocIDs not starting with 2; 66 of 515 PTRs in 2025) have no text layer. They're counted and never OCR'd.
+- **Unparsed rows:** a row split by a page break (its "(TICKER) [ST]" lands after the repeated table header) is counted as unparsed. In a 55-filing sample from 2025–26 this was 7 of 676 transaction lines (1%).
+- **Signal session:** the first session strictly after the filing date. The index has no filing time.
+- **Ticker rows:**
+  - only rows with a ticker become events;
+  - bonds, Treasuries, funds and LLCs have no ticker, so they're counted in the coverage line but produce no event;
+  - share classes are normalised (BRK.B → BRK-B).
+- **Window:** `cong_*_30d` covers 30 calendar days.
+- **`cong_members_30d`:** distinct members with a purchase or sale in the window.
+- **P3-0l congress hits:** purchases filed on or after the last completed session, direction bullish. Capitol Trades hits are used only when the House source fails this run. Capitol Trades still creates its own `CONGRESS` signals, unchanged.
+- **Health lines:**
+  - `[house-ptr] N PTRs (paper, failed); transactions parsed (with a ticker), unparsed`;
+  - `[house-ptr] new purchase tickers: House Clerk a, Capitol Trades b, both c`.
+- **Live cost:**
+  - one index ZIP per harvest (about 70 KB);
+  - the new PTR PDFs from the last 45 days, at ≤ 2 requests per second;
+  - parses are cached under `scripts/output/house-ptr/`, bind-mounted into the harvester.
+
 ## P3-0q: Reddit mentions from ApeWisdom (Chris, 2026-11-25)
 **Why:** direct Reddit scraping was DNS-blocked and is fragile. ApeWisdom offers a free public REST API with no authentication (rate-limited) for Reddit and 4chan mention counts.
 
