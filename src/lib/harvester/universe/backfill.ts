@@ -121,3 +121,39 @@ export function pendingRows(rows: readonly SnapshotRow[], stored: ReadonlySet<st
 export function featureBytes(rows: readonly SnapshotRow[]): number {
   return rows.reduce((s, r) => s + Buffer.byteLength(JSON.stringify(r.features)), 0);
 }
+
+// ── P3-0k5: the window for --years N (5 by default for P3-0k3/0k4 reruns) ─────────
+
+const DAY_MS = 86_400_000;
+
+/** Fetch window and backfilled date range for `years` plus the warm-up (calendar days). */
+export function backfillWindow(now: Date, years: number, warmupDays = WARMUP_DAYS): { period1: number; period2: number; fetchFrom: string; since: string; until: string } {
+  if (!(years > 0)) throw new Error(`--years must be positive (got ${years})`);
+  const p1 = now.getTime() - (years * 365 + warmupDays) * DAY_MS;
+  const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  return {
+    period1: Math.floor(p1 / 1000),
+    period2: Math.floor(now.getTime() / 1000),
+    fetchFrom: iso(p1),
+    since: iso(now.getTime() - years * 365 * DAY_MS),
+    until: iso(now.getTime()),
+  };
+}
+
+/** Days of slack before a cached chart counts as starting late (weekends, holidays). */
+export const COVER_SLACK_DAYS = 10;
+
+/**
+ * True when a cached Yahoo chart already reaches back to `period1` (within 10 days), or starts
+ * at the symbol's first trade (a later IPO can't do better). A chart cached for a shorter window
+ * (a 2-year run, then --years 5) is false, so it's refetched.
+ */
+export function chartCoversWindow(json: unknown, period1: number): boolean {
+  const r = (json as { chart?: { result?: Array<{ timestamp?: unknown; meta?: { firstTradeDate?: unknown } }> } } | null)?.chart?.result?.[0];
+  const ts = Array.isArray(r?.timestamp) ? (r!.timestamp as unknown[]) : [];
+  const first = typeof ts[0] === "number" ? (ts[0] as number) : null;
+  if (first == null) return false;
+  if (first <= period1 + COVER_SLACK_DAYS * 86_400) return true;
+  const ftd = r?.meta?.firstTradeDate;
+  return typeof ftd === "number" && first <= ftd + COVER_SLACK_DAYS * 86_400;
+}

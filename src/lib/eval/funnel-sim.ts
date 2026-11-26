@@ -75,6 +75,8 @@ export interface SymbolInput {
   pyramid: PyramidInputs;
   /** EDGAR earnings sessions; undefined = no dates for this symbol. */
   earnings?: ReadonlySet<string>;
+  /** P3-0k5: the earnings data's first covered date (the backfill file's `from`); before it the earnings gate is unknown. */
+  earningsFrom?: string;
 }
 
 export interface FunnelContext {
@@ -111,7 +113,7 @@ export function symbolCandidates(input: SymbolInput, ctx: FunnelContext): Candid
   for (const s of scanned.setups) {
     const rr = riskReward(bars, closes, s.i, s.dir, s.entry, s.stop, atr[s.i], pivots);
     const marketLong = pyramidLayers(pyramid, s.date, 1).market;
-    const earnings5 = earningsWithin(s.date, earnings, ctx.sessions);
+    const earnings5 = earningsWithin(s.date, earnings, ctx.sessions, undefined, input.earningsFrom);
     const gates = funnelGates({ dir: s.dir, finvizBase: screensOn(bars, s.i, atr).base, earnings5, rr: rr.rr, marketLong });
     const risk = s.dir * (s.entry - s.stop);
     const rallyUsed = risk > 0 ? swingEntry(bars, s.i, s.entry, risk, s.dir, LEVEL_SWING_K, pivots).rallyUsed : null;

@@ -100,8 +100,9 @@ export function riskReward(
 }
 
 /** Own earnings on one of the EARNINGS_GATE_SESSIONS sessions after D; null when the symbol has no earnings dates. */
-export function earningsWithin(d: string, earnings: ReadonlySet<string> | undefined, sessions: readonly string[] = [], n = EARNINGS_GATE_SESSIONS): boolean | null {
-  if (!earnings) return null;
+export function earningsWithin(d: string, earnings: ReadonlySet<string> | undefined, sessions: readonly string[] = [], n = EARNINGS_GATE_SESSIONS, coverageFrom?: string): boolean | null {
+  // P3-0k5: no dates, or D before the earnings data's first covered date → unknown (null), never "no earnings"
+  if (!earnings || (coverageFrom && d < coverageFrom)) return null;
   return sessionsAfter(d, n, sessions).some((s) => earnings.has(s));
 }
 

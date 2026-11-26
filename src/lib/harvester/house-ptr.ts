@@ -235,7 +235,9 @@ export const CONG_KEYS = ["cong_buy_n_30d", "cong_buy_amt_mid_30d", "cong_sell_n
 const minusDays = (d: string, n: number) => new Date(Date.parse(`${d}T12:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
 
 /** Features for one ticker as of `session` (events with a signal session ≤ session only). */
-export function congressFeaturesAt(events: readonly CongressEvent[], ticker: string, session: string): CongressFeatures {
+export function congressFeaturesAt(events: readonly CongressEvent[], ticker: string, session: string, coverageFrom?: string): { [K in keyof CongressFeatures]: number | null } {
+  // P3-0k5: before the source's first covered date every key is null, never 0
+  if (coverageFrom && session < coverageFrom) return { cong_buy_n_30d: null, cong_buy_amt_mid_30d: null, cong_sell_n_30d: null, cong_members_30d: null };
   const t = normTicker(ticker);
   const from = minusDays(session, CONG_WINDOW_DAYS);
   const win = events.filter((e) => e.ticker === t && e.session > from && e.session <= session);

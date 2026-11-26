@@ -80,7 +80,7 @@ export function p3kCandidates(
     const stock = alignmentAt(bars, closes, s.i, s.dir);
     const rr = riskReward(bars, closes, s.i, s.dir, s.entry, s.stop, atr[s.i], pivots);
     const opt = optimalEntry(bars, closes, s.i, s.dir, s.entry, s.stop, atr[s.i], pivots);
-    const earnings5 = earningsWithin(date, earnings, ctx.sessions);
+    const earnings5 = earningsWithin(date, earnings, ctx.sessions, undefined, input.earningsFrom);
     const finviz = screensOn(bars, s.i, atr).base === true;
     const l = layerStates(layers, date, s.dir);
     const p3k: P3kGates = {

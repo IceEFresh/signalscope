@@ -25,7 +25,7 @@ import { SECTOR_ETFS, industryEtfFor } from "@/lib/harvester/universe/sector-rot
 import { loadUniverse, loadUniverseProfiles, type UniverseProfiles } from "@/lib/harvester/universe/store";
 import { etfStates, MARKET_ETFS, type EtfState } from "@/lib/harvester/universe/pyramid";
 import { zigzag } from "@/lib/harvester/universe/swings";
-import { earningsSessionsFromFile, egopSessionsFromFile } from "@/lib/harvester/edgar-earnings";
+import { earningsFromFile, earningsSessionsFromFile, egopSessionsFromFile } from "@/lib/harvester/edgar-earnings";
 import { calendarExpiry, macroCalendar } from "@/lib/harvester/macro-calendar";
 import { commitId } from "@/lib/eval/commit";
 import { lastExperimentNumber } from "@/lib/eval/report";
@@ -123,6 +123,7 @@ async function main() {
         industry: industryEtf ? states.get(industryEtf) ?? null : null,
       },
       earnings,
+      earningsFrom: efJson ? earningsFromFile(efJson) : undefined,
     };
     inputs.push(input);
     cands.push(...symbolCandidates(input, ctx));

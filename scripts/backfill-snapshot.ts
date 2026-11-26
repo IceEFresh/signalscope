@@ -29,6 +29,8 @@ import {
   backfillScanId,
   backfillScanStartedAt,
   backfillSessions,
+  backfillWindow,
+  chartCoversWindow,
   featureBytes,
   pendingRows,
 } from "@/lib/harvester/universe/backfill";
@@ -45,7 +47,8 @@ function arg(name: string): string | undefined {
 async function loadBars(symbol: string, period1: number, period2: number, now: Date, refresh = false): Promise<{ bars: DailyBar[]; fetched: boolean }> {
   const path = join(CACHE_DIR, `${symbol.replace(/[^A-Za-z0-9.^=-]/g, "_")}.json`);
   const cached = () => ({ bars: parseChartBars(JSON.parse(readFileSync(path, "utf8")), now), fetched: true });
-  if (existsSync(path) && !refresh) return { ...cached(), fetched: false };
+  // P3-0k5: a chart cached for a shorter window (e.g. a 2-year run before --years 5) is refetched
+  if (existsSync(path) && !refresh && chartCoversWindow(JSON.parse(readFileSync(path, "utf8")), period1)) return { ...cached(), fetched: false };
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&period1=${period1}&period2=${period2}`;
   const res = await fetchYahooChart(url);
   if (!res.ok) {
@@ -76,11 +79,11 @@ async function main() {
   if (limit) symbols = symbols.slice(0, limit);
   symbols = [BENCHMARK_SYMBOL, ...symbols.filter((s) => s !== BENCHMARK_SYMBOL)];
 
-  const period2 = Math.floor(now.getTime() / 1000);
   const warmupDays = warmupDaysArg(process.argv);
   const refresh = process.argv.includes("--refresh");
-  const period1 = Math.floor((now.getTime() - (years * 365 + warmupDays) * DAY) / 1000);
-  console.log(`[backfill] warm-up ${warmupDays} days${refresh ? ", refreshing every cached chart" : ""}`);
+  const win = backfillWindow(now, years, warmupDays);
+  const { period1, period2 } = win;
+  console.log(`[backfill] ${years} years from ${win.since}, warm-up ${warmupDays} days (fetch from ${win.fetchFrom})${refresh ? ", refreshing every cached chart" : ""}`);
   const since = etParts(new Date(now.getTime() - years * 365 * DAY)).date;
   const until = etParts(now).date;
 
