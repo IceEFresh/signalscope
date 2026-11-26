@@ -72,6 +72,8 @@ services:
       # P3-0n: Form 4 and FINRA raw caches, shared with scripts/backfill-form4.ts and backfill-finra.ts
       - ./scripts/output/edgar-form4:/app/scripts/output/edgar-form4
       - ./scripts/output/finra:/app/scripts/output/finra
+      # P3-0p: House Clerk index ZIPs, PTR PDFs and parses, shared with scripts/backfill-house-ptr.ts
+      - ./scripts/output/house-ptr:/app/scripts/output/house-ptr
     depends_on:
       - web
     profiles:

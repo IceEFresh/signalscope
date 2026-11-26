@@ -8,7 +8,8 @@
  *
  * Direction per source, as each source reports it:
  * - insider (SEC Form 4) and congress: the sources collect purchases only → bullish; a sale
- *   would never be a buy signal (null);
+ *   would never be a buy signal (null). P3-0p: congress hits come from the House Clerk's PTRs
+ *   (new purchases since the last session); Capitol Trades' are the fallback when that fails;
  * - options: net premium > 0 bullish, < 0 bearish; zero or unknown isn't a hit. P3-0m: also a
  *   hit when the row's opt_unusual_n ≥ 1 (options-ext features), same direction rule. Unreliable:
  *   the side (bought or sold) is unknown;
