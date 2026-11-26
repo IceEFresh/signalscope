@@ -747,13 +747,13 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
 - **MAs:** close > sma20 > sma50 > sma200 **or** close > sma50 > sma20 > sma200. Put another way, close > max(sma20, sma50) and min(sma20, sma50) > sma200. **sma10 isn't used.**
   - Reviewer's assumption: Chris restated the MA rule without slopes, so the slope requirement is dropped from the gate. A descriptive variant keeps "sma50 and sma200 rising over 5 sessions".
 - **Opens:** close > the **weekly** open **or** > the **rolling 5-session** open (crypto: weekly or rolling 7). Chris, 2026-11-25.
-- **Chris's named Finviz screens replace the plain Finviz base.** The stock must pass at least one screen in the trade direction on D. Each screen includes the base filter. The mapping to FINVIZ-SCREENS.md IDs is the reviewer's proposal, pending Chris's confirmation:
+- **Chris's named Finviz screens replace the plain Finviz base.** The stock must pass at least one screen in the trade direction on D. Each screen includes the base filter. The mapping to FINVIZ-SCREENS.md IDs was confirmed by Chris on 2026-11-25:
 
   | Chris's name | Long | Short (mirror) |
   |---|---|---|
   | Double Volume | F28 (relvol > 2) | F28 |
   | Above SMA20 | F26 (up ≥ 2% from open, close > sma20) | F10 (down ≥ 2%, close < sma20) |
-  | New 20-Day High | F24 (up ≥ 2%, new 20-day high, close > sma20) | F09 (down ≥ 2%, new 20-day low, close < sma20) |
+  | New 20-Day High | F25 (up on the day, up ≥ 2% from open, new 20-day high; confirmed by Chris) | F08 (down ≥ 2% from open, new 20-day low) |
   | Month up Week up | F23 (up ≥ 2%, 4-wk and 1-wk perf up) | F12 (down ≥ 2%, 4-wk and 1-wk perf down) |
   | 20 Day Breakout 75% Volume | F22 (relvol > 0.75, up from open, new 20-day high) | F13 (relvol > 0.75, down from open, new 20-day low) |
   | Strong Stock Weak Close | F21 (down ≥ 2% from open, 4-wk up, above sma20 and sma50) | F14 (up ≥ 2% from open, 4-wk down, below sma20 and sma50) |
@@ -773,7 +773,7 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
 1. the stock's **monthly** open or **rolling 20-session** open isn't green in the trade direction (one halving if either fails);
 2. the **sector** layer isn't aligned (the P3-0k definition, unchanged);
 3. the **market** layer isn't aligned (P3-0k, 2-of-3 vote of SPY, QQQ and DIA, unchanged);
-4. the **industry** layer isn't aligned (the P3-0k layer definition, used for sizing only).
+4. the **industry** layer isn't aligned (the P3-0k layer definition, used for sizing only). **No industry ETF, or no data, is neutral and doesn't halve.** In P3-0k, 429 of the 1,229 candidates (35%) had no industry data. Reviewer's default; Chris didn't object.
 
 Then × 0.5 for an out-of-hours event within 5 sessions, still floored at 0.25. Base risk is $200.
 
@@ -799,6 +799,8 @@ The P3-0k KEEP rule applies, and any KEEP is marked provisional (defined after a
 
 **Live keys (log-only):** `p3k3_candidate`, `p3k3_size_long`, `p3k3_size_short`, `p3k3_ma_order` (`20>50` / `50>20`).
 
+**Required check before the run (bug suspect):** P3-0k reported **0** rolling-trigger trades among `p3k` (`aligned + optimal, rolling trigger: 0`), even though earlier runs had about 22k rolling-only triggers. Find the cause (likely the calendar/rolling dedup, or the rolling setups' type or opens fields), fix it in P3-0k as well, and add a test that a rolling-only trigger passing every gate becomes a candidate. The report prints calendar vs rolling counts at each gate.
+
 **Tests:**
 - both MA orders pass;
 - sma20 = sma50 counts as one order (`>` is strict, so ties fail);
@@ -806,7 +808,7 @@ The P3-0k KEEP rule applies, and any KEEP is marked provisional (defined after a
 - the weekly-or-rolling-5 edges (either alone passes, neither fails);
 - the screen gate: at least one screen in the trade direction, with F18/F19 null on the backfill;
 - monthly or rolling-20 not green halves the size, and only once;
-- industry affects size, never the gate;
+- industry affects size, never the gate; no industry data doesn't halve;
 - the floor at 0.25 after 4 halvings and the event;
 - crypto 7;
 - look-ahead.
