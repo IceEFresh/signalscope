@@ -123,3 +123,19 @@ export function calendarExpiry(events: readonly MacroEvent[], today: string): { 
       : "[macro-calendar] no events: add them to src/lib/harvester/macro-calendar.json",
   };
 }
+
+/**
+ * P3-0k5: does the calendar reach back to the backfill window start? Before its first event the
+ * simulation sees "no event" (not "unknown"), so the event size and stop rules silently don't fire.
+ */
+export function calendarCoverage(events: readonly Pick<MacroEvent, "date">[], windowStart: string): { first: string | null; covers: boolean; warning: string | null } {
+  const first = events.length ? events.reduce((m, e) => (e.date < m ? e.date : m), events[0].date) : null;
+  const covers = first != null && first <= windowStart;
+  return {
+    first,
+    covers,
+    warning: covers
+      ? null
+      : `[macro-calendar] WARNING: the calendar starts ${first ?? "nowhere (empty)"}, after the window start ${windowStart}; before that date the simulation sees "no event", not "unknown" (event sizing and stops don't fire)`,
+  };
+}

@@ -253,7 +253,14 @@ const minusDays = (d: string, n: number) => new Date(Date.parse(`${d}T12:00:00Z`
  * Features as of `session` from events known by then (signal session ≤ session). `sessions`
  * (sorted) sets the 10-session cluster window. Pure.
  */
-export function insiderFeaturesAt(events: readonly InsiderEvent[], session: string, sessions: readonly string[]): InsiderFeatures {
+export type Nullable<T> = { [K in keyof T]: T[K] | null };
+
+/**
+ * P3-0k5: before the source's first covered date (`coverageFrom`, the backfill's `from`) every
+ * key is null, never 0: no data is not "no insider buying".
+ */
+export function insiderFeaturesAt(events: readonly InsiderEvent[], session: string, sessions: readonly string[], coverageFrom?: string): Nullable<InsiderFeatures> {
+  if (coverageFrom && session < coverageFrom) return Object.fromEntries(INS_KEYS.map((k) => [k, null])) as Nullable<InsiderFeatures>;
   const from = minusDays(session, INS_WINDOW_DAYS); // exclusive
   const win = events.filter((e) => e.session > from && e.session <= session);
   const buys = win.filter((e) => e.code === "P");

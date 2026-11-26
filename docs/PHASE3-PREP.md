@@ -780,6 +780,31 @@ Same KEEP rule.
 - Held-out and folds keep their definitions (newest 30%, 3 walk-forward folds) over the longer window.
 - Tests: `--years 5` window math with warmup; null-before-first-date for a source with shorter history.
 
+**As built (P3-0k5 PR):**
+- **Window:** `backfillWindow` holds the shared window math: fetch from 5 × 365 + warm-up days back, and backfill from 5 × 365 days back.
+- **Stale caches:** a chart cached for a shorter window (the existing 2-year cache) is refetched by `backfill-snapshot` and by `simulate-stp`'s ETF cache. It's kept when it reaches the window start within 10 days, or starts at the symbol's first trade (a later IPO).
+- **Source coverage, checked 2026-11-26.** Every source reaches back 5 years:
+  - EDGAR (earnings 8-K and Form 4): 2001 on;
+  - FINRA: `CNMSshvol20211129` and `shrt20211115` both exist;
+  - House PTRs: 2008 on.
+- **Coverage gaps:** "null before the first date" still holds when a source was built with fewer years than the simulation:
+  - the earnings gate is unknown (null) before the earnings file's `from`;
+  - `ins_*` and `cong_*` are null before their `from`;
+  - `si_*` and `sv_*` are null until their first file.
+  - The report prints each source's first date and whether it covers the window.
+- **Survivorship check:**
+  - years 1–3 run from the window's first session to its 3-year anniversary, and years 4–5 run after that;
+  - the primary metric is the selection's net expectancy (R) over all its trades in each half;
+  - a KEEP with either half ≤ 0 becomes DROP, with the reason;
+  - a window of 3 years or less has no years 4–5, so the check is n/a and doesn't block a KEEP.
+  - It's applied to the P3-0k3 and P3-0k4 comparisons.
+- **Macro calendar:** 2021-11 → 2024-11 is left to the reviewer, as the spec says. The coverage table has a macro-calendar row (first event vs window start). When the calendar starts after the window start, the report and the console print a warning: before that date the simulation sees "no event", not "unknown", so event sizing and stops don't fire.
+- **Run on the NAS, in order:**
+  1. `backfill-snapshot.ts --years 5`;
+  2. `simulate-stp.ts --years 5` (ETFs);
+  3. `backfill-earnings.ts --years 5`, `backfill-form4.ts --years 5`, `backfill-finra.ts --years 5`, `backfill-house-ptr.ts --years 5`;
+  4. `simulate-aligned.ts --years 5`.
+
 ## P3-0l: smart-money and sentiment watchlist, the second track (Chris, 2026-11-25)
 Chris: "The smart money tips its hand at some point, and we want to be ready to follow along." These names often fail the P3-0k criteria, and that's expected. They're watched, not filtered out.
 

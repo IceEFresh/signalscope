@@ -287,3 +287,9 @@ export function earningsSessionsFromFile(json: unknown, opts: { excludeDuring?: 
 
 /** EGOP's earnings sessions: pre-open and after-close releases only. */
 export const egopSessionsFromFile = (json: unknown) => earningsSessionsFromFile(json, { excludeDuring: true });
+
+/** P3-0k5: the per-ticker earnings file's first covered date (`from`), if any. */
+export function earningsFromFile(json: unknown): string | undefined {
+  const f = (json as { from?: unknown } | null)?.from;
+  return typeof f === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f) ? f : undefined;
+}

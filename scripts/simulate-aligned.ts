@@ -24,8 +24,8 @@ import { SECTOR_ETFS, industryEtfFor } from "@/lib/harvester/universe/sector-rot
 import { loadUniverse, loadUniverseProfiles, type UniverseProfiles } from "@/lib/harvester/universe/store";
 import { MARKET_ETFS } from "@/lib/harvester/universe/pyramid";
 import { zigzag } from "@/lib/harvester/universe/swings";
-import { earningsSessionsFromFile, egopSessionsFromFile } from "@/lib/harvester/edgar-earnings";
-import { calendarExpiry, macroCalendar } from "@/lib/harvester/macro-calendar";
+import { earningsFromFile, earningsSessionsFromFile, egopSessionsFromFile } from "@/lib/harvester/edgar-earnings";
+import { calendarCoverage, calendarExpiry, macroCalendar, type MacroEvent } from "@/lib/harvester/macro-calendar";
 import { commitId } from "@/lib/eval/commit";
 import { lastExperimentNumber } from "@/lib/eval/report";
 import { scanSymbol, spyRegimeByDate } from "@/lib/eval/stp-sim";
@@ -38,6 +38,7 @@ import { volumeSpikes, watchMember, watchVolumeLines } from "@/lib/eval/watch-ba
 import { groupMetrics } from "@/lib/eval/stp-sim";
 import { extrasFor } from "@/lib/eval/funnel-sim";
 import { eventBeforeIndices } from "@/lib/harvester/macro-calendar";
+import { applySurvivorshipCheck, survivorshipLines } from "@/lib/eval/survivorship";
 import { MOVE_VARIANTS } from "@/lib/eval/moves";
 import { moveInputs, newMoveStatsTable, P3K4_COMPARISONS, P3K4_GATE_STEPS, p3k3SimOptionsWithMoves, p3k4ExperimentRow, p3k4Lines, p3k4SimOptions, symbolMoves, withMoves } from "@/lib/eval/moves-sim";
 import { atrSeries } from "@/lib/eval/stp-sim";
@@ -61,6 +62,50 @@ const arg = (name: string) => {
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
 
+/**
+ * P3-0k5: each history source's first covered date, printed in the report. A source's keys are
+ * null before its first date, never 0.
+ */
+function historyCoverageLines(windowStart: string, events: readonly MacroEvent[]): string[] {
+  const firstOf = (dir: string, pick: (j: Record<string, unknown>) => string | null, sample = 400): string | null => {
+    if (!existsSync(dir)) return null;
+    let best: string | null = null;
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".json")).slice(0, sample)) {
+      try {
+        const d = pick(JSON.parse(readFileSync(join(dir, f), "utf8")) as Record<string, unknown>);
+        if (d && (best == null || d < best)) best = d;
+      } catch {
+        /* skip an unreadable file */
+      }
+    }
+    return best;
+  };
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  const cal = calendarCoverage(events, windowStart);
+  const rows: Array<[string, string | null]> = [
+    ["bars (SPY, window start)", windowStart],
+    ["macro calendar (first event)", cal.first],
+    ["ETF bars (earliest cached)", firstOf(ETF_DIR, (j) => {
+      const ts = (j as { chart?: { result?: Array<{ timestamp?: number[] }> } }).chart?.result?.[0]?.timestamp?.[0];
+      return typeof ts === "number" ? new Date(ts * 1000).toISOString().slice(0, 10) : null;
+    }, 200)],
+    ["EDGAR earnings (from)", firstOf(EARNINGS_DIR, (j) => str(j.from))],
+    ["EDGAR Form 4 (from)", firstOf("scripts/output/backfill-form4", (j) => str(j.from))],
+    ["FINRA short interest (first settlement)", firstOf("scripts/output/backfill-finra", (j) => str((j.si as Array<{ settlement?: string }> | undefined)?.[0]?.settlement))],
+    ["FINRA short volume (first session)", firstOf("scripts/output/backfill-finra", (j) => Object.entries((j.sv as Record<string, number | null>) ?? {}).find(([, v]) => v != null)?.[0] ?? null)],
+    ["House PTRs (from)", existsSync("scripts/output/backfill-house-ptr/events.json") ? str((JSON.parse(readFileSync("scripts/output/backfill-house-ptr/events.json", "utf8")) as { from?: unknown }).from) : null],
+  ];
+  return [
+    "**History sources (P3-0k5): first covered date. Keys are null before it, never 0.**",
+    "",
+    "| source | first date | covers the window |",
+    "|---|---|---|",
+    ...rows.map(([name, d]) => `| ${name} | ${d ?? "not built"} | ${d == null ? "n/a" : d <= windowStart ? "yes" : "no (null before " + d + ")"} |`),
+    "",
+    ...(cal.warning ? [`**${cal.warning}**`, ""] : []),
+  ];
+}
+
 async function main() {
   const years = Number(arg("--years") ?? 2);
   const dryRun = process.argv.includes("--dry-run");
@@ -76,6 +121,8 @@ async function main() {
   const expiry = calendarExpiry(events, etParts(now).date);
   if (!events.length) throw new Error(`${expiry.line}: the event size and stop rules need it`);
   console.log(expiry.line);
+  const calCov = calendarCoverage(events, sessionList[0]);
+  if (calCov.warning) console.warn(calCov.warning);
 
   // Layer alignment by date (long direction) for SPY and every cached ETF
   const align = new Map<string, Map<string, Alignment>>([[BENCHMARK_SYMBOL, alignmentSeries(spy, barDateOf)]]);
@@ -126,6 +173,7 @@ async function main() {
       pivots: zigzag(bars, LEVEL_SWING_K),
       pyramid: { market: [null, null, null], sector: null, industry: null },
       earnings: efJson ? earningsSessionsFromFile(efJson) : undefined,
+      earningsFrom: efJson ? earningsFromFile(efJson) : undefined,
     };
     const layers = { industry: industryEtf ? align.get(industryEtf) ?? null : null, sector: sectorEtf ? align.get(sectorEtf) ?? null : null, market: MARKET_ETFS.map((e) => align.get(e) ?? null) };
     const cands = p3kCandidates(input, layers, ctx);
@@ -197,10 +245,15 @@ async function main() {
   const results = evaluateFunnel(trades.filter((t) => P3K_POPS.has(t.population)), P3K_COMPARISONS);
   // Verdicts on the P3-0k3 runs only (the calendar inside / U-turn comparison can't move the cut)
   const P3K3_POPS = new Set<string>(P3K3_RUNS);
-  const results3 = evaluateFunnel(trades.filter((t) => P3K3_POPS.has(t.population)), P3K3_COMPARISONS);
-  // P3-0k4 verdicts on the P3-0k3 runs plus p3k4 (the same held-out cut basis as P3-0k3)
+  const raw3 = evaluateFunnel(trades.filter((t) => P3K3_POPS.has(t.population)), P3K3_COMPARISONS);
+  // P3-0k5: survivorship check (years 1–3 vs 4–5); a KEEP needs both halves positive
+  const surv3 = applySurvivorshipCheck(raw3, P3K3_COMPARISONS, trades, sessionList[0], sessionList.at(-1)!);
+  const results3 = surv3.results;
+  // P3-0k4 verdicts on the P3-0k3 runs plus p3k4 (the same held-out cut basis as P3-0k3), with the same survivorship check
   const P3K4_POPS = new Set<string>([...P3K3_RUNS, "p3k4"]);
-  const results4 = evaluateFunnel(trades.filter((t) => P3K4_POPS.has(t.population)), P3K4_COMPARISONS);
+  const raw4 = evaluateFunnel(trades.filter((t) => P3K4_POPS.has(t.population)), P3K4_COMPARISONS);
+  const surv4 = applySurvivorshipCheck(raw4, P3K4_COMPARISONS, trades, sessionList[0], sessionList.at(-1)!);
+  const results4 = surv4.results;
   const g0 = { long: gateCountsByVariant(all.filter((c) => c.dir === 1), P3K_GATE_STEPS), short: gateCountsByVariant(all.filter((c) => c.dir === -1), P3K_GATE_STEPS) };
   const held23 = heldOutFrom(fudge23["both 11%"].map((o) => o.scanId));
   const fudgeLines = sweepTable("P3-0k3 fudge (descriptive): 11% vs 23% on entry and stop", (["both 11%", "both 23%"] as const).map((id) => sweepRow(id, fudge23[id], held23)), held23);
@@ -224,8 +277,11 @@ async function main() {
       alignFrom: sessionList.find((d) => align.get(BENCHMARK_SYMBOL)?.get(d)?.complete) ?? null,
     }) +
       "\n\n" + [...gateTable("P3-0k long (rolling-trigger check)", g0.long), ...gateTable("P3-0k short (rolling-trigger check)", g0.short)].join("\n") +
+      "\n\n" + historyCoverageLines(sessionList[0], events).join("\n") +
       "\n\n" + p3k3Lines(results3, trades, { long: g3.long ?? [], short: g3.short ?? [] }, { fudge23: fudgeLines, roomNoProfile }).join("\n") +
+      "\n\n" + survivorshipLines("P3-0k3", surv3.checks, sessionList[0], sessionList.at(-1)!).join("\n") +
       "\n\n" + p3k4Lines(results4, trades, { long: g4.long ?? [], short: g4.short ?? [] }, moveStats).join("\n") +
+      "\n\n" + survivorshipLines("P3-0k4", surv4.checks, sessionList[0], sessionList.at(-1)!).join("\n") +
       "\n\n" + watchVolumeLines(trades, spikeCount, groupMetrics).join("\n"),
   );
   writeFileSync(`scripts/output/aligned-backfill-${date}-trades.csv`, alignedTradesCsv(trades));

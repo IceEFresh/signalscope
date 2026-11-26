@@ -25,7 +25,7 @@ import { prisma } from "@/lib/prisma";
 import { fetchYahooChart } from "@/lib/harvester/yahoo-chart";
 import { parseChartBars, etParts, type DailyBar } from "@/lib/harvester/universe/bar-metrics";
 import { BENCHMARK_SYMBOL } from "@/lib/harvester/universe/snapshot";
-import { backfillSessions, warmupDaysArg } from "@/lib/harvester/universe/backfill";
+import { backfillSessions, chartCoversWindow, warmupDaysArg } from "@/lib/harvester/universe/backfill";
 import { SECTOR_ETFS, industryEtfFor, INDUSTRY_ETFS } from "@/lib/harvester/universe/sector-rotation";
 import { loadUniverse, loadUniverseProfiles, type UniverseProfiles } from "@/lib/harvester/universe/store";
 import { etfStates, MARKET_ETFS, type EtfState, type PyramidInputs } from "@/lib/harvester/universe/pyramid";
@@ -101,7 +101,9 @@ async function main() {
   let fetched = 0;
   for (const etf of etfList) {
     const file = `${etf}.json`;
-    if (refreshEtfs || !existsSync(join(ETF_DIR, file))) {
+    // P3-0k5: an ETF chart cached for a shorter window is refetched
+    const stale = existsSync(join(ETF_DIR, file)) && !chartCoversWindow(JSON.parse(readFileSync(join(ETF_DIR, file), "utf8")), period1);
+    if (refreshEtfs || stale || !existsSync(join(ETF_DIR, file))) {
       const res = await fetchYahooChart(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(etf)}?interval=1d&period1=${period1}&period2=${period2}`);
       if (!res.ok) {
         const keep = existsSync(join(ETF_DIR, file));
