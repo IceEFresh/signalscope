@@ -53,7 +53,7 @@ export function layerStates(layers: LayerSeries, date: string, dir: Dir): { indu
  * Every P3-0k-type STP trigger for one symbol (calendar and rolling; when both fire the same
  * day and direction, the calendar one is kept), with its gates.
  */
-export function p3kCandidates(input: SymbolInput, layers: LayerSeries, ctx: FunnelContext): P3kCandidate[] {
+export function p3kCandidates(input: SymbolInput, layers: LayerSeries, ctx: FunnelContext, types: ReadonlySet<string> = P3K_TYPES): P3kCandidate[] {
   const { bars, scanned, pivots, earnings, symbol } = input;
   const closes = bars.map((b) => b.close);
   const atr = atrSeries(bars);
@@ -62,7 +62,7 @@ export function p3kCandidates(input: SymbolInput, layers: LayerSeries, ctx: Funn
   for (const [list, v] of [[scanned.setups, "calendar"], [scanned.rollingSetups, "rolling"]] as const)
     for (const s of list) {
       const key = `${s.i}|${s.dir}`;
-      if (!P3K_TYPES.has(s.type) || seen.has(key)) continue;
+      if (!types.has(s.type) || seen.has(key)) continue;
       seen.add(key);
       setups.push([s, v]);
     }

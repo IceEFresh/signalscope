@@ -10,6 +10,7 @@ import "dotenv/config";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { calendarExpiry, macroCalendar } from "@/lib/harvester/macro-calendar";
+import { watchSourceHealth } from "@/lib/harvester/watchlist";
 import { prisma } from "@/lib/prisma";
 import { analyzeScan, flagsFor, renderText, type ScanInput } from "@/lib/health/harvest-health";
 
@@ -72,11 +73,18 @@ async function main() {
   const reports = scans.map(analyzeScan);
   const flags = flagsFor(reports);
   console.log(renderText(reports, flags));
+  // P3-0l: watch-source hit counts per run, and a warning for a source silent 3 runs in a row
+  const ids = scans.map((s) => s.scanId);
+  const bySource = await prisma.signal.groupBy({ by: ["scanId", "source"], where: { scanId: { in: ids } }, _count: { _all: true } });
+  const watchHealth = watchSourceHealth(
+    ids.map((scanId) => ({ scanId, bySource: Object.fromEntries(bySource.filter((g) => g.scanId === scanId).map((g) => [g.source, g._count._all])) })),
+  );
+  console.log(["", ...watchHealth.lines, ...watchHealth.warnings].join("\n"));
   // P3-0j: the macro calendar must stay ≥ 60 days ahead
   const calendar = calendarExpiry(macroCalendar(), new Date().toISOString().slice(0, 10));
   console.log(`\n${calendar.warn ? "WARNING " : ""}${calendar.line}`);
   mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, JSON.stringify({ generatedAt: new Date().toISOString(), reports, flags, calendar }, null, 2));
+  writeFileSync(out, JSON.stringify({ generatedAt: new Date().toISOString(), reports, flags, calendar, watchHealth }, null, 2));
   console.log(`\nJSON written to ${out}`);
   await prisma.$disconnect();
 }
