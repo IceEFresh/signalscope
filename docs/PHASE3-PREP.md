@@ -746,9 +746,23 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
 **Stock candidate (gates), for a long; shorts mirrored:**
 - **MAs:** close > sma20 > sma50 > sma200 **or** close > sma50 > sma20 > sma200. Put another way, close > max(sma20, sma50) and min(sma20, sma50) > sma200. **sma10 isn't used.**
   - Reviewer's assumption: Chris restated the MA rule without slopes, so the slope requirement is dropped from the gate. A descriptive variant keeps "sma50 and sma200 rising over 5 sessions".
-- **Opens:** close > the **weekly** open and > the **rolling 5-session** open (crypto: weekly and rolling 7).
+- **Opens:** close > the **weekly** open **or** > the **rolling 5-session** open (crypto: weekly or rolling 7). Chris, 2026-11-25.
+- **Chris's named Finviz screens replace the plain Finviz base.** The stock must pass at least one screen in the trade direction on D. Each screen includes the base filter. The mapping to FINVIZ-SCREENS.md IDs is the reviewer's proposal, pending Chris's confirmation:
+
+  | Chris's name | Long | Short (mirror) |
+  |---|---|---|
+  | Double Volume | F28 (relvol > 2) | F28 |
+  | Above SMA20 | F26 (up ≥ 2% from open, close > sma20) | F10 (down ≥ 2%, close < sma20) |
+  | New 20-Day High | F24 (up ≥ 2%, new 20-day high, close > sma20) | F09 (down ≥ 2%, new 20-day low, close < sma20) |
+  | Month up Week up | F23 (up ≥ 2%, 4-wk and 1-wk perf up) | F12 (down ≥ 2%, 4-wk and 1-wk perf down) |
+  | 20 Day Breakout 75% Volume | F22 (relvol > 0.75, up from open, new 20-day high) | F13 (relvol > 0.75, down from open, new 20-day low) |
+  | Strong Stock Weak Close | F21 (down ≥ 2% from open, 4-wk up, above sma20 and sma50) | F14 (up ≥ 2% from open, 4-wk down, below sma20 and sma50) |
+  | Short Interest 20-day high | F19 (short float > 20%, new 20-day high) | n/a |
+  | Short Interest over 20 or 50 SMA | F18 (short float > 20%, close > sma20 and sma50) | n/a |
+  | Setting up for The Mechanical | F04 (up from open, crossed above sma20, sma50 < sma20) | F03 (down from open, crossed below sma20, sma50 > sma20) |
+
+  F18 and F19 need short float, which has no history, so they're **live only**. On the backfill, the candidate set is the other 7 screens. The report shows trades and results per screen (descriptive).
 - Unchanged:
-  - Finviz base;
   - no earnings within 5 sessions;
   - an STP trigger (calendar or rolling: inside, butn, brutn, mech1 or mech2);
   - R/R ≥ 3;
@@ -775,6 +789,7 @@ The P3-0k KEEP rule applies, and any KEEP is marked provisional (defined after a
 
 **Descriptive:**
 - gate counts, step by step;
+- per named screen, and "any screen" vs the plain Finviz base;
 - results by size (1 / 0.5 / 0.25) and by each sizing input separately (monthly + rolling 20 green or not; sector, market and industry aligned or not);
 - the order 20 > 50 vs the order 50 > 20;
 - with the slope variant;
@@ -788,7 +803,8 @@ The P3-0k KEEP rule applies, and any KEEP is marked provisional (defined after a
 - both MA orders pass;
 - sma20 = sma50 counts as one order (`>` is strict, so ties fail);
 - close below either of the two MAs fails;
-- the weekly and rolling-5 edges;
+- the weekly-or-rolling-5 edges (either alone passes, neither fails);
+- the screen gate: at least one screen in the trade direction, with F18/F19 null on the backfill;
 - monthly or rolling-20 not green halves the size, and only once;
 - industry affects size, never the gate;
 - the floor at 0.25 after 4 halvings and the event;
