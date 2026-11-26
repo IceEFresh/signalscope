@@ -54,7 +54,9 @@ export function isLiveStpKey(key: string): boolean {
     // P3-0p House Clerk PTR keys (log only)
     /^cong_(buy_n_30d|buy_amt_mid_30d|sell_n_30d|members_30d)$/.test(key) ||
     // P3-0q ApeWisdom keys (log only)
-    /^aw_(mentions|mentions_24h_ago|rank|spike|wsb_mentions)$/.test(key)
+    /^aw_(mentions|mentions_24h_ago|rank|spike|wsb_mentions)$/.test(key) ||
+    // P3-0k4 move keys (log only, provisional)
+    /^(move_active|move_start_type|move_pauses|move_used|move_profile_median_atr|p3k4_candidate)$/.test(key)
   );
 }
 
