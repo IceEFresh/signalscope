@@ -770,6 +770,15 @@ Same KEEP rule.
   - `move_pauses`, `move_used` and `p3k4_candidate` need an entry trigger and are null without one;
   - the keys are computed from the bar store history (at least 60 bars).
 
+**Amendment, volume on U-turns and inside days (Chris, 2026-11-26, before any P3-0k4 run).** Chris: "BUTN needs to have higher than average volume, inside is best when its below average volume." Average = the 20 sessions before the bar (the brutn end rule's average). Shorts mirror: brutn needs volume > average, an inside day < average.
+- **Move start:** a U-turn start needs volume > average.
+- **Pause trigger and `p3k4` entry:** butn (shorts brutn) counts only with volume > average; an inside day counts only with volume < average. mech1/mech2 have no volume rule.
+- Volume equal to the average fails both. A missing volume or fewer than 20 prior sessions → the trigger doesn't count (counted in the gate table).
+- P3-0k3 is unchanged; this applies to P3-0k4 only.
+- **Descriptive:** U-turn entries at or below average volume, inside entries at or above average, each under the same gates; legs per move with the U-turn start volume rule off.
+- **Tests:** butn at, above and below average (start and entry); inside at, above and below; short mirror; missing volume.
+- **Live keys:** `move_pauses` and `p3k4_candidate` use the same rule.
+
 ## P3-0k5: 5-year backfill window (Chris, 2026-11-26)
 
 **Why:** P3-0k3 without the room gate gives 149 trades in 2 years, about 45 held out against the 100 KEEP needs. 5 years gives roughly 375 / 110 at the same rate, and enough completed moves per stock for the P3-0k4 profile.

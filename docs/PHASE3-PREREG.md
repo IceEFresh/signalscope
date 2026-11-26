@@ -374,5 +374,7 @@ Spec: `docs/PHASE3-PREP.md` §P3-0k4, §P3-0k5. Set by Chris on 2026-11-26 after
 - Window: 5 years. A KEEP also needs the primary metric positive in both years 1–3 and years 4–5 (survivorship check).
 - Descriptive only: the profile, `pauses_so_far` and `move_used` breakdowns, end-rule variants, range-width variants, the old room gate.
 
+- **Volume amendment (Chris, 2026-11-26, before any P3-0k4 run):** in `p3k4`, a butn/brutn (move start, pause or entry) needs volume > the prior-20-session average, and an inside day needs volume < it. Equal or missing volume doesn't count. P3-0k3 unchanged.
+
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.
