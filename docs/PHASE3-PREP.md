@@ -869,7 +869,7 @@ The same chain fetch, thresholds and batching as `options-flow.ts`: vol/OI ≥ 3
 
 No migration, no dependency.
 
-## P3-0o: IBKR options via a local IB Gateway (Chris, 2026-11-25). **Needs Chris's dependency approval**
+## P3-0o: IBKR options via a local IB Gateway (Chris, 2026-11-25). **DEFERRED: Chris will say when to start**
 **Why:** Yahoo's chains carry no trade side, and Alpaca's free feed is indicative. IBKR's OPRA Top of Book is USD 1.50/month for a non-professional and gives real-time option quotes and trades for every US option exchange. With the bid and ask at each print, the side can be inferred: at or above the ask is a buy, at or below the bid is a sell, anything else is unknown.
 
 **Setup (Chris, once; see the runbook in the PR):**
@@ -943,6 +943,50 @@ The P3-0l Reddit hit uses `aw_spike`, and the existing Reddit scraper becomes th
 **History:** none beyond the API's window, so this is live-only.
 
 **Tests:** a fixture response, the spike rule at its edge, pagination, a rate-limit backoff, and missing gives null.
+
+## P3-0n: free history backfills for insider buys and short interest (Chris, 2026-11-25)
+**Why:** insider buys and short interest are live-only today, so the smart-money track (P3-0l) and screens F18/F19 can't be tested for 6 months. These are free official sources with history.
+
+**1. SEC EDGAR Form 4: insider transactions, 2 years**
+- **Source:** the per-company submissions JSON (already used by P3-0i3), then each Form 4 XML. The same `SEC_USER_AGENT`, ≤ 8 req/s, and a raw-file cache under `scripts/output/edgar-form4/`, so reruns are free.
+- **Parse:** the filer's role (officer, director, 10% owner), transaction code, shares, price, and the acquired/disposed flag.
+  - **Open-market buys are code `P`. Sales are `S`.** Grants, options exercises, gifts and the like are kept but tagged non-signal.
+  - Amendments (4/A) replace the original.
+- **Timing:** the signal date is the **filing** acceptance time, mapped to a session like P3-0i3 (after 16:00 ET → next session), never the transaction date. Otherwise it's look-ahead, because insiders have up to 2 business days to file.
+- **Features per stock-day (backfill and live):**
+  - `ins_buy_n_30d`, `ins_buy_usd_30d`, `ins_buyers_30d` (distinct insiders);
+  - `ins_cluster` (≥ 2 distinct insiders buying within 10 sessions);
+  - `ins_officer_buy` (bool);
+  - `ins_sell_usd_30d`.
+- **The live** OpenInsider/EDGAR source keeps running. A health line compares the two, as the count of P-code buys each found that day.
+
+**2. FINRA equity short interest, 2 years**
+- **Source:** FINRA's published short interest files, twice a month. Each settlement date has a known **publication** date, about 7 business days later, and the data is used only from that date.
+- **Features:**
+  - `si_shares`;
+  - `si_pct_float`: shares ÷ float, using float from Yahoo's current profile, so it's an approximation, flagged;
+  - `si_days_to_cover` (shares ÷ avg daily volume);
+  - `si_change_pct` (vs the prior report);
+  - `si_high` (`si_pct_float` > 20%, the Finviz `sh_short_high` threshold).
+- **Backfills F18/F19:** with `si_high` historical, those two screens become testable on the backfill. They're descriptive until pre-registered.
+
+**3. FINRA Reg SHO daily short-sale volume**
+- **Source:** FINRA's daily short-sale volume files (CNMS, consolidated), free with history.
+- **Features:** `sv_ratio` (short volume ÷ total volume), `sv_ratio_20d` (20-session mean), `sv_z` (today vs 20 sessions).
+- **Caveat in the docs:** daily short volume includes market-maker hedging. It isn't short interest, and it's logged only as a crowding input.
+
+**Everything is log-only and descriptive.** No score, stage or label changes, and no new pre-registered comparisons. Any test on these comes as its own pre-registered item after the backfill exists. New files go in the cache folders, with no migration if the features ride on existing snapshot rows. If a table is needed, it's additive only, and the migration SQL is shown in the PR.
+
+**Tests (fixtures, no network):**
+- Form 4 XML parse, P vs S vs A codes, a 4/A replacing the original;
+- filing-time session mapping;
+- the cluster rule at the 10-session edge;
+- the FINRA publication-date rule (not usable before publication);
+- `si_pct_float` null without float;
+- the short-volume ratio and z-score;
+- look-ahead.
+
+**Run (NAS):** `scripts/backfill-form4.ts`, `scripts/backfill-finra.ts`. One-time, then live daily.
 
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
