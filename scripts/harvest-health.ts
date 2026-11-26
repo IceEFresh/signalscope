@@ -38,7 +38,8 @@ async function load(n: number): Promise<ScanInput[]> {
   // P3-0c snapshot: latest scan only (about 1,500 rows), so the query stays bounded. P3-0e: crypto rows split out.
   const snapRows = ids[0] ? await prisma.universeSnapshot.findMany({ where: { scanId: ids[0] }, select: { features: true, assetClass: true } }) : undefined;
   const feat = (r: { features: unknown }) => (r.features as Record<string, unknown> | null) ?? null;
-  const snapshot = snapRows?.filter((r) => r.assetClass !== "crypto").map(feat);
+  // P3-0l2: watch_only rows (watched names outside the universe) aren't universe rows
+  const snapshot = snapRows?.filter((r) => r.assetClass !== "crypto" && feat(r)?.watch_only !== true).map(feat);
   const cryptoSnapshot = snapRows?.filter((r) => r.assetClass === "crypto").map(feat);
   const profiledMembers = scans[0]?.universeId
     ? await prisma.universeMember.count({ where: { universeId: scans[0].universeId, sector: { not: null }, OR: [{ assetClass: null }, { assetClass: "stock" }] } })

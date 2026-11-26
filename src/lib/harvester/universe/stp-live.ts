@@ -63,7 +63,7 @@ export const LIVE_STP_KEY_PREFIXES = ["stp_htf_opens_rolling", "stp_trigger_roll
 /** P3-0j funnel keys (stock rows; log only). funnel_rank is set across the run's rows by applyFunnelRanks. */
 /** P3-0k aligned-trend keys (stock rows; log only). */
 /** P3-0l watchlist keys (stock rows; log only). */
-export const LIVE_WATCH_KEYS = ["watch_sources", "watch_first_seen", "watch_direction", "watch_entry_ready", "watch_size"] as const;
+export const LIVE_WATCH_KEYS = ["watch_sources", "watch_first_seen", "watch_direction", "watch_direction_source", "watch_entry_ready", "watch_size", "watch_only"] as const;
 export const LIVE_P3K_KEYS = ["align_stock", "align_industry", "align_sector", "align_market", "optimal_entry", "p3k_candidate", "p3k_size_long", "p3k_size_short"] as const;
 export const LIVE_FUNNEL_KEYS = [
   "funnel_pass", "gate_finviz", "gate_earnings5", "gate_rr", "event_half", "event_today_inhours", "rr", "rr_level", "open_air", "funnel_rank", "countertrend", "next_event", "next_event_days",
@@ -219,9 +219,26 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
     out.watch_sources = w?.watch_sources ?? null;
     out.watch_first_seen = w?.watch_first_seen ?? null;
     out.watch_direction = w?.watch_direction ?? null;
+    out.watch_direction_source = w?.watch_direction ? "source" : null;
     out.watch_entry_ready = null;
     out.watch_size = null;
-    if (w?.watch_sources && w.watch_direction) {
+    if (w?.watch_sources && !w.directional) {
+      // P3-0l2 (Chris): only directionless sources (social, Polymarket) → any STP trigger with R/R ≥ 3
+      // counts, and its direction becomes the watch direction (flagged watch_direction_source = trigger)
+      const cal = trig ? { d: trig.trigger as 1 | -1, entry: trig.entry!, stop: trig.stop! } : null;
+      const rol = r && (r.trigger === 1 || r.trigger === -1) && r.entry != null && r.stop != null ? { d: r.trigger as 1 | -1, entry: r.entry, stop: r.stop } : null;
+      const t = cal ?? rol;
+      out.watch_entry_ready = false;
+      if (t && sb.length) {
+        const rr = riskReward(sb, sbCloses, st, t.d, t.entry, t.stop, atrOf(sb)[st], zigzag(sb, LEVEL_SWING_K));
+        if (rr.rr != null && rr.rr >= RR_MIN) {
+          out.watch_entry_ready = true;
+          out.watch_direction = t.d === 1 ? "bullish" : "bearish";
+          out.watch_direction_source = "trigger";
+          out.watch_size = sizeFor(t.d);
+        }
+      }
+    } else if (w?.watch_sources && w.watch_direction) {
       const wd: 1 | -1 = w.watch_direction === "bullish" ? 1 : -1;
       out.watch_size = sizeFor(wd);
       const calW = trig && trig.trigger === wd ? { entry: trig.entry!, stop: trig.stop! } : null;
