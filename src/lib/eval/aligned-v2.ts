@@ -159,10 +159,11 @@ export function roomEarly(
 // ── "Build to layer size" (descriptive add variant) ───────────────────────────────
 
 /**
- * At an add level: the larger of 50% of the current shares and the shares needed to reach the
- * day's layer size, never taking the position beyond full size (1.0 at the base risk).
+ * At an add level (Chris, #89): the larger of the normal 50% add and the top-up to the day's
+ * layer size, where only the top-up is capped at full size (1.0 at the base risk). The normal
+ * 50% adds (max 3) apply as in the primary, so a position can still grow beyond full.
  */
 export function buildAddQty(current: number, targetShares: number, fullShares: number): number {
-  const want = Math.max(Math.floor(current * 0.5), targetShares - current);
-  return Math.max(0, Math.min(want, fullShares - current));
+  const topUp = Math.max(0, Math.min(targetShares, fullShares) - current);
+  return Math.max(Math.floor(current * 0.5), topUp);
 }

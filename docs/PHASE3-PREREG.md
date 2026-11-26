@@ -363,7 +363,7 @@ Spec: `docs/PHASE3-PREP.md` §P3-0k3, including the room-to-3R gate and the buil
 | 1–2 | `p3k3` vs all STP trades of these types, long / short | the same triggers with no gates, the v2 size rule |
 | 3–4 | `p3k3` vs its after-trigger matched control, long / short | P3-0j3 control |
 
-**Descriptive only:** gate counts step by step, calendar vs rolling; per named screen and the plain Finviz base instead; by size and by each sizing input; order 20 > 50 vs 50 > 20; the slope variant; without the room gate and its failures; the 75th-percentile rally; `rally_used` quintiles; fudge 23%; stopped within 3 sessions; "build to layer size" (adds up to the day's layer size, never beyond full) vs the primary adds; side by side with P3-0k.
+**Descriptive only:** gate counts step by step, calendar vs rolling; per named screen and the plain Finviz base instead; by size and by each sizing input; order 20 > 50 vs 50 > 20; the slope variant; without the room gate and its failures; the 75th-percentile rally; `rally_used` quintiles; fudge 23%; stopped within 3 sessions; "build to layer size" (each add is the larger of the normal 50% add and the top-up to the day's layer size, the top-up capped at full; max 3 adds) vs the primary adds; side by side with P3-0k.
 
 ## When to run
 Once there are about 6 weeks of post-1-0 scans with 7-day returns (`docs/PHASE3-PREP.md`). Earlier runs will mostly return INSUFFICIENT, but they're still logged.

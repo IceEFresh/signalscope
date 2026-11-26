@@ -123,11 +123,13 @@ describe("room to 3R early in the leg", () => {
 });
 
 describe("build to layer size (descriptive)", () => {
-  it("adds the larger of 50% and the shares to the day's layer size, never beyond full", () => {
-    expect(buildAddQty(25, 100, 100)).toBe(75); // ¼ start, the day's layers say full
-    expect(buildAddQty(10, 12, 100)).toBe(5); // 50% is larger
-    expect(buildAddQty(80, 100, 100)).toBe(20); // capped at full
-    expect(buildAddQty(100, 100, 100)).toBe(0);
+  it("adds the larger of the normal 50% add and the top-up to the day's layer size; only the top-up is capped at full", () => {
+    expect(buildAddQty(25, 100, 100)).toBe(75); // ¼ start, the day's layers say full: top-up 75 > 50% (12)
+    expect(buildAddQty(10, 12, 100)).toBe(5); // 50% is larger than the top-up of 2
+    expect(buildAddQty(80, 100, 100)).toBe(40); // 50% (40) beats the top-up (20): the normal add still applies
+    expect(buildAddQty(100, 100, 100)).toBe(50); // at full, the 50% add continues as in the primary
+    expect(buildAddQty(20, 150, 100)).toBe(80); // a layer size above full is capped: top-up to 100, not 150
+    expect(buildAddQty(150, 100, 100)).toBe(75); // beyond full: no top-up, the 50% add only
   });
   it("the stop moves to the size-weighted breakeven after a build add", () => {
     // fill 100, stop 90 (R 10), base risk $50 (¼ of $200): 5 shares; full = 20; the add at 120 brings it to 20
@@ -136,6 +138,11 @@ describe("build to layer size (descriptive)", () => {
     expect(x.sharesAtExit).toBe(20);
     expect(x.exit).toBeCloseTo((5 * 100 + 15 * 120) / 20, 9);
     expect(x.reason).toBe("be_stop");
+    // the next level (140) still adds the normal 50% beyond full: 20 → 30 shares, as in the primary
+    const b2 = weekdayBars([[100, 100.5, 99.5, 100], [110, 121, 109, 119], [119, 141, 118, 139], [139, 139.5, 50, 51]]);
+    const y = simulateExitB(b2, b2.map((z) => z.close), b2.map(() => 2), 0, 1, 100, 10, 90, 0.22, "inside", 50, 20, 30, { addQty: (_j, cur) => buildAddQty(cur, 20, 20) });
+    expect(y.addPrices).toEqual([120, 140]);
+    expect(y.sharesAtExit).toBe(30);
   });
 });
 

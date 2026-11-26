@@ -260,7 +260,7 @@ export function p3k3Lines(
     "",
     "| adds | trades | net exp R | mean size reached at exit (× full) |",
     "|---|---|---|---|",
-    ...([["primary (50% at +2/+4/+6 ATR)", main], ["build to layer size (never beyond full)", pick("p3k3_build")]] as const).map(([l, ts]) => {
+    ...([["primary (50% at +2/+4/+6 ATR)", main], ["build to layer size (top-up capped at full; 50% adds as primary)", pick("p3k3_build")]] as const).map(([l, ts]) => {
       const m = groupMetrics(ts);
       const reached = ts.length ? ts.reduce((s, t) => s + (t.sizeCombined ?? 1) * t.size, 0) / ts.length : null;
       return `| ${l} | ${m.trades} | ${r3(m.expectancy)} | ${r3(reached)} |`;
