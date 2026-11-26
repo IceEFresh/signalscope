@@ -1054,6 +1054,27 @@ The P3-0l Reddit hit uses `aw_spike`, and the existing Reddit scraper becomes th
   - one new short-volume file;
   - a few short-interest probes.
 
+## OPS-1: harvest dead-man's switch (Chris, 2026-11-26)
+**Why:** a failed or skipped harvest is silent until someone looks. An external check alerts Chris's phone when no successful harvest has arrived by its deadline.
+
+**Service:** healthchecks.io, free tier, or any server with the same ping API (Uptime Kuma push monitors work too). Chris creates the check: a daily schedule, `CRON_TZ=America/New_York`, `30 8 * * 1-5`, with a 1-hour grace period.
+
+**Harvester (`run-harvest-remote.ts`):**
+- New optional env `HEALTHCHECK_URL`. If it's unset, nothing happens: no warning spam, one info line at startup.
+- `GET {url}/start` when the run begins, `GET {url}` on success, and `GET {url}/fail` when the run throws or the health report has a FAIL-level flag. Each request has a 10 s timeout, and a ping failure only logs a warning; it never fails the harvest.
+- Each ping carries a short body (≤ 2 KB): the health report's summary lines, so the alert says what broke.
+- Never put secrets in the body. The URL itself is a secret: it lives in `.env`, is never logged in full (print host only), and is never committed.
+
+**Tests (no network, injected fetch):**
+- unset → no calls;
+- start + success;
+- a throw → `/fail` is sent and the original error is rethrown;
+- a ping timeout doesn't fail the run;
+- the body is trimmed to 2 KB;
+- the URL isn't printed in full.
+
+No migration, no dependency.
+
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
 
