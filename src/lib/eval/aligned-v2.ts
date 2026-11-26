@@ -110,7 +110,10 @@ export interface RoomEarly {
   /** False without a profile (fewer than 4 legs) as well. */
   pass: boolean;
   hasProfile: boolean;
-  /** |entry − the last confirmed swing low| ÷ ATR14(D) (swing high for shorts). */
+  /**
+   * |entry − the lowest low since the last confirmed swing high| ÷ ATR14(D) (shorts: the highest
+   * high since the last confirmed swing low). Amended 2026-11-26 after the first run.
+   */
   legSoFar: number | null;
   /** Median (or 75th-percentile) rally in ATR − leg so far. */
   roomLeft: number | null;
@@ -124,6 +127,11 @@ export interface RoomEarly {
  * Room left in the stock's typical move: the §1f swing profile at k = 2 (250 sessions, ≥ 4 legs,
  * pivots confirmed by D only). Gate: median rally − leg so far ≥ 3 × risk (all in ATR14 at D).
  * `quantile: "p75"` is the descriptive variant.
+ *
+ * Leg so far (definition correction, Chris 2026-11-26, after the first run; provisional): from the
+ * lowest low since the last confirmed swing high (longs), not from the last confirmed swing low.
+ * That low is known on D from bars ≤ D, so it's causal with no confirmation lag: a new leg is
+ * measured from its own start even before its low is confirmed as a pivot.
  */
 export function roomEarly(
   bars: readonly DailyBar[],
@@ -141,14 +149,18 @@ export function roomEarly(
   const prof = profile(i);
   const move = dir === 1 ? prof.rally : prof.pullback;
   if (!move) return none;
-  const startKind = dir === 1 ? "low" : "high";
-  let start: number | null = null;
+  // The last confirmed opposite swing (a high for longs) ends the previous leg
+  const endKind = dir === 1 ? "high" : "low";
+  let from = -1;
   for (let n = pivots.length - 1; n >= 0; n--)
-    if (pivots[n].confirmedAt <= i && pivots[n].kind === startKind) {
-      start = pivots[n].price;
+    if (pivots[n].confirmedAt <= i && pivots[n].kind === endKind) {
+      from = pivots[n].i + 1;
       break;
     }
-  if (start == null) return { ...none, hasProfile: true };
+  if (from < 0) return { ...none, hasProfile: true };
+  // The extreme of the bars after that swing, through D (D itself when the swing is on D)
+  let start = dir === 1 ? Infinity : -Infinity;
+  for (let k = Math.min(from, i); k <= i; k++) start = dir === 1 ? Math.min(start, bars[k].low) : Math.max(start, bars[k].high);
   const legSoFar = Math.abs(entry - start) / atrD;
   const typical = quantile === "p75" ? move.p75Atr : move.medianAtr;
   const roomLeft = typical - legSoFar;
