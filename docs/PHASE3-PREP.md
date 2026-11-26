@@ -741,6 +741,8 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
 - the zero-hit health warning.
 
 ## P3-0k3: aligned trend v2, with looser stock criteria and more sizing inputs (Chris, 2026-11-25)
+
+**Entry triggers (Chris, 2026-11-25): "We just want inside day, U-turn and both mechanicals for entries."** That means rolling inside, rolling U-turn (butn/brutn), mech1 and mech2. EGOP and every other trigger type are excluded from P3-0k3, **and from live P3-0l `watch_entry_ready`.** That key currently takes any calendar trigger, EGOP included, and needs the same four-trigger set. Test: an EGOP-only or calendar-only inside trigger never sets `p3k3_candidate` or `watch_entry_ready`.
 **Set after the first P3-0k run** (2026-11-26 12:xx UTC, INSUFFICIENT, aligned long −0.62R held out). Chris defined it from the criteria alone, before seeing that report's gate or size breakdowns. It's a new hypothesis, so a backfill KEEP is **provisional** until it's confirmed on live data. P3-0k stays as it was; this one runs beside it.
 
 **Stock candidate (gates), for a long; shorts mirrored:**
