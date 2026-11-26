@@ -174,6 +174,36 @@ describe("rolling-only trigger check (P3-0k and P3-0k3)", () => {
   });
 });
 
+describe("P3-0k3 trigger set (#88): rolling inside / U-turn only, calendar mech1 / mech2", () => {
+  const n = 260;
+  const bars = weekdayBars(Array.from({ length: n }, (_, k): [number, number, number, number] => [100 + k - 1, 100 + k + 1, 100 + k - 1.5, 100 + k]));
+  const i = n - 1;
+  const atr = atrSeries(bars)[i]!;
+  const piv = zigzag(bars, 2);
+  const entry = bars[i].high + 0.11 * atr;
+  const stop = entry - 1;
+  const setup = (variant: "calendar" | "rolling", type: string): Setup => ({ variant, htf: 1, maState: 1, symbol: "S", date: "2025-12-31", i, dir: 1, type, firedRules: [], entry, stop, fudge: 0.11 * atr });
+  const input = (cal: Setup[], rol: Setup[]) => ({ symbol: "S", bars, scanned: { setups: cal, rollingSetups: rol, info: [] }, pivots: piv, pyramid: { market: [null, null, null], sector: null, industry: null } });
+  const ctx = { sessions: [], events: [] };
+  const layers = { industry: null, sector: null, market: [null, null, null] };
+  it("a calendar-only inside (or U-turn) trigger is not a p3k3 candidate; the rolling one is", async () => {
+    const { p3k3Candidates, calendarInsideUturn } = await import("@/lib/eval/aligned-v2-sim");
+    expect(p3k3Candidates(input([setup("calendar", "inside")], []) as never, layers, ctx)).toHaveLength(0);
+    expect(p3k3Candidates(input([setup("calendar", "butn")], []) as never, layers, ctx)).toHaveLength(0);
+    const rol = p3k3Candidates(input([], [setup("rolling", "inside")]) as never, layers, ctx);
+    expect(rol.map((c) => c.variantSource)).toEqual(["rolling"]);
+    // both fire the same day: the rolling one is the P3-0k3 candidate (the calendar one isn't eligible)
+    expect(p3k3Candidates(input([setup("calendar", "inside")], [setup("rolling", "inside")]) as never, layers, ctx).map((c) => c.variantSource)).toEqual(["rolling"]);
+    // the comparison row takes the calendar inside / U-turn triggers only
+    expect(p3k3Candidates(input([setup("calendar", "inside")], [setup("rolling", "inside")]) as never, layers, ctx, undefined, calendarInsideUturn).map((c) => c.variantSource)).toEqual(["calendar"]);
+  });
+  it("calendar mech1 / mech2 stay in", async () => {
+    const { p3k3Candidates } = await import("@/lib/eval/aligned-v2-sim");
+    expect(p3k3Candidates(input([setup("calendar", "mech1")], []) as never, layers, ctx)).toHaveLength(1);
+    expect(p3k3Candidates(input([setup("calendar", "mech2")], []) as never, layers, ctx)).toHaveLength(1);
+  });
+});
+
 describe("live keys", () => {
   it("are logged on stock rows and excluded from health families", () => {
     const up = weekdayBars(Array.from({ length: 260 }, (_, k): [number, number, number, number] => [100 + k - 1, 100 + k + 1, 100 + k - 1.5, 100 + k]));

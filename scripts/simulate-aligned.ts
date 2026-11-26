@@ -38,7 +38,7 @@ import { volumeSpikes, watchMember, watchVolumeLines } from "@/lib/eval/watch-ba
 import { groupMetrics } from "@/lib/eval/stp-sim";
 import { extrasFor } from "@/lib/eval/funnel-sim";
 import { eventBeforeIndices } from "@/lib/harvester/macro-calendar";
-import { gateCountsByVariant, gateTable, p3k3ExperimentRow, P3K3_COMPARISONS, P3K3_GATE_STEPS, P3K3_RUNS, P3K_GATE_STEPS, p3k3Candidates, p3k3Lines, p3k3Member, p3k3SimOptions } from "@/lib/eval/aligned-v2-sim";
+import { calendarInsideUturn, P3K3_CAL_RUN, gateCountsByVariant, gateTable, p3k3ExperimentRow, P3K3_COMPARISONS, P3K3_GATE_STEPS, P3K3_RUNS, P3K_GATE_STEPS, p3k3Candidates, p3k3Lines, p3k3Member, p3k3SimOptions } from "@/lib/eval/aligned-v2-sim";
 import { FUDGE_VARIANTS, heldOutFrom, sweepRow, sweepSymbol, sweepTable, type SweepOutcome } from "@/lib/eval/fudge-sweep";
 
 const P3K_POPS = new Set(["p3k", "p3k_all", "p3k_noopt", "p3k_opens", "p3k_mas"]);
@@ -139,7 +139,16 @@ async function main() {
     }
     all.push(...cands);
     // P3-0k3: aligned trend v2 on the same triggers
-    const c3 = p3k3Candidates(input, layers, ctx, cands);
+    // P3-0k3's own trigger set: rolling inside / U-turn, calendar mech1 / mech2
+    const c3 = p3k3Candidates(input, layers, ctx);
+    // descriptive comparison: the dropped calendar inside / U-turn triggers under the same gates
+    const cIU = p3k3Candidates(input, layers, ctx, undefined, calendarInsideUturn);
+    {
+      const r = simulateFunnelSymbol(input, cIU, P3K3_CAL_RUN, "stop", ctx, p3k3SimOptions(P3K3_CAL_RUN));
+      trades.push(...r.trades);
+      const c = (counts[`${P3K3_CAL_RUN} / stop`] ??= { candidates: 0, filled: 0, notFilled: 0, skippedOverlap: 0, sizeSkip: 0, noControl: 0 });
+      for (const k of Object.keys(c) as (keyof FunnelCounts)[]) c[k] += r.counts[k];
+    }
     for (const [d, k] of [[1, "long"], [-1, "short"]] as const) g3[k] = addGates(g3[k], gateCountsByVariant(c3.filter((c) => c.dir === d), P3K3_GATE_STEPS));
     roomNoProfile += c3.filter((c) => c.v2.ma && c.v2.opens && c.v2.screens && c.v2.earnings && c.v2.rr && c.v2.optimal && !c.room.hasProfile).length;
     for (const p of P3K3_RUNS) {
@@ -164,7 +173,9 @@ async function main() {
   }
   // Verdicts on the P3-0k populations only, so the descriptive watch trades can't move the held-out cut
   const results = evaluateFunnel(trades.filter((t) => P3K_POPS.has(t.population)), P3K_COMPARISONS);
-  const results3 = evaluateFunnel(trades.filter((t) => t.population.startsWith("p3k3")), P3K3_COMPARISONS);
+  // Verdicts on the P3-0k3 runs only (the calendar inside / U-turn comparison can't move the cut)
+  const P3K3_POPS = new Set<string>(P3K3_RUNS);
+  const results3 = evaluateFunnel(trades.filter((t) => P3K3_POPS.has(t.population)), P3K3_COMPARISONS);
   const g0 = { long: gateCountsByVariant(all.filter((c) => c.dir === 1), P3K_GATE_STEPS), short: gateCountsByVariant(all.filter((c) => c.dir === -1), P3K_GATE_STEPS) };
   const held23 = heldOutFrom(fudge23["both 11%"].map((o) => o.scanId));
   const fudgeLines = sweepTable("P3-0k3 fudge (descriptive): 11% vs 23% on entry and stop", (["both 11%", "both 23%"] as const).map((id) => sweepRow(id, fudge23[id], held23)), held23);

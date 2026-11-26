@@ -15,6 +15,15 @@ import type { Candidate, Comparison, ComparisonResult, FunnelContext, FunnelTrad
 
 export type P3k3Population = Extract<Population, `p3k3${string}`>;
 
+/**
+ * P3-0k3 triggers (Chris, 2026-11-25, before any P3-0k3 run): inside, butn and brutn use the
+ * rolling 5/20 version only; mech1 and mech2 (trend from the MAs, not the opens) stay calendar.
+ */
+const ROLLING_ONLY = new Set(["inside", "butn", "brutn"]);
+export const p3k3Trigger = (s: { type: string }, variant: "calendar" | "rolling") => (ROLLING_ONLY.has(s.type) ? variant === "rolling" : variant === "calendar");
+/** Descriptive comparison row: the dropped calendar inside / U-turn triggers under the same v2 gates. */
+export const calendarInsideUturn = (s: { type: string }, variant: "calendar" | "rolling") => ROLLING_ONLY.has(s.type) && variant === "calendar";
+
 export interface P3k3Gates {
   ma: boolean;
   opens: boolean;
@@ -43,7 +52,13 @@ export interface P3k3Candidate extends P3kCandidate {
 }
 
 /** P3-0k3 candidates from the P3-0k ones (same triggers, R/R, optimal entry, earnings, layers). */
-export function p3k3Candidates(input: SymbolInput, layers: LayerSeries, ctx: FunnelContext, base?: readonly P3kCandidate[]): P3k3Candidate[] {
+export function p3k3Candidates(
+  input: SymbolInput,
+  layers: LayerSeries,
+  ctx: FunnelContext,
+  base?: readonly P3kCandidate[],
+  select: (s: { type: string }, variant: "calendar" | "rolling") => boolean = p3k3Trigger,
+): P3k3Candidate[] {
   const { bars, pivots } = input;
   const closes = bars.map((b) => b.close);
   const atr = atrSeries(bars);
@@ -60,7 +75,7 @@ export function p3k3Candidates(input: SymbolInput, layers: LayerSeries, ctx: Fun
     if (s.every((x) => x == null)) return null;
     return s.filter((x) => x === "aligned").length >= 2 ? "aligned" : s.filter((x) => x === "against").length >= 2 ? "against" : "mixed";
   };
-  return (base ?? p3kCandidates(input, layers, ctx)).map((c) => {
+  return (base ?? p3kCandidates(input, layers, ctx, undefined, select)).map((c) => {
     const i = c.setup.i;
     const dir = c.dir;
     const ma = maOrderAt(closes, i, dir);
@@ -98,9 +113,12 @@ export const p3k3Member: Record<P3k3Population, (c: P3k3Candidate) => boolean> =
   p3k3_noroom: (c) => core(c) && c.v2.screens,
   p3k3_room75: (c) => core(c) && c.v2.screens && c.v2.room75,
   p3k3_build: (c) => core(c) && c.v2.screens && c.v2.room,
+  p3k3_cal_iu: (c) => core(c) && c.v2.screens && c.v2.room,
 };
 
 export const P3K3_RUNS: ReadonlyArray<P3k3Population> = ["p3k3_all", "p3k3", "p3k3_base", "p3k3_slope", "p3k3_noroom", "p3k3_room75", "p3k3_build"];
+/** Run on the calendar inside / U-turn candidates (descriptive comparison row). */
+export const P3K3_CAL_RUN: P3k3Population = "p3k3_cal_iu";
 
 /** simulateFunnelSymbol options: membership, the v2 size, tags and (p3k3_build) the build-to-layer-size adds. */
 export function p3k3SimOptions(population: P3k3Population) {
@@ -237,8 +255,9 @@ export function p3k3Lines(
       const get = (t: FunnelTrade) => (l === "sector" ? t.alignSector : l === "market" ? t.alignMarket : t.industryV2);
       return [row(`${l} aligned`, main.filter((t) => get(t) === "aligned")), row(`${l} not aligned${l === "industry" ? " (data present)" : ""}`, main.filter((t) => get(t) != null && get(t) !== "aligned")), ...(l === "industry" ? [row("industry: no data (neutral)", main.filter((t) => get(t) == null))] : [])];
     }),
-    row("calendar trigger", main.filter((t) => t.setupVariant === "calendar")),
-    row("rolling trigger", main.filter((t) => t.setupVariant === "rolling")),
+    row("calendar trigger (mech1 / mech2)", main.filter((t) => t.setupVariant === "calendar")),
+    row("rolling trigger (inside / U-turn)", main.filter((t) => t.setupVariant === "rolling")),
+    row("dropped: calendar inside / U-turn under the same gates (comparison)", pick("p3k3_cal_iu")),
     "",
     "**Per named screen (a trade counts under every screen it passed):**",
     "",

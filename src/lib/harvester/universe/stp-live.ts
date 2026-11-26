@@ -232,7 +232,11 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
       const mS = sb.length ? maOrderAt(sbCloses, st, -1) : { pass: false, order: null };
       out.p3k3_ma_order = mL.pass ? mL.order : mS.pass ? mS.order : null;
       out.p3k3_candidate = null;
-      if (p && sb.length) {
+      // P3-0k3 (#88): calendar mech1 / mech2, else the rolling inside / U-turn; calendar inside / U-turn don't count
+      const calMech = trig && (trig.triggerType === "mech1" || trig.triggerType === "mech2") ? { d: trig.trigger as 1 | -1, entry: trig.entry!, stop: trig.stop! } : null;
+      const p3 = calMech ?? rol;
+      if (p3 && sb.length) {
+        const p = p3;
         const sbAtr = atrOf(sb);
         const piv = zigzag(sb, LEVEL_SWING_K);
         const ma = maOrderAt(sbCloses, st, p.d);

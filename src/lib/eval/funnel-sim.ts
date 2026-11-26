@@ -64,7 +64,7 @@ import {
 
 /** P3-0j3: top5_noair is the descriptive ranking with open_air candidates left out. P3-0k populations start with "p3k". */
 export type Population = "all" | "funnel" | "top5" | "top3" | "top5_noair" | "p3k" | "p3k_all" | "p3k_noopt" | "p3k_opens" | "p3k_mas" | "watch_volume" | "watch_volume_any"
-  | "p3k3" | "p3k3_all" | "p3k3_base" | "p3k3_slope" | "p3k3_noroom" | "p3k3_room75" | "p3k3_build";
+  | "p3k3" | "p3k3_all" | "p3k3_base" | "p3k3_slope" | "p3k3_noroom" | "p3k3_room75" | "p3k3_build" | "p3k3_cal_iu";
 
 export interface SymbolInput {
   symbol: string;
