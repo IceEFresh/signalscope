@@ -778,6 +778,11 @@ Same KEEP rule.
 - **Descriptive:** U-turn entries at or below average volume, inside entries at or above average, each under the same gates; legs per move with the U-turn start volume rule off.
 - **Tests:** butn at, above and below average (start and entry); inside at, above and below; short mirror; missing volume.
 - **Live keys:** `move_pauses` and `p3k4_candidate` use the same rule.
+- **As built (22q PR):**
+  - `triggerVolumeOk` applies the rule to the trade-direction U-turn (butn long, brutn short) and to inside days. Any other type passes. A missing volume anywhere in the 20-session average also fails.
+  - The rule decides whether the trigger adds the +1 pause, and whether the trigger is a `p3k4` entry (gate-table step "trigger volume").
+  - `passNoVolume` (the move gate with the rule ignored) feeds the two descriptive rows.
+  - "U-turn start without volume" is the legs-per-move variant.
 
 **Amendment, Livermore rules (Chris, 2026-11-26, before any P3-0k4 run).** From *Reminiscences of a Stock Operator*; Chris approved all five. Provisional, like the rest of P3-0k4. Volume average = the 20 sessions before the bar.
 

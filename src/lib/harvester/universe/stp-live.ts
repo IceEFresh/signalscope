@@ -258,7 +258,7 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
           const pos = movePosition(inp4, det[p3.d], st, p3.d, p3.entry, calMech ? (trig!.triggerType as string) : r?.triggerType ?? "");
           out.move_pauses = pos.pausesSoFar;
           out.move_used = pos.moveUsed;
-          moveGate = pos.pass;
+          moveGate = pos.pass && pos.volumeOk; // volume amendment: U-turn above average, inside below
         }
       }
       if (p3 && sb.length) {

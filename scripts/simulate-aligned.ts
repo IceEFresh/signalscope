@@ -40,7 +40,7 @@ import { extrasFor } from "@/lib/eval/funnel-sim";
 import { eventBeforeIndices } from "@/lib/harvester/macro-calendar";
 import { applySurvivorshipCheck, survivorshipLines } from "@/lib/eval/survivorship";
 import { MOVE_VARIANTS } from "@/lib/eval/moves";
-import { moveInputs, newMoveStatsTable, P3K4_COMPARISONS, P3K4_GATE_STEPS, p3k3SimOptionsWithMoves, p3k4ExperimentRow, p3k4Lines, p3k4SimOptions, symbolMoves, withMoves } from "@/lib/eval/moves-sim";
+import { moveInputs, newMoveStatsTable, P3K4_COMPARISONS, P3K4_GATE_STEPS, p3k3SimOptionsWithMoves, p3k4ExperimentRow, p3k4Lines, p3k4SimOptions, p3k4VolumeSimOptions, symbolMoves, withMoves } from "@/lib/eval/moves-sim";
 import { atrSeries } from "@/lib/eval/stp-sim";
 import { calendarInsideUturn, p3k3Trigger, P3K3_CAL_RUN, gateCountsByVariant, gateTable, p3k3ExperimentRow, P3K3_COMPARISONS, P3K3_GATE_STEPS, P3K3_RUNS, P3K_GATE_STEPS, p3k3Candidates, p3k3Lines, p3k3Member, p3k3SimOptions } from "@/lib/eval/aligned-v2-sim";
 import { FUDGE_VARIANTS, heldOutFrom, sweepRow, sweepSymbol, sweepTable, type SweepOutcome } from "@/lib/eval/fudge-sweep";
@@ -219,6 +219,12 @@ async function main() {
       const r = simulateFunnelSymbol(input, c3, "p3k4", "stop", ctx, p3k4SimOptions());
       trades.push(...r.trades);
       const c = (counts["p3k4 / stop"] ??= { candidates: 0, filled: 0, notFilled: 0, skippedOverlap: 0, sizeSkip: 0, noControl: 0 });
+      for (const k of Object.keys(c) as (keyof FunnelCounts)[]) c[k] += r.counts[k];
+    }
+    for (const p of ["p3k4_vol_uturn_low", "p3k4_vol_inside_high"] as const) {
+      const r = simulateFunnelSymbol(input, c3, p, "stop", ctx, p3k4VolumeSimOptions(p));
+      trades.push(...r.trades);
+      const c = (counts[`${p} / stop`] ??= { candidates: 0, filled: 0, notFilled: 0, skippedOverlap: 0, sizeSkip: 0, noControl: 0 });
       for (const k of Object.keys(c) as (keyof FunnelCounts)[]) c[k] += r.counts[k];
     }
     for (const p of P3K3_RUNS) {

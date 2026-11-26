@@ -84,7 +84,20 @@ export function withMoves(cands: readonly P3k3Candidate[], inp: MoveInputs, det:
 }
 
 const core = (c: P3k3Candidate) => c.v2.ma && c.v2.opens && c.v2.earnings && c.v2.rr && c.v2.optimal && c.v2.screens;
-export const p3k4Member = (c: P3k4Candidate) => core(c) && c.move.pass;
+/** P3-0k3 gates, the move gate, and the volume amendment on the entry trigger. */
+export const p3k4Member = (c: P3k4Candidate) => core(c) && c.move.pass && c.move.volumeOk;
+
+const isUturn = (c: P3k4Candidate) => c.setup.type === (c.dir === 1 ? "butn" : "brutn");
+/** Descriptive (volume amendment): entries failing the volume rule under otherwise the same gates. */
+export const p3k4VolumeMember: Record<"p3k4_vol_uturn_low" | "p3k4_vol_inside_high", (c: P3k4Candidate) => boolean> = {
+  p3k4_vol_uturn_low: (c) => core(c) && c.move.passNoVolume && isUturn(c) && !c.move.volumeOk,
+  p3k4_vol_inside_high: (c) => core(c) && c.move.passNoVolume && c.setup.type === "inside" && !c.move.volumeOk,
+};
+
+export function p3k4VolumeSimOptions(p: keyof typeof p3k4VolumeMember) {
+  const base = p3k4SimOptions();
+  return { ...base, member: (c: Candidate) => p3k4VolumeMember[p](c as P3k4Candidate) };
+}
 
 /** Move tags for any P3-0k3/0k4 trade whose candidate carries a move position. */
 export const moveTags = (c: Candidate): Partial<FunnelTrade> => {
@@ -135,6 +148,7 @@ export const P3K4_GATE_STEPS: ReadonlyArray<[string, (c: P3k4Candidate) => boole
   ["a move profile (≥ 3 completed moves)", (c) => c.move.profile != null],
   ["pauses so far 1 or 2", (c) => c.move.pausesSoFar === 1 || c.move.pausesSoFar === 2],
   ["move used ≤ 0.5", (c) => c.move.pass],
+  ["trigger volume (U-turn above average, inside below; equal or missing fails)", (c) => c.move.volumeOk],
 ];
 
 /** Universe-wide move statistics without keeping every move (per variant and direction). */
@@ -281,6 +295,12 @@ export function p3k4Lines(
     row("P3-0k3 with the room gate (p3k3)", pick("p3k3")),
     row("P3-0k3 with the move gate (p3k4)", pick("p3k4")),
     row("P3-0k3 with neither (p3k3_noroom)", noroom),
+    "",
+    "**Volume amendment (descriptive): entries that fail the trigger volume rule, under otherwise the same gates:**",
+    "",
+    ...HEAD,
+    row("U-turn entries at or below average volume", pick("p3k4_vol_uturn_low")),
+    row("inside entries at or above average volume", pick("p3k4_vol_inside_high")),
     "",
     ...gateTable("P3-0k4 long", gates.long),
     ...gateTable("P3-0k4 short", gates.short),
