@@ -869,7 +869,7 @@ The same chain fetch, thresholds and batching as `options-flow.ts`: vol/OI ≥ 3
 
 No migration, no dependency.
 
-## P3-0o: IBKR options via a local IB Gateway (Chris, 2026-11-25). **Needs Chris's dependency approval**
+## P3-0o: IBKR options via a local IB Gateway (Chris, 2026-11-25). **DEFERRED: Chris will say when to start**
 **Why:** Yahoo's chains carry no trade side, and Alpaca's free feed is indicative. IBKR's OPRA Top of Book is USD 1.50/month for a non-professional and gives real-time option quotes and trades for every US option exchange. With the bid and ask at each print, the side can be inferred: at or above the ask is a buy, at or below the bid is a sell, anything else is unknown.
 
 **Setup (Chris, once; see the runbook in the PR):**
