@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import type { DailyBar } from "@/lib/harvester/universe/bar-metrics";
 import type { Pivot } from "@/lib/harvester/universe/swings";
 import {
+  avgVolume,
+  triggerVolumeOk,
+  volumeVsAverage,
   detectMoves,
   moveProfile,
   movePosition,
@@ -27,8 +30,11 @@ const flat = (n: number, c = 100): Row[] => Array.from({ length: n }, () => [c, 
 const piv = (kind: "high" | "low", i: number, price: number, confirmedAt: number): Pivot => ({ kind, i, price, confirmedAt, atr: 2 });
 const trig = (i: number, type: string, dir: 1 | -1 = 1): MoveTrigger => ({ i, type, dir });
 
+/** U-turn trigger bars get above-average volume (2e6 vs 1e6) unless their row sets one (volume amendment). */
 function inputs(rows: Row[], extra: Partial<MoveInputs> = {}): MoveInputs {
-  const bars = weekdayBars(rows);
+  const r = rows.map((x) => [...x] as Row);
+  for (const t of extra.triggers ?? []) if ((t.type === "butn" || t.type === "brutn") && r[t.i] && r[t.i].length === 4) r[t.i] = [...(r[t.i] as [number, number, number, number]), 2e6];
+  const bars = weekdayBars(r);
   return { bars, pivots: [], atr: bars.map(() => 2), triggers: [], breakoutScreen: () => true, ...extra };
 }
 
@@ -213,5 +219,70 @@ describe("short mirror", () => {
     const { moves } = detectMoves(inp, -1);
     expect(moves[0]).toMatchObject({ dir: -1, startType: "uturn", anchor: 104, endType: "uturn_volume", endBar: 34 });
     expect(detectMoves(inp, 1).moves).toHaveLength(0); // the long side ignores the brutn start
+  });
+});
+
+describe("volume amendment (U-turns above average, inside days below)", () => {
+  // 25 flat bars at volume 1e6 (average 1e6), then bar 25 with the given volume
+  const withVol = (v: number | undefined, type = "butn", dir: 1 | -1 = 1) => {
+    const rows: Row[] = flat(30);
+    rows[25] = v === undefined ? [100, 100.5, 99.5, 100] : [100, 100.5, 99.5, 100, v];
+    const bars = weekdayBars(rows);
+    if (v === undefined) (bars as DailyBar[])[25] = { ...bars[25], volume: undefined as unknown as number };
+    return { bars, ok: triggerVolumeOk(bars, 25, type, dir) };
+  };
+
+  it("butn entry: above average counts; at or below doesn't; missing volume or < 20 prior sessions doesn't", () => {
+    expect(withVol(1.5e6).ok).toBe(true);
+    expect(withVol(1e6).ok).toBe(false); // equal
+    expect(withVol(0.5e6).ok).toBe(false);
+    expect(withVol(undefined).ok).toBe(false);
+    const short = weekdayBars(flat(10));
+    expect(avgVolume(short, 9)).toBeNull();
+    expect(triggerVolumeOk(short, 9, "butn", 1)).toBe(false);
+  });
+
+  it("inside entry: below average counts; at or above doesn't; mech triggers have no rule; short mirror (brutn above)", () => {
+    expect(withVol(0.5e6, "inside").ok).toBe(true);
+    expect(withVol(1e6, "inside").ok).toBe(false);
+    expect(withVol(1.5e6, "inside").ok).toBe(false);
+    expect(withVol(0.1e6, "mech1").ok).toBe(true);
+    expect(withVol(1.5e6, "brutn", -1).ok).toBe(true);
+    expect(withVol(0.5e6, "brutn", -1).ok).toBe(false);
+    expect(withVol(1.5e6, "butn", -1).ok).toBe(true); // butn isn't the short's U-turn: no rule
+    expect(volumeVsAverage(withVol(1e6).bars, 25)).toBe("equal");
+  });
+
+  it("move start: a butn at or below average volume doesn't start a move; above does; the variant ignores it", () => {
+    const start = (v: number) => {
+      const rows = flat(40);
+      rows[25] = [100, 100.5, 99.5, 100, v];
+      return detectMoves(inputs(rows, { triggers: [trig(25, "butn")], breakoutScreen: () => false }), 1).activeAt[25];
+    };
+    expect(start(2e6)).toMatchObject({ startType: "uturn" });
+    expect(start(1e6)).toBeNull();
+    expect(start(0.5e6)).toBeNull();
+    const rows = flat(40);
+    rows[25] = [100, 100.5, 99.5, 100, 1e6];
+    expect(detectMoves(inputs(rows, { triggers: [trig(25, "butn")], breakoutScreen: () => false }), 1, MOVE_VARIANTS["U-turn start without volume"]).activeAt[25]).not.toBeNull();
+  });
+
+  it("pause trigger: a below-high inside day adds a pause only below average volume; the entry carries volumeOk", () => {
+    const rows: Row[] = flat(130);
+    for (const [s, e] of [[25, 35], [45, 55], [65, 75]]) {
+      rows[s + 3] = [110, 120, 109, 119];
+      rows[e] = [100, 101, 99, 99.6, 3e6];
+    }
+    rows[92] = [100, 104, 99.5, 100];
+    const triggers = [25, 45, 65, 90].map((i) => trig(i, "butn")).concat([35, 55, 75].map((i) => trig(i, "brutn", -1)));
+    const mk = (v: number) => {
+      const r = rows.map((x) => [...x] as Row);
+      r[95] = [100, 100.5, 99.6, 100, v];
+      const inp = inputs(r, { triggers, pivots: [piv("high", 92, 104, 94)], breakoutScreen: () => false });
+      return movePosition(inp, detectMoves(inp, 1, { ...MOVE_PRIMARY, endMx: "off", endStructure: false }), 95, 1, 101, "inside");
+    };
+    expect(mk(0.5e6)).toMatchObject({ pausesSoFar: 2, volumeOk: true, pass: true });
+    const hi = mk(1.5e6);
+    expect(hi).toMatchObject({ pausesSoFar: 1, volumeOk: false, passNoVolume: true });
   });
 });

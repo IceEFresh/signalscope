@@ -46,9 +46,11 @@ export interface MoveOptions {
   endMx: "arm" | "fire" | "off";
   endStructure: boolean;
   endFailedBreakout: boolean;
+  /** Volume amendment: a U-turn start needs volume above its prior-20-session average. */
+  startUturnVolume: boolean;
 }
 
-export const MOVE_PRIMARY: MoveOptions = { rangeAtr: RANGE_ATR, breakoutFilter: true, endUturn: "volume", endMx: "arm", endStructure: true, endFailedBreakout: true };
+export const MOVE_PRIMARY: MoveOptions = { rangeAtr: RANGE_ATR, breakoutFilter: true, endUturn: "volume", endMx: "arm", endStructure: true, endFailedBreakout: true, startUturnVolume: true };
 
 /** Descriptive variants (§P3-0k4 items 3 and 4). */
 export const MOVE_VARIANTS: Record<string, MoveOptions> = {
@@ -59,6 +61,7 @@ export const MOVE_VARIANTS: Record<string, MoveOptions> = {
   "range 2 ATR": { ...MOVE_PRIMARY, rangeAtr: 2 },
   "range 4 ATR": { ...MOVE_PRIMARY, rangeAtr: 4 },
   "breakout without Finviz": { ...MOVE_PRIMARY, breakoutFilter: false },
+  "U-turn start without volume": { ...MOVE_PRIMARY, startUturnVolume: false },
 };
 
 export interface MoveTrigger {
@@ -120,12 +123,37 @@ export function mxPmxFires(bars: readonly DailyBar[], closes: readonly number[],
   return td != null && dir * td >= 1 && below(closes[t - 1], s10p, closes[t], s10);
 }
 
-const avgVolume = (bars: readonly DailyBar[], t: number, n = VOLUME_SESSIONS): number | null => {
+/** Mean volume of the n sessions before t; null with fewer sessions or a missing volume among them. */
+export const avgVolume = (bars: readonly DailyBar[], t: number, n = VOLUME_SESSIONS): number | null => {
   if (t < n) return null;
   let s = 0;
-  for (let k = t - n; k < t; k++) s += bars[k].volume ?? 0;
+  for (let k = t - n; k < t; k++) {
+    const v = bars[k].volume;
+    if (v == null || !Number.isFinite(v)) return null;
+    s += v;
+  }
   return s / n;
 };
+
+/** Bar t's volume against its prior-20-session average; null when either is missing. Equal is neither. */
+export function volumeVsAverage(bars: readonly DailyBar[], t: number): "above" | "below" | "equal" | null {
+  const v = bars[t]?.volume;
+  const a = avgVolume(bars, t);
+  if (v == null || !Number.isFinite(v) || a == null) return null;
+  return v > a ? "above" : v < a ? "below" : "equal";
+}
+
+/**
+ * Volume amendment (Chris, 2026-11-26, before any P3-0k4 run): a U-turn in the trade direction
+ * (butn long, brutn short) counts only with volume above average; an inside day only below it.
+ * mech1/mech2 (and any other type) have no volume rule. Equal or missing volume → doesn't count.
+ */
+export function triggerVolumeOk(bars: readonly DailyBar[], i: number, type: string, dir: Dir): boolean {
+  const uturn = type === (dir === 1 ? "butn" : "brutn");
+  if (!uturn && type !== "inside") return true;
+  const v = volumeVsAverage(bars, i);
+  return uturn ? v === "above" : v === "below";
+}
 
 /** Every move in one direction, plus the move active after each bar (null = none). */
 export function detectMoves(inp: MoveInputs, dir: Dir, opts: MoveOptions = MOVE_PRIMARY): { moves: Move[]; activeAt: Array<Move | null> } {
@@ -203,7 +231,8 @@ export function detectMoves(inp: MoveInputs, dir: Dir, opts: MoveOptions = MOVE_
       let start: { type: MoveStartType; bar: number; rangeEdge: number | null } | null = null;
       for (const p of newPivots)
         if (p.kind === startKind && lastStartPivot && better(p.price, lastStartPivot.price)) start = { type: "swing", bar: p.i, rangeEdge: null };
-      if (!start && (triggersOn.get(t) ?? []).some((s) => s.type === startUturn && s.dir === dir)) start = { type: "uturn", bar: t, rangeEdge: null };
+      if (!start && (triggersOn.get(t) ?? []).some((s) => s.type === startUturn && s.dir === dir) && (!opts.startUturnVolume || volumeVsAverage(bars, t) === "above"))
+        start = { type: "uturn", bar: t, rangeEdge: null };
       if (!start && t >= RANGE_SESSIONS && atr[t] != null) {
         let rHi = -Infinity;
         let rLo = Infinity;
@@ -280,8 +309,12 @@ export interface MovePosition {
   pausesSoFar: number | null;
   /** (entry − move low) ÷ ATR14(D) ÷ median move size. */
   moveUsed: number | null;
+  /** Volume amendment: the entry trigger's volume rule (U-turn above average, inside below; mech no rule). */
+  volumeOk: boolean;
   profile: MoveProfile | null;
   pass: boolean;
+  /** Descriptive: the move gate with the trigger volume rule ignored (the pause trigger always counts). */
+  passNoVolume: boolean;
 }
 
 /** The move active at D and where the entry sits in it, with the P3-0k4 gate. */
@@ -295,18 +328,22 @@ export function movePosition(
 ): MovePosition {
   const profile = moveProfile(detected.moves, d);
   const m = detected.activeAt[d];
-  if (!m) return { active: false, startType: null, pausesSoFar: null, moveUsed: null, profile, pass: false };
+  const volumeOk = triggerVolumeOk(inp.bars, d, triggerType, dir);
+  if (!m) return { active: false, startType: null, pausesSoFar: null, moveUsed: null, volumeOk, profile, pass: false, passNoVolume: false };
   const endKind = dir === 1 ? "high" : "low";
-  let pauses = inp.pivots.filter((p) => p.kind === endKind && p.i >= m.startBar && p.confirmedAt < d).length;
+  const confirmed = inp.pivots.filter((p) => p.kind === endKind && p.i >= m.startBar && p.confirmedAt < d).length;
+  let belowHigh = false;
   if (pauseTrigger(triggerType, dir) && d > m.startBar) {
     let before = dir === 1 ? -Infinity : Infinity;
     for (let k = m.startBar; k < d; k++) before = dir === 1 ? Math.max(before, inp.bars[k].high) : Math.min(before, inp.bars[k].low);
-    if (dir === 1 ? inp.bars[d].high < before : inp.bars[d].low > before) pauses++;
+    belowHigh = dir === 1 ? inp.bars[d].high < before : inp.bars[d].low > before;
   }
+  const pauses = confirmed + (belowHigh && volumeOk ? 1 : 0);
+  const pausesNoVol = confirmed + (belowHigh ? 1 : 0);
   const a = inp.atr[d];
   const moveUsed = profile && a != null && a > 0 && profile.medianSize > 0 ? (dir * (entry - m.anchor)) / a / profile.medianSize : null;
-  const pass = profile != null && moveUsed != null && (GATE_PAUSES as readonly number[]).includes(pauses) && moveUsed <= GATE_MOVE_USED + 1e-12;
-  return { active: true, startType: m.startType, pausesSoFar: pauses, moveUsed, profile, pass };
+  const gate = (p: number) => profile != null && moveUsed != null && (GATE_PAUSES as readonly number[]).includes(p) && moveUsed <= GATE_MOVE_USED + 1e-12;
+  return { active: true, startType: m.startType, pausesSoFar: pauses, moveUsed, volumeOk, profile, pass: gate(pauses), passNoVolume: gate(pausesNoVol) };
 }
 
 // ── Descriptive summaries ────────────────────────────────────────────────────────

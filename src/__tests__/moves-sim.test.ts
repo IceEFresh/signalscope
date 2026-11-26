@@ -75,13 +75,20 @@ describe("U-turn triggers over the whole history", () => {
 describe("p3k4 membership and comparisons", () => {
   const v2 = { ma: true, opens: true, screens: true, base: true, earnings: true, rr: true, optimal: true, room: false, room75: false, slope: false };
   const cand = (move: Partial<P3k4Candidate["move"]>, gates = v2) =>
-    ({ v2: gates, move: { active: true, startType: "uturn", pausesSoFar: 1, moveUsed: 0.3, profile: null, pass: true, ...move } }) as unknown as P3k4Candidate;
+    ({ v2: gates, move: { active: true, startType: "uturn", pausesSoFar: 1, moveUsed: 0.3, profile: null, pass: true, passNoVolume: true, volumeOk: true, ...move } }) as unknown as P3k4Candidate;
 
   it("the P3-0k3 gates with the move gate in place of the room gate", () => {
     expect(p3k4Member(cand({}))).toBe(true); // room gate failed, move gate passed
     expect(p3k4Member(cand({ pass: false }))).toBe(false);
     expect(p3k4Member(cand({}, { ...v2, screens: false }))).toBe(false);
-    expect(P3K4_GATE_STEPS.map(([s]) => s).slice(-4)).toEqual(["an active move at D", "a move profile (≥ 3 completed moves)", "pauses so far 1 or 2", "move used ≤ 0.5"]);
+    expect(p3k4Member(cand({ volumeOk: false }))).toBe(false); // volume amendment
+    expect(P3K4_GATE_STEPS.map(([s]) => s).slice(-5)).toEqual([
+      "an active move at D",
+      "a move profile (≥ 3 completed moves)",
+      "pauses so far 1 or 2",
+      "move used ≤ 0.5",
+      "trigger volume (U-turn above average, inside below; equal or missing fails)",
+    ]);
   });
 
   it("4 provisional comparisons labelled p3k4, benchmarked on all P3-0k3 triggers", () => {
