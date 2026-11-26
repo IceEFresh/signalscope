@@ -4,6 +4,10 @@ import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
 import { yahoo429s, yahooHealthSummary } from "../src/lib/yahoo-retry.js";
 import { fetchOptionsRaw, peekOptionsRaw } from "../src/lib/harvester/options-chain.js";
 import { optionsExtLine, scanOptionsExt, withOptFeatures, type OptFeatures } from "../src/lib/harvester/options-ext.js";
+import { EdgarEarningsClient, edgarGetter, normTicker, parseTickerMap, TICKER_MAP_URL } from "../src/lib/harvester/edgar-earnings.js";
+import { finraGetter } from "../src/lib/harvester/finra.js";
+import { finraLive, form4Live, form4LiveLine } from "../src/lib/harvester/history-live.js";
+import { fsFinraCache, fsForm4Cache, readFloats } from "../src/lib/harvester/history-fs.js";
 import { computeAlpacaOptionsExtras } from "../src/lib/harvester/alpaca-options.js";
 import { chunk, computeSnapshotRows, type SnapshotRow } from "../src/lib/harvester/universe/snapshot.js";
 import { computeCryptoSnapshotRows } from "../src/lib/harvester/crypto/universe.js";
@@ -271,6 +275,46 @@ async function main() {
     }
   } catch (err) {
     console.warn(`[watch] watch_only rows failed: ${err instanceof Error ? err.message : err}`);
+  }
+
+  // P3-0n: insider (EDGAR Form 4) and short interest / short volume (FINRA) keys on every stock
+  // snapshot row, log-only; the same code and caches as scripts/backfill-form4.ts and
+  // backfill-finra.ts. Each part never stops the harvest.
+  {
+    const spyP = peekDailyChart(BENCHMARK_SYMBOL);
+    const spyRes = spyP ? await spyP.catch(() => null) : null;
+    const spyBars = swingHistory(storeHistories.get(BENCHMARK_SYMBOL), spyRes?.ok ? parseChartBars(spyRes.json) : []);
+    const sessions = [...new Set(spyBars.map(barDateOf).filter((d): d is string => d != null))].sort();
+    const rows = snapshot.rows.map((r) => ({ symbol: r.symbol, sessionDate: r.sessionDate }));
+    const extra = new Map<string, Record<string, unknown>>();
+    const add = (f: Record<string, Record<string, unknown>>) => {
+      for (const [sym, v] of Object.entries(f)) extra.set(sym, { ...(extra.get(sym) ?? {}), ...v });
+    };
+    const ua = process.env.SEC_USER_AGENT;
+    if (!ua) console.warn("[form4] SEC_USER_AGENT not set: ins_* keys skipped this run");
+    else
+      try {
+        const client = new EdgarEarningsClient(edgarGetter(ua));
+        const tickerMap = parseTickerMap(await client.json(TICKER_MAP_URL));
+        const f4 = await form4Live(rows, sessions, today, (sym) => tickerMap.get(normTicker(sym)), client, fsForm4Cache());
+        add(f4.features);
+        const liveInsider = new Set(
+          signals.filter((x) => x.source === "SEC_INSIDER" && !/\b(sell|sells|sold|sale)\b/i.test(x.title ?? "")).map((x) => x.symbol.toUpperCase()),
+        );
+        const now = new Date();
+        const { line, warn } = form4LiveLine(f4, liveInsider, new Date(now.getTime() - 86_400_000).toISOString(), now.toISOString());
+        (warn ? console.warn : console.log)(`${line}; ${client.requests} EDGAR requests`);
+      } catch (err) {
+        console.warn(`[form4] live keys failed, ins_* keys are missing this run: ${err instanceof Error ? err.message : err}`);
+      }
+    try {
+      const fin = await finraLive(rows, sessions, today, readFloats()?.floats ?? null, finraGetter(), fsFinraCache());
+      add(fin.features);
+      (fin.warn ? console.warn : console.log)(fin.line);
+    } catch (err) {
+      console.warn(`[finra] live keys failed, si_*/sv_* keys are missing this run: ${err instanceof Error ? err.message : err}`);
+    }
+    snapshot.rows = snapshot.rows.map((r) => (extra.has(r.symbol) ? { ...r, features: { ...r.features, ...extra.get(r.symbol) } } : r));
   }
 
   // 1e''. Crypto snapshot rows for the weekly crypto universe (P3-0e, log only): one 3-month chart each,

@@ -148,7 +148,12 @@ export class EdgarEarningsClient {
   ) {}
 
   async json(url: string): Promise<unknown> {
-    const text = await withRetry(
+    return JSON.parse(await this.text(url)) as unknown;
+  }
+
+  /** P3-0n: the same paced, retried GET as text (Form 4 XML). */
+  async text(url: string): Promise<string> {
+    return withRetry(
       async () => {
         const wait = this.last + this.minIntervalMs - Date.now();
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
@@ -158,7 +163,6 @@ export class EdgarEarningsClient {
       },
       { label: "edgar", retries: this.retries },
     );
-    return JSON.parse(text) as unknown;
   }
 }
 
@@ -166,7 +170,7 @@ export class EdgarEarningsClient {
 export const edgarGetter =
   (userAgent: string): EdgarText =>
   async (url) => {
-    const res = await fetch(url, { headers: { "User-Agent": userAgent, Accept: "application/json" }, signal: AbortSignal.timeout(20_000) });
+    const res = await fetch(url, { headers: { "User-Agent": userAgent, Accept: "application/json, text/xml, */*" }, signal: AbortSignal.timeout(20_000) });
     if (!res.ok) throw new Error(`edgar ${res.status}`);
     return res.text();
   };

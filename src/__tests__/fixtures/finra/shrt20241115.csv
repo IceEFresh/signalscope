@@ -1,0 +1,8 @@
+accountingYearMonthNumber|symbolCode|issueName|issuerServicesGroupExchangeCode|marketClassCode|currentShortPositionQuantity|previousShortPositionQuantity|stockSplitFlag|averageDailyVolumeQuantity|daysToCoverQuantity|revisionFlag|changePercent|changePreviousNumber|settlementDate
+20241115|A|Agilent Technologies Inc.|A|NYSE|3274781|3456907||2213257|1.48||-5.27|-182126|2024-11-15
+20241115|AA|Alcoa Corporation|A|NYSE|8795231|8781677||5437246|1.62||0.15|13554|2024-11-15
+20241115|AAA|Alternative Access First Prior|E|ARCA|18028|28475||9404|1.92||-36.69|-10447|2024-11-15
+20241115|AAPL|Apple Inc. Common Stock|R|NNM|141037864|133040194||44920191|3.14||6.01|7997670|2024-11-15
+20241115|GME|GameStop Corp. Class A|A|NYSE|31866496|35943712||12733092|2.50||-11.34|-4077216|2024-11-15
+20241115|TSLA|Tesla, Inc. Common Stock|R|NNM|76444266|77944508||127500997|1.00||-1.92|-1500242|2024-11-15
+20241115|AAALY|Aareal Bank AG Unsponsored Ame|S|OTC|1|1||0|999.99||0.00|0|2024-11-15

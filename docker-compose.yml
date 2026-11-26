@@ -69,6 +69,9 @@ services:
       - ./data/bar-store:/app/data/bar-store
       # P3-0l: the smart-money watchlist (10 sessions per ticker; log only)
       - ./data/watchlist:/app/data/watchlist
+      # P3-0n: Form 4 and FINRA raw caches, shared with scripts/backfill-form4.ts and backfill-finra.ts
+      - ./scripts/output/edgar-form4:/app/scripts/output/edgar-form4
+      - ./scripts/output/finra:/app/scripts/output/finra
     depends_on:
       - web
     profiles:

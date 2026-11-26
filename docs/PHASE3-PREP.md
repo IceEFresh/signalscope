@@ -988,6 +988,29 @@ The P3-0l Reddit hit uses `aw_spike`, and the existing Reddit scraper becomes th
 
 **Run (NAS):** `scripts/backfill-form4.ts`, `scripts/backfill-finra.ts`. One-time, then live daily.
 
+**As built (#P3-0n PR):** choices the spec left open, all on the conservative side.
+- **Form 4 joint filings:** an insider and their fund reporting the same shares count as one buyer (the first reporting owner, with every owner's role), so a joint filing can't fake a cluster or double the dollars.
+- **4/A:** it replaces the original (same owners and period of report, filed on its `dateOfOriginalSubmission`), and the amended rows take the **4/A's** acceptance session. A correction is never back-dated.
+- **Windows:**
+  - the `_30d` keys use 30 calendar days of signal sessions;
+  - `ins_buy_n_30d` counts buys per filing, not per row;
+  - `ins_cluster` uses the 10 sessions ending on the row's session.
+- **Short interest:**
+  - FINRA has no file listing, so each half-month's settlement is found by trying the 11th–15th and the month's last 5 weekdays, newest first;
+  - a report is used from the 7th session after settlement, which matches FINRA's published dates (2024-11-15 → 2024-11-26);
+  - `si_change_pct` uses the file's own previous-report column;
+  - `si_pct_float` divides by Yahoo's current float from `scripts/output/finra/floats.json`, written by `backfill-finra.ts`; rerun with `--refresh-floats` to update it;
+  - an extra key, `si_settlement`, records which report a row used.
+- **Short volume:** `sv_ratio_20d` and `sv_z` use the 20 sessions **before** the row (today never enters its own baseline), and need at least 15 of them with data.
+- **Caches:**
+  - raw files are gzipped in `scripts/output/edgar-form4/` and `scripts/output/finra/raw/`, bind-mounted into the harvester so live and backfill share them;
+  - per-symbol backfill output goes to `scripts/output/backfill-form4/` and `scripts/output/backfill-finra/`.
+- **Live cost per harvest:**
+  - one SEC ticker map;
+  - one submissions JSON per universe issuer (≤ 8/s, about 75 s for 600 issuers), plus each new Form 4 XML;
+  - one new short-volume file;
+  - a few short-interest probes.
+
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
 
