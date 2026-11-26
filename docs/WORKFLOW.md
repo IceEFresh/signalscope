@@ -44,6 +44,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 22e. **P3-0j3**: pullback sizing fix, after-trigger controls for all patterns, event-rule counterfactual, R/R diagnostics, then rerun (PHASE3-PREP §P3-0j3).
 22f. **P3-0k**: aligned-trend setups (opens and MA stack and slope on the stock, industry, sector and market; R/R ≥ 3; optimal entry off support), 4 pre-registered comparisons. After 22e.
 22g. **P3-0l**: smart-money and sentiment watchlist (live log-only, entry readiness at R/R ≥ 3, volume-spike backfill descriptive). After 22f.
+22h. **P3-0k3**: aligned trend v2 (stock MAs close > 20/50 in either order > 200, weekly and rolling-5 opens; monthly, rolling-20, sector, market and industry feed size only), 4 pre-registered comparisons, provisional.
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.
