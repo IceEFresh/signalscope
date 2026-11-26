@@ -869,6 +869,81 @@ The same chain fetch, thresholds and batching as `options-flow.ts`: vol/OI ≥ 3
 
 No migration, no dependency.
 
+## P3-0o: IBKR options via a local IB Gateway (Chris, 2026-11-25). **Needs Chris's dependency approval**
+**Why:** Yahoo's chains carry no trade side, and Alpaca's free feed is indicative. IBKR's OPRA Top of Book is USD 1.50/month for a non-professional and gives real-time option quotes and trades for every US option exchange. With the bid and ask at each print, the side can be inferred: at or above the ask is a buy, at or below the bid is a sell, anything else is unknown.
+
+**Setup (Chris, once; see the runbook in the PR):**
+- An IB Gateway container (`ghcr.io/gnzsnz/ib-gateway:stable`) under a new compose profile, `ib`.
+- **Paper login only** (`TRADING_MODE=paper`, `READ_ONLY_API=yes`), with the live account's market data shared to the paper user.
+- Credentials live only in `.env`, never committed.
+- **No host port:** the harvester reaches `ib-gateway:4004` on the compose network.
+- **Known limit:** a paper user sharing live data gets **no data** while the live user is logged in on another device. The harvest runs at 08:30 ET (05:30 PT). The client must detect "no data" and log it, never write zeros.
+
+**Client:**
+- One TypeScript TWS-API client. The candidate is `@stoqey/ib`: **a new dependency, so Chris approves it first.**
+- Per scanned name (the P3-0m list, capped at 300), for the prior session:
+  - option trades with bid and ask, via historical ticks for the top contracts by volume;
+  - side-classified premium.
+
+**Features (log-only):**
+- `ib_call_buy_prem`, `ib_call_sell_prem`, `ib_put_buy_prem`, `ib_put_sell_prem`, `ib_unknown_prem`;
+- `ib_net_bullish_prem`: call buys + put sells − call sells − put buys;
+- `ib_large_buys_n` (≥ $100k bought);
+- `ib_ok` (false when no data or not connected).
+
+The P3-0l watchlist's options hit and direction switch to `ib_net_bullish_prem` when `ib_ok`, and fall back to Yahoo otherwise.
+
+**Health:** `[ib] connected, n/m names with data, no-data reason`. Warn when not connected for 2 runs.
+
+**Tests:**
+- side classification at bid, ask and mid;
+- a no-data session gives null, not 0;
+- not connected skips with a warning and doesn't stop the harvest;
+- the watchlist falls back to Yahoo.
+
+**No orders, ever:** read-only API, paper mode, and no order code in the client.
+
+## P3-0p: congress trades from the House Clerk, official and free (Chris, 2026-11-25)
+**Why:** Capitol Trades hit 429s on day 1. The House Clerk publishes every member's disclosures, with yearly downloads from 2008 onward.
+
+**Source:**
+- The yearly ZIP index (XML) of filings from `disclosures-clerk.house.gov`. Filter to Periodic Transaction Reports (PTRs).
+- For each new PTR, fetch its PDF and parse the transactions: asset, ticker, type (purchase, sale or exchange), date, amount range, owner.
+- The PDFs vary: unparsed lines are logged and counted, never guessed.
+- A Senate eFD source is a follow-up, out of scope here.
+
+**Timing:** the signal date is the PTR's **filing date**, mapped to the next session, not the transaction date (members have up to 45 days to file).
+
+**History:** backfill 2 years, cached raw under `scripts/output/house-ptr/`, at ≤ 2 req/s.
+
+**Features:** `cong_buy_n_30d`, `cong_buy_amt_mid_30d` (range midpoints), `cong_sell_n_30d`, `cong_members_30d`. Log-only.
+
+The P3-0l congress hit uses these. Capitol Trades stays as a fallback, with a health line comparing the two.
+
+**Tests:**
+- an index XML fixture;
+- 2 PTR PDF fixtures: a clean table, and a messy one with unparsed lines counted;
+- filing-date mapping;
+- ticker extraction;
+- amount-range midpoints.
+
+## P3-0q: Reddit mentions from ApeWisdom (Chris, 2026-11-25)
+**Why:** direct Reddit scraping was DNS-blocked and is fragile. ApeWisdom offers a free public REST API with no authentication (rate-limited) for Reddit and 4chan mention counts.
+
+**Source:** the ApeWisdom public API, per filter (`all-stocks`, `wallstreetbets`, `all-crypto`). Mentions, upvotes, rank, and the mentions 24 h ago. One harvest call per filter, paged.
+
+**Verify first:** one review says programmatic access is a paid tier. The builder tests the free endpoint, and if it needs a key, stops and reports back. No key is to be bought without Chris.
+
+**Features:**
+- `aw_mentions`, `aw_mentions_24h_ago`, `aw_rank`;
+- `aw_spike`: mentions ≥ 3 × 24 h ago and ≥ 20 mentions.
+
+The P3-0l Reddit hit uses `aw_spike`, and the existing Reddit scraper becomes the fallback.
+
+**History:** none beyond the API's window, so this is live-only.
+
+**Tests:** a fixture response, the spike rule at its edge, pagination, a rate-limit backoff, and missing gives null.
+
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
 
