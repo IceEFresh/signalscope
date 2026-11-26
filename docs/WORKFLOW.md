@@ -53,6 +53,9 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 22n. **OPS-1**: harvest dead-man's switch (optional `HEALTHCHECK_URL`, start/success/fail pings with health summary).
 22o. **P3-0k4**: move detector (start: higher swing low, butn, or ≤ 3 ATR 20-session range breakout passing F25/F22; end: brutn on above-average volume, broken mX/pmX level, lower high + lower low, failed breakout), move profile from completed moves, gate `pauses_so_far` ∈ {1,2} and `move_used` ≤ 0.5 replacing the P3-0k3 room gate. Provisional.
 22p. **P3-0k5**: 5-year backfill window for bars, ETFs and every history source (null before a source's first date), survivorship split in reports. Can run in parallel with 22o; rerun P3-0k3/0k4 after both.
+22q. **P3-0k4 volume amendment**: U-turns (start, pause, entry) need volume > the prior-20-session average; inside days need volume < it; P3-0k4 only. Merge before the 5-year run.
+22r. **P3-0k4 Livermore amendment**: exit D (hold to move end), RS20 vs sector gate, failing-leaders block (two-pass), saturation end rule, confirmed-breakout entry `p3k4_brk`; 4 provisional comparisons added. Merge before the 5-year run.
+22s. **P3-0k4 Wyckoff amendment**: accumulation / distribution ranges (20–60 sessions, ≤ 4 ATR, prior trend ≥ 4 ATR, up/down volume ≥ 1.2, A/D slope), sign-of-strength entry `p3k4_wyk` at fixed 0.25 size, distribution end rule, watchlist source `wyckoff`; 2 provisional comparisons. Can follow 22r.
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.

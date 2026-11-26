@@ -770,6 +770,58 @@ Same KEEP rule.
   - `move_pauses`, `move_used` and `p3k4_candidate` need an entry trigger and are null without one;
   - the keys are computed from the bar store history (at least 60 bars).
 
+**Amendment, volume on U-turns and inside days (Chris, 2026-11-26, before any P3-0k4 run).** Chris: "BUTN needs to have higher than average volume, inside is best when its below average volume." Average = the 20 sessions before the bar (the brutn end rule's average). Shorts mirror: brutn needs volume > average, an inside day < average.
+- **Move start:** a U-turn start needs volume > average.
+- **Pause trigger and `p3k4` entry:** butn (shorts brutn) counts only with volume > average; an inside day counts only with volume < average. mech1/mech2 have no volume rule.
+- Volume equal to the average fails both. A missing volume or fewer than 20 prior sessions → the trigger doesn't count (counted in the gate table).
+- P3-0k3 is unchanged; this applies to P3-0k4 only.
+- **Descriptive:** U-turn entries at or below average volume, inside entries at or above average, each under the same gates; legs per move with the U-turn start volume rule off.
+- **Tests:** butn at, above and below average (start and entry); inside at, above and below; short mirror; missing volume.
+- **Live keys:** `move_pauses` and `p3k4_candidate` use the same rule.
+
+**Amendment, Livermore rules (Chris, 2026-11-26, before any P3-0k4 run).** From *Reminiscences of a Stock Operator*; Chris approved all five. Provisional, like the rest of P3-0k4. Volume average = the 20 sessions before the bar.
+
+1. **Exit D, hold to the move end** (Chris: "that is the intent of the pmX and the close below the 10"). Same entry, initial stop, adds (+2/+4/+6 ATR, max 3), breakeven after each add, event and earnings rules, 60-session cap and costs as exit B, but **no 3R trigger for the trail**. The trade exits at the next open after the move detector ends the move it entered (any primary end rule, including saturation below), or on its stop, whichever comes first. A trade entered with no active move uses exit B. `p3k4` runs under both exits; exit B stays primary for the 4 existing comparisons.
+2. **Follows its group** (gate in `p3k4`): RS20 = the stock's 20-session return − its sector ETF's 20-session return, at D. Longs need RS20 ≥ 0, shorts ≤ 0. No sector ETF or no data → passes (neutral), counted in the gate table.
+3. **Failing leaders** (gate in `p3k4`): a sector's leaders at D = the 5 universe members of that sector with the highest RS60 (60-session return − the sector ETF's), at least 8 members with data, else the rule is neutral. **Block new longs** in the sector when ≥ 3 of its 5 leaders had a long move end in the last 10 sessions and haven't started a new long move by D, while the sector ETF closes above its sma20 (money leaving the winners while the group still looks fine). Shorts mirror with the 5 lowest RS60 and short moves. Needs a two-pass run: moves for every symbol first, then candidates. Only bars ≤ D are used.
+4. **Saturation** (new primary end rule, also an exit D trigger): a bar with volume > 2 × average, a high within 0.5 × ATR14 of the move high (or a new move high), and a close in the lower half of its range (long; shorts mirrored). End type `saturation`. Descriptive: legs per move with saturation off.
+5. **Confirmed breakout entry** (new population `p3k4_brk`). Chris: "we need confidence it's an actual breakout and not noise." The trigger bar is a move start of type breakout (≤ 3 ATR 20-session range, F25/F22, rules above) **plus all of these (reviewer's defaults):**
+   - volume ≥ 1.5 × average;
+   - close ≥ range high + 0.25 × ATR14 (shorts: ≤ range low − 0.25 ATR);
+   - close in the top 25% of the bar's range (shorts: bottom 25%);
+   - the P3-0k3 stock gates (MAs, opens, no earnings ≤ 5, R/R ≥ 3) plus rules 2 and 3. Not the screen gate (F25/F22 already applies), not optimal entry, not the pauses gate. `move_used` ≤ 0.5 still applies.
+   - Entry, stop and sizing as STP: entry = high + fudge, stop = low − fudge, P3-0k3 size rule, exit B (exit D descriptive).
+   - Inside days are already a breakout entry (Chris) and stay in `p3k4`.
+
+**Pre-registered additions (provisional):**
+- `p3k4:exitD-vs-exitB:long/short`: the same `p3k4` trades, exit D vs exit B, paired by trade. KEEP needs the paired mean difference > 0 held out and in each fold.
+- `p3k4_brk:vs-control:long/short`: confirmed breakouts vs their after-trigger matched control.
+
+**Descriptive:** each rule's gate count and "failed rule" results (RS20 < 0; blocked by failing leaders); exit D with saturation off; breakouts without each confirmation filter, one at a time; breakout results by relvol band.
+
+**Tests:** exit D exits on the move end, not on 3R, and the breakeven after an add still applies; RS20 edges and neutral; leader rule at 2 vs 3 of 5, fewer than 8 members neutral, a leader that restarted a move not counted, sector ETF below sma20 → no block, look-ahead (a move ending after D isn't seen); saturation each condition alone fails; breakout each filter alone fails; short mirrors.
+
+**Live keys (log-only):** `rs20_sector`, `sector_leaders_failing` (count of 5), `p3k4_brk_candidate`, `move_end_type` (on the bar a move ends).
+
+**Amendment, Wyckoff accumulation and distribution (Chris, 2026-11-26, before any P3-0k4 run).** Chris: "I won't buy accumulation but I would start a position on a breakout 1/4 size, especially if the sector was starting to move." Accumulation marks early candidates and distribution marks the end of a trend. Thresholds are the reviewer's defaults, fixed here. Bars ≤ D only; volume average = the 20 sessions before the bar.
+
+- **Trading range at D:** the longest N in 20–60 sessions ending at D−1 whose max high − min low ≤ 4 × ATR14(D). No N qualifies → no range.
+- **Accumulation range:** a range with all of:
+  - **a prior decline:** a confirmed k = 2 swing high before the range start, ≥ 4 ATR above the range low;
+  - **demand inside the range:** up-day volume ÷ down-day volume over the range ≥ 1.2;
+  - **an A/D line (Chaikin: volume × ((close − low) − (high − close)) ÷ (high − low), cumulative) rising over the range:** its least-squares slope > 0, while the close's slope is within ±0.05 ATR per session.
+  - A **spring** (a low below the range low, closed back inside within 3 sessions) is recorded but not required.
+- **Distribution range:** the mirror: a prior rally ≥ 4 ATR from a confirmed swing low, down/up volume ≥ 1.2, A/D slope < 0 with a flat close. An **upthrust** (a high above the range high, closed back inside within 3 sessions) is recorded.
+- **Entry, `p3k4_wyk` (sign of strength):** on D, close > the accumulation range high, passing the confirmed-breakout filters (volume ≥ 1.5 × average, close ≥ range high + 0.25 ATR, close in the top 25% of the bar), the RS20 and failing-leaders gates, no earnings ≤ 5, R/R ≥ 3. Not the MA, opens, screen, optimal-entry or pauses gates: a base breakout comes before the trend stack.
+  - **Size is fixed at 0.25** of the $200 base (Chris), × 0.5 for an out-of-hours event, floored at 0.25. Adds, breakeven and management as exit B; exit D descriptive. Entry = high + fudge, stop = low − fudge (STP).
+  - Shorts mirror: a close below a distribution range low.
+  - **Descriptive split, "sector starting to move":** the sector ETF's RS20 vs SPY > 0 and higher than 5 sessions earlier. Reported both ways; not a gate.
+- **Distribution as a move end:** a new primary end rule. During an active long move, a distribution range whose high is within 1 ATR of the move high, then a close below that range's low. End type `distribution`. Shorts mirror with an accumulation range under a short move.
+- **Pre-registered (provisional):** `p3k4_wyk:vs-control:long/short`, sign-of-strength entries vs their after-trigger matched control.
+- **Descriptive:** range counts per year; accumulation ranges that broke up vs down (how often accumulation was real); with and without a spring / upthrust; the sector-moving split; legs per move with the distribution end rule off; results with size 1.0 instead of 0.25 (R is the same per trade; this is for dollars only).
+- **Live keys (log-only):** `wyk_range` (`acc` / `dist` / null), `wyk_range_sessions`, `wyk_spring`, `wyk_upthrust`, `wyk_breakout` (on the sign-of-strength bar), `sector_moving`. `wyk_range = acc` joins the P3-0l watchlist sources as `wyckoff`.
+- **Tests:** range N selection (longest qualifying, 4 ATR edge); each accumulation condition alone fails; the A/D slope sign; spring and upthrust windows; the entry filters; size fixed at 0.25; distribution end near vs not near the move high; short mirrors; look-ahead.
+
 ## P3-0k5: 5-year backfill window (Chris, 2026-11-26)
 
 **Why:** P3-0k3 without the room gate gives 149 trades in 2 years, about 45 held out against the 100 KEEP needs. 5 years gives roughly 375 / 110 at the same rate, and enough completed moves per stock for the P3-0k4 profile.
