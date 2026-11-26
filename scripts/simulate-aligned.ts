@@ -36,9 +36,16 @@ import { gateCounts, P3K_COMPARISONS, P3K_RUNS, p3kCandidates, p3kMember, p3kSim
 import { alignedExperimentRow, alignedMarkdownReport, alignedTradesCsv } from "@/lib/eval/aligned-report";
 import { volumeSpikes, watchMember, watchVolumeLines } from "@/lib/eval/watch-backfill";
 import { groupMetrics } from "@/lib/eval/stp-sim";
+import { extrasFor } from "@/lib/eval/funnel-sim";
+import { eventBeforeIndices } from "@/lib/harvester/macro-calendar";
+import { calendarInsideUturn, p3k3Trigger, P3K3_CAL_RUN, gateCountsByVariant, gateTable, p3k3ExperimentRow, P3K3_COMPARISONS, P3K3_GATE_STEPS, P3K3_RUNS, P3K_GATE_STEPS, p3k3Candidates, p3k3Lines, p3k3Member, p3k3SimOptions } from "@/lib/eval/aligned-v2-sim";
+import { FUDGE_VARIANTS, heldOutFrom, sweepRow, sweepSymbol, sweepTable, type SweepOutcome } from "@/lib/eval/fudge-sweep";
 
-/** P3-0l: the watch backfill takes any STP type (EGOP included), calendar or rolling. */
-const ALL_STP_TYPES = new Set(["inside", "butn", "brutn", "mech1", "mech2", "egop"]);
+const P3K_POPS = new Set(["p3k", "p3k_all", "p3k_noopt", "p3k_opens", "p3k_mas"]);
+type GateRows = ReturnType<typeof gateCountsByVariant>;
+const addGates = (acc: GateRows | null, g: GateRows): GateRows => (acc ? acc.map((r, k) => ({ ...r, calendar: r.calendar + g[k].calendar, rolling: r.rolling + g[k].rolling })) : g);
+
+
 
 const BARS_DIR = "scripts/output/backfill-bars";
 const ETF_DIR = "scripts/output/backfill-etf-bars";
@@ -88,6 +95,10 @@ async function main() {
   const t0 = Date.now();
   let used = 0;
   let spikeCount = 0;
+  // P3-0k3 accumulators (per symbol, so no candidate keeps its bars alive)
+  const g3: { long: GateRows | null; short: GateRows | null } = { long: null, short: null };
+  let roomNoProfile = 0;
+  const fudge23: Record<string, SweepOutcome[]> = { "both 11%": [], "both 23%": [] };
   for (const [n, symbol] of symbols.entries()) {
     let bars: DailyBar[];
     try {
@@ -116,7 +127,8 @@ async function main() {
     const spikes = volumeSpikes(bars).filter((s) => sessions.has(barDateOf(bars[s.i]) ?? ""));
     spikeCount += spikes.length;
     if (spikes.length) {
-      const wc = p3kCandidates(input, layers, ctx, ALL_STP_TYPES);
+      // Same entry triggers as live watch_entry_ready: rolling inside / U-turn, calendar mech1 / mech2
+      const wc = p3kCandidates(input, layers, ctx, undefined, p3k3Trigger);
       for (const p of ["watch_volume", "watch_volume_any"] as const) {
         const base = p3kSimOptions("p3k");
         const r = simulateFunnelSymbol(input, wc, p, "stop", ctx, { ...base, member: watchMember(p, spikes) });
@@ -126,6 +138,31 @@ async function main() {
       }
     }
     all.push(...cands);
+    // P3-0k3: aligned trend v2 on the same triggers
+    // P3-0k3's own trigger set: rolling inside / U-turn, calendar mech1 / mech2
+    const c3 = p3k3Candidates(input, layers, ctx);
+    // descriptive comparison: the dropped calendar inside / U-turn triggers under the same gates
+    const cIU = p3k3Candidates(input, layers, ctx, undefined, calendarInsideUturn);
+    {
+      const r = simulateFunnelSymbol(input, cIU, P3K3_CAL_RUN, "stop", ctx, p3k3SimOptions(P3K3_CAL_RUN));
+      trades.push(...r.trades);
+      const c = (counts[`${P3K3_CAL_RUN} / stop`] ??= { candidates: 0, filled: 0, notFilled: 0, skippedOverlap: 0, sizeSkip: 0, noControl: 0 });
+      for (const k of Object.keys(c) as (keyof FunnelCounts)[]) c[k] += r.counts[k];
+    }
+    for (const [d, k] of [[1, "long"], [-1, "short"]] as const) g3[k] = addGates(g3[k], gateCountsByVariant(c3.filter((c) => c.dir === d), P3K3_GATE_STEPS));
+    roomNoProfile += c3.filter((c) => c.v2.ma && c.v2.opens && c.v2.screens && c.v2.earnings && c.v2.rr && c.v2.optimal && !c.room.hasProfile).length;
+    for (const p of P3K3_RUNS) {
+      const r = simulateFunnelSymbol(input, c3, p, "stop", ctx, p3k3SimOptions(p));
+      trades.push(...r.trades);
+      const c = (counts[`${p} / stop`] ??= { candidates: 0, filled: 0, notFilled: 0, skippedOverlap: 0, sizeSkip: 0, noControl: 0 });
+      for (const k of Object.keys(c) as (keyof FunnelCounts)[]) c[k] += r.counts[k];
+    }
+    const dates = bars.map((b) => barDateOf(b) ?? "");
+    const evB = eventBeforeIndices(dates, ctx.events);
+    const mem = c3.filter((c) => p3k3Member.p3k3(c));
+    const bySetup = new Map(mem.map((c) => [c.setup, c]));
+    for (const id of ["both 11%", "both 23%"] as const)
+      fudge23[id].push(...sweepSymbol(bars, mem.map((c) => c.setup), FUDGE_VARIANTS.find((v) => v.id === id)!, { baseRisk: (s) => 200 * bySetup.get(s)!.sizeV2, extras: (f) => extrasFor(f, dates, evB, input.earnings).extra }));
     for (const [p, a] of P3K_RUNS) {
       const r = simulateFunnelSymbol(input, cands, p, a, ctx, p3kSimOptions(p));
       trades.push(...r.trades);
@@ -135,12 +172,19 @@ async function main() {
     if ((n + 1) % 200 === 0) console.log(`[aligned] ${n + 1}/${symbols.length} symbols, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }
   // Verdicts on the P3-0k populations only, so the descriptive watch trades can't move the held-out cut
-  const results = evaluateFunnel(trades.filter((t) => t.population.startsWith("p3k")), P3K_COMPARISONS);
+  const results = evaluateFunnel(trades.filter((t) => P3K_POPS.has(t.population)), P3K_COMPARISONS);
+  // Verdicts on the P3-0k3 runs only (the calendar inside / U-turn comparison can't move the cut)
+  const P3K3_POPS = new Set<string>(P3K3_RUNS);
+  const results3 = evaluateFunnel(trades.filter((t) => P3K3_POPS.has(t.population)), P3K3_COMPARISONS);
+  const g0 = { long: gateCountsByVariant(all.filter((c) => c.dir === 1), P3K_GATE_STEPS), short: gateCountsByVariant(all.filter((c) => c.dir === -1), P3K_GATE_STEPS) };
+  const held23 = heldOutFrom(fudge23["both 11%"].map((o) => o.scanId));
+  const fudgeLines = sweepTable("P3-0k3 fudge (descriptive): 11% vs 23% on entry and stop", (["both 11%", "both 23%"] as const).map((id) => sweepRow(id, fudge23[id], held23)), held23);
   const gates = { long: gateCounts(all.filter((c) => c.dir === 1)), short: gateCounts(all.filter((c) => c.dir === -1)) };
   console.log(
     `P3-0k aligned: triggers ${gates.long.triggers} long / ${gates.short.triggers} short; pass every gate ${gates.long.optimal} / ${gates.short.optimal}; ${trades.length} simulated trades; ` +
       results.map((r) => `${r.id} ${r.verdict}`).join(", "),
   );
+  console.log(`P3-0k3 aligned v2 (provisional): ${results3.map((r) => `${r.id} ${r.verdict}`).join(", ")}`);
   if (dryRun) return;
 
   const date = now.toISOString().slice(0, 10);
@@ -152,11 +196,20 @@ async function main() {
     alignedMarkdownReport(results, trades, {
       date, commit, symbols: used, sessions: sessionList.length, gates, counts, passing: all.filter((c) => p3kMember.p3k(c)),
       alignFrom: sessionList.find((d) => align.get(BENCHMARK_SYMBOL)?.get(d)?.complete) ?? null,
-    }) + "\n\n" + watchVolumeLines(trades, spikeCount, groupMetrics).join("\n"),
+    }) +
+      "\n\n" + [...gateTable("P3-0k long (rolling-trigger check)", g0.long), ...gateTable("P3-0k short (rolling-trigger check)", g0.short)].join("\n") +
+      "\n\n" + p3k3Lines(results3, trades, { long: g3.long ?? [], short: g3.short ?? [] }, { fudge23: fudgeLines, roomNoProfile }).join("\n") +
+      "\n\n" + watchVolumeLines(trades, spikeCount, groupMetrics).join("\n"),
   );
   writeFileSync(`scripts/output/aligned-backfill-${date}-trades.csv`, alignedTradesCsv(trades));
   const md = readFileSync(LOG_PATH, "utf8");
-  appendFileSync(LOG_PATH, (md.endsWith("\n") ? "" : "\n") + alignedExperimentRow(results, { number: lastExperimentNumber(md) + 1, date, commit, reportPath, trades: trades.length }) + "\n");
+  const n0 = lastExperimentNumber(md) + 1;
+  appendFileSync(
+    LOG_PATH,
+    (md.endsWith("\n") ? "" : "\n") +
+      alignedExperimentRow(results, { number: n0, date, commit, reportPath, trades: trades.length }) + "\n" +
+      p3k3ExperimentRow(results3, { number: n0 + 1, date, commit, reportPath, trades: trades.length }) + "\n",
+  );
   console.log(`Report: ${reportPath}\nAppended experiment row to ${LOG_PATH}`);
 }
 

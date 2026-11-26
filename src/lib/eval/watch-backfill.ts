@@ -68,7 +68,7 @@ export function watchVolumeLines(trades: readonly import("./funnel-sim").FunnelT
   return [
     `## Watchlist backfill (P3-0l, descriptive): volume spike → STP trigger within ${WATCH_SESSIONS} sessions`,
     "",
-    `${spikes} volume spikes (volume ≥ ${SPIKE_RATIO} × the prior ${SPIKE_LOOKBACK}-session average; direction from the day's close). A trigger in the spike's direction 0–${WATCH_SESSIONS} sessions later, any STP type (calendar or rolling); no Finviz, alignment or opens gate; P3-0k layer sizing; exit B with the event and earnings rules; stop entry; after-trigger control. Not pre-registered.`,
+    `${spikes} volume spikes (volume ≥ ${SPIKE_RATIO} × the prior ${SPIKE_LOOKBACK}-session average; direction from the day's close). A trigger in the spike's direction 0–${WATCH_SESSIONS} sessions later: rolling inside or U-turn, or mech1 / mech2 (as live watch_entry_ready; calendar inside / U-turn and EGOP don't count); no Finviz, alignment or opens gate; P3-0k layer sizing; exit B with the event and earnings rules; stop entry; after-trigger control. Not pre-registered.`,
     "",
     "| group | trades | net exp R | win | reached 3R | controls | control exp R |",
     "|---|---|---|---|---|---|---|",

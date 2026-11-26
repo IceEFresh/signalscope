@@ -10,7 +10,7 @@ import { outOfHoursWithin } from "@/lib/harvester/macro-calendar";
 import { atrSeries, type Dir, type Setup } from "./stp-sim";
 import { earningsWithin, LEVEL_SWING_K, RR_MIN, riskReward, type EntryArm } from "./funnel";
 import { alignmentAt, forDir, marketAlignment, optimalEntry, p3kLayerSize, p3kSize, type Alignment, type AlignState } from "./aligned";
-import type { Candidate, Comparison, FunnelContext, FunnelTrade, Population, SymbolInput } from "./funnel-sim";
+import type { Candidate, Comparison, FunnelContext, FunnelTrade, SymbolInput } from "./funnel-sim";
 
 /** STP patterns P3-0k trades: inside, U-turns (butn/brutn), mech1, mech2. EGOP is descriptive from P3-0k on. */
 export const P3K_TYPES = new Set(["inside", "butn", "brutn", "mech1", "mech2"]);
@@ -53,7 +53,14 @@ export function layerStates(layers: LayerSeries, date: string, dir: Dir): { indu
  * Every P3-0k-type STP trigger for one symbol (calendar and rolling; when both fire the same
  * day and direction, the calendar one is kept), with its gates.
  */
-export function p3kCandidates(input: SymbolInput, layers: LayerSeries, ctx: FunnelContext, types: ReadonlySet<string> = P3K_TYPES): P3kCandidate[] {
+export function p3kCandidates(
+  input: SymbolInput,
+  layers: LayerSeries,
+  ctx: FunnelContext,
+  types: ReadonlySet<string> = P3K_TYPES,
+  /** P3-0k3: which (setup, variant) pairs to take; default all of `types`, calendar kept on a same-day tie. */
+  select: (s: Setup, variant: "calendar" | "rolling") => boolean = () => true,
+): P3kCandidate[] {
   const { bars, scanned, pivots, earnings, symbol } = input;
   const closes = bars.map((b) => b.close);
   const atr = atrSeries(bars);
@@ -62,7 +69,7 @@ export function p3kCandidates(input: SymbolInput, layers: LayerSeries, ctx: Funn
   for (const [list, v] of [[scanned.setups, "calendar"], [scanned.rollingSetups, "rolling"]] as const)
     for (const s of list) {
       const key = `${s.i}|${s.dir}`;
-      if (!types.has(s.type) || seen.has(key)) continue;
+      if (!types.has(s.type) || !select(s, v) || seen.has(key)) continue;
       seen.add(key);
       setups.push([s, v]);
     }
@@ -100,8 +107,9 @@ export function p3kCandidates(input: SymbolInput, layers: LayerSeries, ctx: Funn
 }
 
 const base = (c: P3kCandidate) => c.p3k.finviz && c.p3k.earnings && c.p3k.rr;
+export type P3kPopulation = "p3k" | "p3k_all" | "p3k_noopt" | "p3k_opens" | "p3k_mas";
 /** Membership per P3-0k population. */
-export const p3kMember: Record<Extract<Population, `p3k${string}`>, (c: P3kCandidate) => boolean> = {
+export const p3kMember: Record<P3kPopulation, (c: P3kCandidate) => boolean> = {
   p3k_all: () => true,
   p3k: (c) => base(c) && c.p3k.aligned && c.p3k.optimal,
   p3k_noopt: (c) => base(c) && c.p3k.aligned,
@@ -112,7 +120,7 @@ export const p3kMember: Record<Extract<Population, `p3k${string}`>, (c: P3kCandi
 export const p3kCandidateSize = (c: P3kCandidate) => p3kSize([c.industry, c.sector, c.market], c.eventHalf);
 
 /** Population × arm runs: the primary p3k on both arms, every other population on the stop entry. */
-export const P3K_RUNS: ReadonlyArray<[Extract<Population, `p3k${string}`>, EntryArm]> = [
+export const P3K_RUNS: ReadonlyArray<[P3kPopulation, EntryArm]> = [
   ["p3k_all", "stop"],
   ["p3k", "stop"],
   ["p3k", "pullback"],
@@ -122,7 +130,7 @@ export const P3K_RUNS: ReadonlyArray<[Extract<Population, `p3k${string}`>, Entry
 ];
 
 /** Options for simulateFunnelSymbol: membership, the P3-0k size, and the trade tags. */
-export function p3kSimOptions(population: Extract<Population, `p3k${string}`>) {
+export function p3kSimOptions(population: P3kPopulation) {
   return {
     member: (c: Candidate) => p3kMember[population](c as P3kCandidate),
     size: (c: Candidate) => p3kCandidateSize(c as P3kCandidate),

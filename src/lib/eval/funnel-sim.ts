@@ -63,7 +63,8 @@ import {
 } from "./funnel";
 
 /** P3-0j3: top5_noair is the descriptive ranking with open_air candidates left out. P3-0k populations start with "p3k". */
-export type Population = "all" | "funnel" | "top5" | "top3" | "top5_noair" | "p3k" | "p3k_all" | "p3k_noopt" | "p3k_opens" | "p3k_mas" | "watch_volume" | "watch_volume_any";
+export type Population = "all" | "funnel" | "top5" | "top3" | "top5_noair" | "p3k" | "p3k_all" | "p3k_noopt" | "p3k_opens" | "p3k_mas" | "watch_volume" | "watch_volume_any"
+  | "p3k3" | "p3k3_all" | "p3k3_base" | "p3k3_slope" | "p3k3_noroom" | "p3k3_room75" | "p3k3_build" | "p3k3_cal_iu";
 
 export interface SymbolInput {
   symbol: string;
@@ -169,6 +170,15 @@ export interface FunnelTrade extends Trade {
   alignSector?: string | null;
   alignMarket?: string | null;
   setupVariant?: "calendar" | "rolling";
+  /** P3-0k3 descriptive tags. */
+  p3k3Screens?: string;
+  maOrder?: string | null;
+  monthlyR20Green?: boolean;
+  roomPass?: boolean;
+  roomLeft?: number | null;
+  rallyUsedV2?: number | null;
+  p3k3LayerSize?: number;
+  industryV2?: string | null;
 }
 
 function entryFor(arm: EntryArm, bars: readonly DailyBar[], i: number, dir: Dir, entry: number, stop: number, fudge: number): EntryOutcome {
@@ -239,7 +249,13 @@ export function simulateFunnelSymbol(
   population: Population,
   arm: EntryArm,
   ctx: FunnelContext,
-  opts: { member?: (c: Candidate) => boolean; size?: (c: Candidate) => number; tag?: (c: Candidate) => Partial<FunnelTrade> } = {},
+  opts: {
+    member?: (c: Candidate) => boolean;
+    size?: (c: Candidate) => number;
+    tag?: (c: Candidate) => Partial<FunnelTrade>;
+    /** P3-0k3: a per-trade add-quantity rule (the "build to layer size" variant), given the initial shares and the R unit. */
+    addQty?: (c: Candidate, initialShares: number, risk: number) => ExitExtras["addQty"];
+  } = {},
 ): { trades: FunnelTrade[]; counts: FunnelCounts } {
   const { bars, scanned, pyramid, earnings, symbol } = input;
   const closes = bars.map((b) => b.close);
@@ -272,7 +288,9 @@ export function simulateFunnelSymbol(
     }
     counts.filled++;
     const f = s.i + 1;
-    const { extra, e: earnSession } = extrasFor(f, dates, eventBefore, earnings);
+    const { extra: extra0, e: earnSession } = extrasFor(f, dates, eventBefore, earnings);
+    const addQty = opts.addQty?.(c, initialShares(baseRisk, e.risk), e.risk);
+    const extra = addQty ? { ...extra0, addQty } : extra0;
     const x = simulateExit(bars, closes, atr, f, s.dir, e.fill, e.risk, s.stop, s.fudge, s.type, "B", baseRisk, extra);
     openUntil = x.exitIndex;
     const control = funnelControl(c, bars, closes, atr, dates, scanned.info, arm, baseRisk, eventBefore, earnings);

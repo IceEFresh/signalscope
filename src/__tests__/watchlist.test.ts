@@ -104,8 +104,9 @@ describe("watch_entry_ready", () => {
   })();
   const last = bars[bars.length - 1];
   const barDate = new Date(last.time! * 1000).toISOString().slice(0, 10);
-  const stp = (trigger: 1 | -1, entry: number, stop: number) =>
-    ({ barDate, trigger, triggerType: "inside", entry, stop, htfOpens: 1, maState: 1, firedRules: [], fudge: 0.2 }) as unknown as StpResult;
+  // A valid entry trigger is rolling inside / U-turn or mech1 / mech2; calendar inside and EGOP never count
+  const stp = (trigger: 1 | -1, entry: number, stop: number, triggerType = "mech1") =>
+    ({ barDate, trigger, triggerType, entry, stop, htfOpens: 1, maState: 1, firedRules: [], fudge: 0.2 }) as unknown as StpResult;
   const watched = (dir: "bullish" | "bearish" | null) => ({ watch_sources: "volume", watch_first_seen: "2025-10-01", watch_direction: dir, directional: dir != null });
   const keys = (s: StpResult | undefined, w?: ReturnType<typeof watched>) => liveStpKeys(bars, s, { assetClass: "stock", events: [], watch: w });
 
@@ -121,6 +122,40 @@ describe("watch_entry_ready", () => {
     expect(keys(stp(1, last.high + 0.2, last.low - 0.2), watched(null))).toMatchObject({ watch_entry_ready: true, watch_direction: "bullish", watch_direction_source: "trigger" });
     expect(keys(stp(1, last.high + 0.2, last.low - 0.2), watched("bullish")).watch_size).toBe(0.25); // three unknown layers
     for (const k of LIVE_WATCH_KEYS) expect(isLiveStpKey(k)).toBe(true);
+  });
+});
+
+describe("entry triggers: rolling inside / U-turn, mech1, mech2 only", () => {
+  const bars: DailyBar[] = (() => {
+    let t = Date.UTC(2025, 0, 6, 14, 30) / 1000;
+    return Array.from({ length: 210 }, (_, k) => {
+      while ([0, 6].includes(new Date(t * 1000).getUTCDay())) t += 86_400;
+      const c = 100 + k;
+      const b = { open: c - 1, high: c + 0.5, low: c - 1.5, close: c, volume: 3e6, time: t };
+      t += 86_400;
+      return b;
+    });
+  })();
+  const last = bars[bars.length - 1];
+  const barDate = new Date(last.time! * 1000).toISOString().slice(0, 10);
+  const stp = (triggerType: string) =>
+    ({ barDate, trigger: 1, triggerType, entry: last.high + 0.2, stop: last.low - 0.2, htfOpens: 1, maState: 1, firedRules: [`${triggerType}+`], fudge: 0.2 }) as unknown as StpResult;
+  const keys = (s: StpResult, watch: Record<string, unknown>) => liveStpKeys(bars, s, { assetClass: "stock", events: [], watch: watch as never });
+  const directional = { watch_sources: "insider", watch_first_seen: "2025-10-01", watch_direction: "bullish", directional: true };
+  const directionless = { watch_sources: "reddit", watch_first_seen: "2025-10-01", watch_direction: null, directional: false };
+  for (const type of ["egop", "inside", "butn"]) {
+    it(`an ${type}-only calendar trigger never sets watch_entry_ready or p3k3_candidate`, () => {
+      for (const w of [directional, directionless]) {
+        const k = keys(stp(type), w);
+        expect(k.watch_entry_ready).toBe(false);
+        expect(k.p3k3_candidate).not.toBe(true);
+      }
+      expect(keys(stp(type), directionless).watch_direction).toBeNull();
+    });
+  }
+  it("a calendar mech1 trigger does (the rolling path is covered by the P3-0k3 trigger-set tests)", () => {
+    expect(keys(stp("mech1"), directional).watch_entry_ready).toBe(true);
+    expect(keys(stp("mech2"), directionless)).toMatchObject({ watch_entry_ready: true, watch_direction: "bullish", watch_direction_source: "trigger" });
   });
 });
 
@@ -171,8 +206,9 @@ describe("P3-0l2: directionless sources take the trigger's direction", () => {
   })();
   const last = bars[bars.length - 1];
   const barDate = new Date(last.time! * 1000).toISOString().slice(0, 10);
-  const stp = (trigger: 1 | -1, entry: number, stop: number) =>
-    ({ barDate, trigger, triggerType: "inside", entry, stop, htfOpens: 1, maState: 1, firedRules: [], fudge: 0.2 }) as unknown as StpResult;
+  // A valid entry trigger is rolling inside / U-turn or mech1 / mech2; calendar inside and EGOP never count
+  const stp = (trigger: 1 | -1, entry: number, stop: number, triggerType = "mech1") =>
+    ({ barDate, trigger, triggerType, entry, stop, htfOpens: 1, maState: 1, firedRules: [], fudge: 0.2 }) as unknown as StpResult;
   const social = { watch_sources: "reddit", watch_first_seen: "2025-10-01", watch_direction: null, directional: false };
   const keys = (s: StpResult | undefined, w: typeof social | Record<string, unknown>) => liveStpKeys(bars, s, { assetClass: "stock", events: [], watch: w as never });
 
