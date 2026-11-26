@@ -11,6 +11,9 @@ import { applyFunnelRanks, liveStpKeys } from "../src/lib/harvester/universe/stp
 import { calendarExpiry, macroCalendar } from "../src/lib/harvester/macro-calendar.js";
 import { barStoreLine, swingHistory, updateBarStore } from "../src/lib/harvester/universe/bar-store.js";
 import { barDateOf } from "../src/lib/harvester/universe/backfill.js";
+import { etParts } from "../src/lib/harvester/universe/bar-metrics.js";
+import { parseWatchStore, updateWatchStore, watchHits, watchKeys, watchRunLine, type WatchStore } from "../src/lib/harvester/watchlist.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { alignmentSeries, type Alignment } from "../src/lib/eval/aligned.js";
 import { fsBarStoreIO } from "../src/lib/harvester/universe/bar-store-fs.js";
 import { PYRAMID_SECTOR_MIN_SHARE, pyramidCoverage, pyramidCoverageLine } from "../src/lib/health/harvest-health.js";
@@ -29,7 +32,6 @@ import {
   prepareHarvest,
   universeUrlFrom,
 } from "../src/lib/harvester/universe/harvest-prep.js";
-import { writeFileSync } from "fs";
 
 const ENDPOINT_URL = process.env.HARVEST_ENDPOINT_URL;
 const API_KEY = process.env.HARVEST_API_KEY;
@@ -162,8 +164,34 @@ async function main() {
     if (!res?.ok) continue;
     liveAlign.set(etf, alignmentSeries(swingHistory(storeHistories.get(etf), parseChartBars(res.json)), barDateOf));
   }
+  // P3-0l: smart-money watchlist (log only): today's hits from the harvested signals, kept for 10 sessions
+  const today = etParts(new Date()).date;
+  const WATCH_FILE = process.env.WATCHLIST_FILE || "data/watchlist/watchlist.json";
+  let watch: WatchStore = parseWatchStore(null);
+  try {
+    const moves = new Map<string, number | null>();
+    for (const sym of new Set(signals.filter((x) => x.source === "VOLUME_SPIKE").map((x) => x.symbol))) {
+      const p = peekDailyChart(sym);
+      const res = p ? await p.catch(() => null) : null;
+      const b = res?.ok ? parseChartBars(res.json) : [];
+      moves.set(sym, b.length >= 2 ? b[b.length - 1].close - b[b.length - 2].close : null);
+    }
+    const hits = watchHits(signals, (sym) => moves.get(sym) ?? null);
+    const prev = existsSync(WATCH_FILE) ? parseWatchStore(JSON.parse(readFileSync(WATCH_FILE, "utf8"))) : null;
+    watch = updateWatchStore(prev, hits, today);
+    mkdirSync(WATCH_FILE.replace(/\/[^/]+$/, ""), { recursive: true });
+    writeFileSync(WATCH_FILE, JSON.stringify(watch));
+    console.log(watchRunLine(hits, watch));
+  } catch (err) {
+    console.warn(`[watch] watchlist update failed, watch keys are null this run: ${err instanceof Error ? err.message : err}`);
+  }
   const liveKeys = (s: string, bars: Parameters<typeof liveStpKeys>[0], r: Parameters<typeof liveStpKeys>[1]) =>
-    liveStpKeys(bars, r, { ...liveContextFor(s, prep.profiles, liveEtfStates), history: storeHistories.get(s), alignLayers: alignLayersFor(s, prep.profiles, liveAlign) });
+    liveStpKeys(bars, r, {
+      ...liveContextFor(s, prep.profiles, liveEtfStates),
+      history: storeHistories.get(s),
+      alignLayers: alignLayersFor(s, prep.profiles, liveAlign),
+      watch: watchKeys(watch.entries[s.toUpperCase()], today),
+    });
   const snapshot = await computeSnapshotRows(prep.scanSymbols, stp, undefined, { profiles: prep.profiles, rotation: sectorRotation }, liveKeys);
   // The same keys on the signal tickers' features (no new requests: their charts are cached)
   let liveTickers = 0;

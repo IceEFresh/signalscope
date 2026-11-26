@@ -67,6 +67,8 @@ services:
     # P3-0i2b: persistent daily-bar store for the live swing keys (seed once with scripts/seed-bar-store.ts)
     volumes:
       - ./data/bar-store:/app/data/bar-store
+      # P3-0l: the smart-money watchlist (10 sessions per ticker; log only)
+      - ./data/watchlist:/app/data/watchlist
     depends_on:
       - web
     profiles:

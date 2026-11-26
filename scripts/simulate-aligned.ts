@@ -34,6 +34,11 @@ import { alignmentSeries, type Alignment } from "@/lib/eval/aligned";
 import { evaluateFunnel, simulateFunnelSymbol, type FunnelContext, type FunnelCounts, type FunnelTrade, type SymbolInput } from "@/lib/eval/funnel-sim";
 import { gateCounts, P3K_COMPARISONS, P3K_RUNS, p3kCandidates, p3kMember, p3kSimOptions, type P3kCandidate } from "@/lib/eval/aligned-sim";
 import { alignedExperimentRow, alignedMarkdownReport, alignedTradesCsv } from "@/lib/eval/aligned-report";
+import { volumeSpikes, watchMember, watchVolumeLines } from "@/lib/eval/watch-backfill";
+import { groupMetrics } from "@/lib/eval/stp-sim";
+
+/** P3-0l: the watch backfill takes any STP type (EGOP included), calendar or rolling. */
+const ALL_STP_TYPES = new Set(["inside", "butn", "brutn", "mech1", "mech2", "egop"]);
 
 const BARS_DIR = "scripts/output/backfill-bars";
 const ETF_DIR = "scripts/output/backfill-etf-bars";
@@ -82,6 +87,7 @@ async function main() {
   const all: P3kCandidate[] = [];
   const t0 = Date.now();
   let used = 0;
+  let spikeCount = 0;
   for (const [n, symbol] of symbols.entries()) {
     let bars: DailyBar[];
     try {
@@ -104,7 +110,21 @@ async function main() {
       pyramid: { market: [null, null, null], sector: null, industry: null },
       earnings: efJson ? earningsSessionsFromFile(efJson) : undefined,
     };
-    const cands = p3kCandidates(input, { industry: industryEtf ? align.get(industryEtf) ?? null : null, sector: sectorEtf ? align.get(sectorEtf) ?? null : null, market: MARKET_ETFS.map((e) => align.get(e) ?? null) }, ctx);
+    const layers = { industry: industryEtf ? align.get(industryEtf) ?? null : null, sector: sectorEtf ? align.get(sectorEtf) ?? null : null, market: MARKET_ETFS.map((e) => align.get(e) ?? null) };
+    const cands = p3kCandidates(input, layers, ctx);
+    // P3-0l descriptive: volume spike → STP trigger within 10 sessions
+    const spikes = volumeSpikes(bars).filter((s) => sessions.has(barDateOf(bars[s.i]) ?? ""));
+    spikeCount += spikes.length;
+    if (spikes.length) {
+      const wc = p3kCandidates(input, layers, ctx, ALL_STP_TYPES);
+      for (const p of ["watch_volume", "watch_volume_any"] as const) {
+        const base = p3kSimOptions("p3k");
+        const r = simulateFunnelSymbol(input, wc, p, "stop", ctx, { ...base, member: watchMember(p, spikes) });
+        trades.push(...r.trades);
+        const c = (counts[`${p} / stop`] ??= { candidates: 0, filled: 0, notFilled: 0, skippedOverlap: 0, sizeSkip: 0, noControl: 0 });
+        for (const k of Object.keys(c) as (keyof FunnelCounts)[]) c[k] += r.counts[k];
+      }
+    }
     all.push(...cands);
     for (const [p, a] of P3K_RUNS) {
       const r = simulateFunnelSymbol(input, cands, p, a, ctx, p3kSimOptions(p));
@@ -114,7 +134,8 @@ async function main() {
     }
     if ((n + 1) % 200 === 0) console.log(`[aligned] ${n + 1}/${symbols.length} symbols, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }
-  const results = evaluateFunnel(trades, P3K_COMPARISONS);
+  // Verdicts on the P3-0k populations only, so the descriptive watch trades can't move the held-out cut
+  const results = evaluateFunnel(trades.filter((t) => t.population.startsWith("p3k")), P3K_COMPARISONS);
   const gates = { long: gateCounts(all.filter((c) => c.dir === 1)), short: gateCounts(all.filter((c) => c.dir === -1)) };
   console.log(
     `P3-0k aligned: triggers ${gates.long.triggers} long / ${gates.short.triggers} short; pass every gate ${gates.long.optimal} / ${gates.short.optimal}; ${trades.length} simulated trades; ` +
@@ -131,7 +152,7 @@ async function main() {
     alignedMarkdownReport(results, trades, {
       date, commit, symbols: used, sessions: sessionList.length, gates, counts, passing: all.filter((c) => p3kMember.p3k(c)),
       alignFrom: sessionList.find((d) => align.get(BENCHMARK_SYMBOL)?.get(d)?.complete) ?? null,
-    }),
+    }) + "\n\n" + watchVolumeLines(trades, spikeCount, groupMetrics).join("\n"),
   );
   writeFileSync(`scripts/output/aligned-backfill-${date}-trades.csv`, alignedTradesCsv(trades));
   const md = readFileSync(LOG_PATH, "utf8");

@@ -40,7 +40,9 @@ export function isLiveStpKey(key: string): boolean {
     // P3-0j funnel keys (log only, not pre-registered as candidates)
     /^(funnel_pass|funnel_rank|gate_finviz|gate_earnings5|gate_rr|event_half|event_today_inhours|rr|rr_level|open_air|countertrend|next_event|next_event_days)$/.test(key) ||
     // P3-0k aligned-trend keys (log only)
-    /^(align_(stock|industry|sector|market)|optimal_entry|p3k_candidate|p3k_size_long|p3k_size_short)$/.test(key)
+    /^(align_(stock|industry|sector|market)|optimal_entry|p3k_candidate|p3k_size_long|p3k_size_short)$/.test(key) ||
+    // P3-0l watchlist keys (log only)
+    /^watch_(sources|first_seen|direction|entry_ready|size)$/.test(key)
   );
 }
 
