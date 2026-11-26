@@ -52,7 +52,9 @@ export function isLiveStpKey(key: string): boolean {
     /^si_(shares|pct_float|days_to_cover|change_pct|high|settlement)$/.test(key) ||
     /^sv_(ratio|ratio_20d|z)$/.test(key) ||
     // P3-0p House Clerk PTR keys (log only)
-    /^cong_(buy_n_30d|buy_amt_mid_30d|sell_n_30d|members_30d)$/.test(key)
+    /^cong_(buy_n_30d|buy_amt_mid_30d|sell_n_30d|members_30d)$/.test(key) ||
+    // P3-0q ApeWisdom keys (log only)
+    /^aw_(mentions|mentions_24h_ago|rank|spike|wsb_mentions)$/.test(key)
   );
 }
 

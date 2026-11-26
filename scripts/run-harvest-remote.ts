@@ -8,6 +8,7 @@ import { EdgarEarningsClient, edgarGetter, normTicker, parseTickerMap, TICKER_MA
 import { finraGetter } from "../src/lib/harvester/finra.js";
 import { finraLive, form4Live, form4LiveLine } from "../src/lib/harvester/history-live.js";
 import { fsFinraCache, fsForm4Cache, fsHouseCache, readFloats } from "../src/lib/harvester/history-fs.js";
+import { awGetter, awLine, awLive, awRowFeatures, awSpikes, type AwLive } from "../src/lib/harvester/apewisdom.js";
 import {
   congressCoverageLine,
   congressFeaturesAt,
@@ -200,6 +201,14 @@ async function main() {
   } catch (err) {
     console.warn(`[house-ptr] failed, congress hits fall back to Capitol Trades and cong_* keys are missing: ${err instanceof Error ? err.message : err}`);
   }
+  // P3-0q: Reddit mentions from ApeWisdom (log only); its spikes are the P3-0l Reddit hits, with the
+  // Reddit scraper as the fallback when all-stocks fails.
+  let aw: AwLive | null = null;
+  try {
+    aw = await awLive(awGetter());
+  } catch (err) {
+    console.warn(`[apewisdom] failed, Reddit hits fall back to the scraper: ${err instanceof Error ? err.message : err}`);
+  }
   const WATCH_FILE = process.env.WATCHLIST_FILE || "data/watchlist/watchlist.json";
   let watch: WatchStore = parseWatchStore(null);
   let hits: ReturnType<typeof watchHits> = [];
@@ -214,6 +223,12 @@ async function main() {
       moves.set(sym, b.length >= 2 ? b[b.length - 1].close - b[b.length - 2].close : null);
     }
     hits = watchHits(signals, (sym) => moves.get(sym) ?? null);
+    if (aw) {
+      const spikes = awSpikes(aw);
+      const { line, warn } = awLine(aw, spikes, new Set(signals.filter((x) => x.source === "REDDIT").map((x) => x.symbol.toUpperCase())));
+      (warn ? console.warn : console.log)(line);
+      if (aw.stocks) hits = [...hits.filter((h) => h.source !== "reddit"), ...[...spikes].map((symbol) => ({ symbol, source: "reddit" as const, direction: null }))];
+    }
     if (houseEvents) {
       const sale = /\b(sell|sells|sold|sale)\b/i;
       const capitol = new Set(signals.filter((x) => x.source === "CONGRESS" && !sale.test(x.title ?? "")).map((x) => x.symbol.toUpperCase()));
@@ -345,6 +360,10 @@ async function main() {
     } catch (err) {
       console.warn(`[finra] live keys failed, si_*/sv_* keys are missing this run: ${err instanceof Error ? err.message : err}`);
     }
+    if (aw) {
+      const a = aw;
+      add(Object.fromEntries(rows.map((r) => [r.symbol, awRowFeatures(a, r.symbol)])));
+    }
     if (houseEvents) {
       const ev = houseEvents;
       add(Object.fromEntries(rows.map((r) => [r.symbol, { ...congressFeaturesAt(ev, r.symbol, r.sessionDate) }])));
@@ -359,6 +378,10 @@ async function main() {
     return r.ok ? r.json : null;
   });
   if (prep.cryptoSymbols.length) console.log(`[snapshot] crypto: ${cryptoSnapshot.rows.length} rows built, ${cryptoSnapshot.missing} without a chart`);
+  if (aw?.crypto) {
+    const a = aw;
+    cryptoSnapshot.rows = cryptoSnapshot.rows.map((r) => ({ ...r, features: { ...r.features, ...awRowFeatures(a, r.symbol, true) } }));
+  }
 
   // 1f. Option-chain features for signal symbols (PLAN.md 1h, log only)
   const optionSymbols = Object.keys(extras.barMetrics).filter((s) => signals.some((sig) => sig.symbol === s));

@@ -14,7 +14,9 @@
  *   hit when the row's opt_unusual_n ≥ 1 (options-ext features), same direction rule. Unreliable:
  *   the side (bought or sold) is unknown;
  * - volume: the spike day's close vs the prior close;
- * - reddit, stocktwits, x: the harvester sees posts before any sentiment scoring → null;
+ * - reddit, stocktwits, x: the harvester sees posts before any sentiment scoring → null.
+ *   P3-0q: Reddit hits come from ApeWisdom's aw_spike (all-stocks); the Reddit scraper's are the
+ *   fallback when ApeWisdom fails;
  * - polymarket: no direction → null.
  */
 import type { RawSignal, Source } from "./types";

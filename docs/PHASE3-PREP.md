@@ -973,6 +973,20 @@ The P3-0l Reddit hit uses `aw_spike`, and the existing Reddit scraper becomes th
 
 **Tests:** a fixture response, the spike rule at its edge, pagination, a rate-limit backoff, and missing gives null.
 
+**As built (P3-0q PR):**
+- **Access check (2026-11-26):** the free endpoint needs no key. `all-stocks` returned 847 tickers over 9 pages, `wallstreetbets` 669 over 7, and `all-crypto` 146 over 2. No rate-limit headers are sent. Requests are paced at 1 per second, and 429s and 5xx responses back off with the shared retry.
+- **Null 24 h-ago counts:** `mentions_24h_ago` is null for tickers that weren't ranked a day earlier (147 of 847). The key stays null, but the spike rule counts it as 0, so a new name with 20 or more mentions is a spike.
+- **Missing values:**
+  - a ticker not on the list gets null `aw_*` keys;
+  - a failed filter leaves the keys off the rows;
+  - a later page that fails keeps the pages already read.
+- **Rows:**
+  - stock rows read `all-stocks`, plus an extra key, `aw_wsb_mentions`, from r/wallstreetbets;
+  - crypto rows read `all-crypto` (BTC.X → BTC-USD);
+  - share classes are dashed.
+- **P3-0l Reddit hits:** `aw_spike` tickers from `all-stocks`, with no direction (as before). The Reddit scraper's hits are used only when `all-stocks` fails. The scraper's `REDDIT` signals are unchanged.
+- **Health line:** `[apewisdom] all-stocks n (pages), wallstreetbets …, all-crypto …; spikes s; Reddit scraper tickers r, both k`. It warns when a filter fails.
+
 ## P3-0n: free history backfills for insider buys and short interest (Chris, 2026-11-25)
 **Why:** insider buys and short interest are live-only today, so the smart-money track (P3-0l) and screens F18/F19 can't be tested for 6 months. These are free official sources with history.
 
