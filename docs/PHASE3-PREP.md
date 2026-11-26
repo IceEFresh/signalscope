@@ -709,6 +709,55 @@ Same KEEP rule.
 - crypto at 7 / 30;
 - look-ahead.
 
+## P3-0k4: moves, not legs. Replaces the P3-0k3 room gate (Chris, 2026-11-26)
+
+**Why:** the k = 2 ATR zigzag pivots at every pause, so its median (about 3.6 ATR) is one push, not a move. 3R from an STP entry (about 3.6–4.5 ATR) is larger than one push, which is why the P3-0k3 room gate passed 3 longs and 1 short. Chris: "the rallies will have a push and a pause several times through a 'move'. Ideally we are finding a pause in the move once it's started and optimal entry is during a pullback (BUTN, mechanical) or a contraction in volatility (inside day)." **Set after the second P3-0k3 run (#100), so everything here is provisional.**
+
+**Move detector** (per stock, long; shorts mirrored; bars ≤ D only). One move active at a time; start signals during an active move are ignored.
+- **Start**, the first of:
+  1. **swing low:** a confirmed k = 2 swing low above the previous confirmed swing low (start date = the swing low's bar, known from its confirmation bar on);
+  2. **U-turn:** a rolling or calendar butn trigger (start = trigger bar);
+  3. **range breakout:** close > the highest high of the prior 20 sessions, where that 20-session range (max high − min low) ≤ 3 × ATR14, **and** the stock passes F25 (New 20-Day High) or F22 (20 Day Breakout 75% Volume) that day (Chris, 2026-11-26: "the finviz 20-day high scan is a good filter for breakouts").
+- **Move low** = the lowest low from the start bar back to the last confirmed swing high (for a breakout, the range low). Gains are measured from it.
+- **End**, the first of (end date = the bar the end is known):
+  1. **bearish U-turn on volume:** a brutn trigger (rolling or calendar) whose bar volume > its 20-session average volume (Chris, 2026-11-26: "reversal candle on higher than average volume");
+  2. **mX / pmX broken:** when the mX rule (close crosses below sma20, or sma10 crosses below sma20) or the pmX rule (trendDirection[t−1] ≥ 1 and close crosses below sma10) fires on bar t, it arms level low[t] − fudge(t) (`trailCandidate`, same rules). The move ends on the first later close below the armed level. A newer signal replaces the level; a close at a new move high disarms it. Reviewer's reading of "pmX or mX would also likely signal the end": the signal sets the stop, breaking it ends the move, the way it works in a trade.
+  3. **structure:** a lower confirmed swing high followed by a close below the last confirmed swing low;
+  4. **failed breakout:** for a range-breakout start, a close back below the range low.
+- **Per completed move, record:** start type, end type, size = (move high − move low) ÷ ATR14 at the start, legs (pushes between confirmed k = 2 pivots inside the move), duration in sessions, depth of each pause in ATR. A move under 1 ATR is a **failed start**: counted, excluded from the size profile.
+
+**Move profile** (the input that replaces the swing profile in the gate): the stock's completed moves whose **end date** ≤ D within the last 750 sessions, at least 3 of them; median and 75th-percentile size, median legs. Moves still open at D never enter the profile (look-ahead). No profile → no candidate (counted).
+
+**Position at entry**, for the move active at D:
+- `pauses_so_far` = confirmed k = 2 swing highs inside the move before the trigger bar, plus 1 if the trigger bar is an inside day or a pullback (mech1/mech2, butn) below the move high. 0 means the trigger is on the first push.
+- `move_used` = (entry − move low) ÷ ATR14(D) ÷ median move size.
+- No active move at D → not a candidate (counted, and reported as its own row).
+
+**Gate (replaces "room to 3R"; everything else in P3-0k3 unchanged):** an active move, `pauses_so_far` ∈ {1, 2}, `move_used` ≤ 0.5. **Chosen before any P3-0k4 run** from Chris's words; the report must not be used to move these cutoffs without a new provisional amendment.
+
+**Descriptive, printed before the gated results:**
+1. universe move profile: median/75th size, legs per move, duration; start-type and end-type mix; failed-start rate per start type;
+2. P3-0k3 trades (gate off) grouped by `pauses_so_far` (0, 1, 2, 3, 4+) and `move_used` quintile;
+3. end-rule variants: pmX/mX **firing** ends the move (no arming); bearish U-turn without the volume condition; structure only. Legs per move under each, so a too-tight end rule shows up as ~1 leg per move;
+4. range width 2 / 3 / 4 ATR; breakout without the Finviz filter;
+5. the old room gate side by side.
+
+**Pre-registered:** the 4 P3-0k3 comparisons with this gate in place of the room gate, labelled `p3k4`. KEEP rule as P3-0k; provisional.
+
+**Live keys (log-only):** `move_active`, `move_start_type`, `move_pauses`, `move_used`, `move_profile_median_atr`, `p3k4_candidate`.
+
+**Tests:** each start type (incl. range > 3 ATR rejected, no F25/F22 rejected); a start during an active move ignored; each end type; brutn at or below average volume doesn't end; mX/pmX arm → break ends, arm → new high disarms; failed start < 1 ATR excluded from profile; a move ending after D excluded from D's profile; < 3 moves → no candidate; `pauses_so_far` 0/1/2/3 edges; `move_used` 0.5 edge; short mirror; no look-ahead (shift future bars, profile unchanged).
+
+## P3-0k5: 5-year backfill window (Chris, 2026-11-26)
+
+**Why:** P3-0k3 without the room gate gives 149 trades in 2 years, about 45 held out against the 100 KEEP needs. 5 years gives roughly 375 / 110 at the same rate, and enough completed moves per stock for the P3-0k4 profile.
+- `backfill-snapshot.ts --years 5` (the flag exists; check warmup, the bar store and memory on the NAS). ETF bars (sector, industry, SPY/QQQ/DIA) to the same window.
+- EDGAR earnings and Form 4, FINRA short interest and short volume, House PTRs: extend to 5 years where the source has it; where it doesn't, the field is null before its first date, never 0. Print each source's first date in the report.
+- Macro calendar: add 2021-11 → 2024-11 FOMC, CPI, PPI, NFP (reviewer adds to `macro-calendar.json` on a docs branch).
+- **Survivorship:** today's universe only, so delisted losers are missing and the bias grows with the window. Every P3-0k3/0k4 report prints results for years 1–3 and years 4–5 separately; a KEEP needs both halves positive on the primary metric.
+- Held-out and folds keep their definitions (newest 30%, 3 walk-forward folds) over the longer window.
+- Tests: `--years 5` window math with warmup; null-before-first-date for a source with shorter history.
+
 ## P3-0l: smart-money and sentiment watchlist, the second track (Chris, 2026-11-25)
 Chris: "The smart money tips its hand at some point, and we want to be ready to follow along." These names often fail the P3-0k criteria, and that's expected. They're watched, not filtered out.
 
