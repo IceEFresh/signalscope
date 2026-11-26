@@ -45,7 +45,7 @@ Chris is the decision-maker. Questions either session can't answer go to him.
 22f. **P3-0k**: aligned-trend setups (opens and MA stack and slope on the stock, industry, sector and market; R/R ≥ 3; optimal entry off support), 4 pre-registered comparisons. After 22e.
 22g. **P3-0l**: smart-money and sentiment watchlist (live log-only, entry readiness at R/R ≥ 3, volume-spike backfill descriptive). After 22f.
 22h. **P3-0k3**: aligned trend v2 (stock MAs close > 20/50 in either order > 200, weekly or rolling-5 open, one of the named Finviz screens; monthly, rolling-20, sector, market and industry feed size only), 4 pre-registered comparisons, provisional.
-22i. **P3-0m**: wider Yahoo options-flow coverage (watchlist, P3-0k3 candidates and screen hits, top universe by dollar volume; cap 300) as log-only features; no new OPTIONS_FLOW signals.
+22i. **P3-0m**: options-flow results as log-only `opt_*` features on universe and `watch_only` snapshot rows (universe from the run cache; `watch_only` fetched, cap 150, no Signal rows); the 89 `SCAN_SYMBOLS` outside the universe back in the options-flow scan with OPTIONS_FLOW signals (amended 2026-11-26, #91).
 ## Builder loop, for each item
 
 1. Branch from the latest `main`: `plan/<item-id>-<slug>`.
