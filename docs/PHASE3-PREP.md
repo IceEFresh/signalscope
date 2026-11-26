@@ -773,7 +773,7 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
 
 - **Room to 3R, early in the leg** (Chris, 2026-11-25, added before any P3-0k3 run): "We want to be sure we are near the optimal entry, i.e. early into a developing rally."
   - Use the stock's §1f swing profile at k = 2: the last 250 sessions, ≥ 4 legs, confirmed pivots ≤ D only.
-  - **Leg so far** = |entry − the last confirmed swing low| ÷ ATR14(D) (swing high for shorts).
+  - **Leg so far** = |entry − the lowest low since the last confirmed k = 2 swing high| ÷ ATR14(D) (shorts: the highest high since the last confirmed swing low). Corrected by Chris on 2026-11-26 after the first run; it was "|entry − the last confirmed swing low|", which measured a fresh leg from the prior leg's low.
   - **Room left** = median rally (ATR) − leg so far.
   - **Gate:** room left ≥ 3 × (entry − stop) ÷ ATR14(D). The stock's typical move has to leave room for 3R from this entry.
   - No swing profile (fewer than 4 legs) means no candidate, and it's counted.

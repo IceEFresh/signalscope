@@ -106,19 +106,39 @@ describe("room to 3R early in the leg", () => {
     rally: { n: 5, medianAtr: median, p75Atr: p75, medianPct: 0, p75Pct: 0, medianBars: 5, p75Bars: 6 } as never,
     pullback: { n: 5, medianAtr: median, p75Atr: p75, medianPct: 0, p75Pct: 0, medianBars: 5, p75Bars: 6 } as never,
   });
-  const low = (price: number): Pivot => ({ i: 0, price, kind: "low", confirmedAt: 1, atr: 2 });
-  const bars = weekdayBars(Array.from({ length: 5 }, (): [number, number, number, number] => [100, 101, 99, 100]));
-  // ATR 2; swing low 96; entry 100 → leg so far 2 ATR; risk 2 (stop 98) → needed 3 ATR
+  const pivot = (kind: "high" | "low", i: number, price: number, confirmedAt: number): Pivot => ({ i, price, kind, confirmedAt, atr: 2 });
+  // Bars 1–4 have lows of 96 (bar 1) and 99; a confirmed swing high on bar 0 ends the prior leg
+  const bars = weekdayBars(Array.from({ length: 5 }, (_, k): [number, number, number, number] => [100, 101, k === 1 ? 96 : 99, 100]));
+  const high0 = pivot("high", 0, 105, 1);
+  // ATR 2; lowest low since the swing high 96; entry 100 → leg so far 2 ATR; risk 2 (stop 98) → needed 3 ATR
   it("room left at exactly 3R passes; just under fails", () => {
-    expect(roomEarly(bars, 4, 1, 100, 98, 2, [low(96)], () => prof(5))).toMatchObject({ pass: true, legSoFar: 2, roomLeft: 3, needed: 3, rallyUsed: 0.4 });
-    expect(roomEarly(bars, 4, 1, 100, 98, 2, [low(96)], () => prof(4.99)).pass).toBe(false);
-    expect(roomEarly(bars, 4, 1, 100, 98, 2, [low(96)], () => prof(4.99, 6), "p75").pass).toBe(true);
+    expect(roomEarly(bars, 4, 1, 100, 98, 2, [high0], () => prof(5))).toMatchObject({ pass: true, legSoFar: 2, roomLeft: 3, needed: 3, rallyUsed: 0.4 });
+    expect(roomEarly(bars, 4, 1, 100, 98, 2, [high0], () => prof(4.99)).pass).toBe(false);
+    expect(roomEarly(bars, 4, 1, 100, 98, 2, [high0], () => prof(4.99, 6), "p75").pass).toBe(true);
   });
-  it("no swing profile → no candidate; a pivot confirmed after D is ignored; shorts mirrored", () => {
-    expect(roomEarly(bars, 4, 1, 100, 98, 2, [low(96)], () => ({ rally: null, pullback: null }))).toMatchObject({ pass: false, hasProfile: false });
-    expect(roomEarly(bars, 4, 1, 100, 98, 2, [{ ...low(96), confirmedAt: 9 }], () => prof(5)).pass).toBe(false);
-    const high: Pivot = { i: 0, price: 104, kind: "high", confirmedAt: 1, atr: 2 };
-    expect(roomEarly(bars, 4, -1, 100, 102, 2, [high], () => prof(5))).toMatchObject({ pass: true, legSoFar: 2, roomLeft: 3 });
+  it("no swing profile → no candidate; no confirmed opposite swing by D → no candidate; shorts mirrored", () => {
+    expect(roomEarly(bars, 4, 1, 100, 98, 2, [high0], () => ({ rally: null, pullback: null }))).toMatchObject({ pass: false, hasProfile: false });
+    expect(roomEarly(bars, 4, 1, 100, 98, 2, [{ ...high0, confirmedAt: 9 }], () => prof(5))).toMatchObject({ pass: false, hasProfile: true });
+    // Shorts: highest high since the last confirmed swing low (highs 101, bar 2 at 104)
+    const sb = weekdayBars(Array.from({ length: 5 }, (_, k): [number, number, number, number] => [100, k === 2 ? 104 : 101, 99, 100]));
+    expect(roomEarly(sb, 4, -1, 100, 102, 2, [pivot("low", 0, 95, 1)], () => prof(5))).toMatchObject({ pass: true, legSoFar: 2, roomLeft: 3 });
+  });
+  it("a fresh leg starting 1 bar after a confirmed swing high is measured from its own low, not the prior confirmed swing low", () => {
+    // Prior leg: swing low 80 (bar 1), swing high 110 (bar 5, confirmed bar 7). New leg: low 104 on bar 6, entry 108 on D = bar 9
+    const rows = Array.from({ length: 10 }, (_, k): [number, number, number, number] => {
+      if (k === 1) return [82, 84, 80, 83];
+      if (k === 5) return [108, 110, 107, 109];
+      if (k === 6) return [107, 108, 104, 106];
+      return [106, 109, 105, 107];
+    });
+    const b = weekdayBars(rows);
+    const piv = [pivot("low", 1, 80, 3), pivot("high", 5, 110, 7)];
+    const r = roomEarly(b, 9, 1, 108, 106, 2, piv, () => prof(5));
+    expect(r.legSoFar).toBe(2); // (108 − 104) ÷ 2, not (108 − 80) ÷ 2 = 14
+    expect(r).toMatchObject({ pass: true, roomLeft: 3, needed: 3 });
+    // Causal: the new low isn't a confirmed pivot yet, and a bar after D can't move it
+    const later = [...b, { ...b[9], low: 90 }];
+    expect(roomEarly(later, 9, 1, 108, 106, 2, piv, () => prof(5)).legSoFar).toBe(2);
   });
 });
 
