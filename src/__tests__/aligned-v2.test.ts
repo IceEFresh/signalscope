@@ -238,3 +238,31 @@ describe("P3-0k3 end to end (smoke)", () => {
     }
   });
 });
+
+describe("rolling triggers: the monthly + rolling-20 size input (#88, Chris chose B)", () => {
+  // 58 weekday bars from Mon 2025-01-06: t = 57 (2025-03-26); March starts at bar 40; rolling-20 open = bar 38, rolling-5 = bar 53
+  const series = (monthOpen?: number) => {
+    const rows = Array.from({ length: 58 }, (_, k): [number, number, number, number] => {
+      const c = 100 + k * 0.5;
+      const o = k === 40 && monthOpen != null ? monthOpen : c - 0.3;
+      return [o, Math.max(o, c) + 0.6, Math.min(o, c) - 0.6, c];
+    });
+    const p = rows[56];
+    rows[57] = [p[3] - 0.1, p[1] - 0.05, p[2] + 0.05, p[3]]; // an inside bar closing near the prior close
+    return weekdayBars(rows);
+  };
+  it("a rolling inside trigger already needs the rolling-20 open green, so its size input reduces to the monthly open", async () => {
+    const { computeStpRolling } = await import("@/lib/harvester/universe/stp-rolling");
+    const green = series();
+    const red = series(200); // only the monthly open moves above the close
+    for (const b of [green, red]) expect(computeStpRolling(b)).toMatchObject({ trigger: 1, triggerType: "inside" });
+    expect(monthlyAndRolling20Green(green, 57, 1)).toBe(true);
+    expect(monthlyAndRolling20Green(red, 57, 1)).toBe(false); // one halving, from the monthly open alone
+    const sz = (b: DailyBar[]) => p3k3Size({ monthlyR20Green: monthlyAndRolling20Green(b, 57, 1), sector: "aligned", market: "aligned", industry: null }, false);
+    expect([sz(green), sz(red)]).toEqual([1, 0.5]);
+    // the rolling-20 open can't be the one that fails: moving it above the close stops the trigger itself
+    const b = series();
+    b[38] = { ...b[38], open: 200, high: 200.6 };
+    expect(computeStpRolling(b).trigger).toBe(0);
+  });
+});
