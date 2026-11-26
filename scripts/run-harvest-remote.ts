@@ -2,6 +2,7 @@ import "dotenv/config";
 import { fetchSignals } from "../src/lib/harvester/index.js";
 import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
 import { yahoo429s, yahooHealthSummary } from "../src/lib/yahoo-retry.js";
+import { captureWarnings, healthcheck, summaryLines } from "../src/lib/harvester/healthcheck.js";
 import { fetchOptionsRaw, peekOptionsRaw } from "../src/lib/harvester/options-chain.js";
 import { optionsExtLine, scanOptionsExt, withOptFeatures, type OptFeatures } from "../src/lib/harvester/options-ext.js";
 import { EdgarEarningsClient, edgarGetter, normTicker, parseTickerMap, TICKER_MAP_URL } from "../src/lib/harvester/edgar-earnings.js";
@@ -113,13 +114,25 @@ async function postSignals(payload: HarvestIngestPayload): Promise<{ status: str
   return result;
 }
 
+// OPS-1: dead-man's switch pings (no-op without HEALTHCHECK_URL) with the run's warnings as the body
+const warnings = captureWarnings();
+const pinger = healthcheck(process.env.HEALTHCHECK_URL);
+
+/** Ping success or /fail with the run summary, then exit with `code`. */
+async function finish(code: number, ok: boolean, headline: string): Promise<never> {
+  const lines = summaryLines(headline, warnings.lines());
+  await (ok ? pinger.success(lines) : pinger.fail(lines));
+  process.exit(code);
+}
+
 async function main() {
   console.log("=== SignalScope Slim Harvester (Remote Processing) ===");
   console.log(`Started at: ${new Date().toISOString()}`);
+  await pinger.start();
 
   if (!ENDPOINT_URL || !API_KEY) {
     console.error("Missing HARVEST_ENDPOINT_URL or HARVEST_API_KEY");
-    process.exit(1);
+    return finish(1, false, "harvest failed: HARVEST_ENDPOINT_URL or HARVEST_API_KEY missing");
   }
 
   // 0. Universe and graduation watch (PR 1-0). Falls back to SCAN_SYMBOLS on any failure.
@@ -407,7 +420,8 @@ async function main() {
 
   if (signals.length === 0) {
     console.log("No signals fetched — skipping remote processing");
-    process.exit(0);
+    // Exit code unchanged (0), but no harvest arrived: the dead-man's switch hears a failure
+    await finish(0, false, "harvest skipped: no signals fetched from any source");
   }
 
   console.log(yahooHealthSummary()); // PLAN.md 1e: per-endpoint calls / retries / failures this run
@@ -427,8 +441,10 @@ async function main() {
   };
 
   // 2. POST to the web app for processing
+  let scanId = "";
   try {
     const result = await postSignals(payload);
+    scanId = result.scanId;
     console.log(`Scan completed remotely: ${result.scanId}`);
     await postSnapshot(result.scanId, [...snapshot.rows, ...cryptoSnapshot.rows]);
   } catch (err) {
@@ -438,6 +454,7 @@ async function main() {
 
     try {
       const result = await postSignals(payload);
+      scanId = result.scanId;
       console.log(`Scan completed remotely (retry): ${result.scanId}`);
       await postSnapshot(result.scanId, [...snapshot.rows, ...cryptoSnapshot.rows]);
     } catch (retryErr) {
@@ -447,15 +464,15 @@ async function main() {
       const dumpPath = `/tmp/signalscope-harvest-${Date.now()}.json`;
       writeFileSync(dumpPath, JSON.stringify(payload, null, 2));
       console.error(`Signals saved to ${dumpPath} for manual replay`);
-      process.exit(1);
+      await finish(1, false, `harvest failed: remote processing failed twice (${retryErr instanceof Error ? retryErr.message : retryErr}); signals saved for replay`);
     }
   }
 
   console.log(`Finished at: ${new Date().toISOString()}`);
-  process.exit(0);
+  await finish(0, true, `harvest ok: scan ${scanId}, ${signals.length} signals, ${snapshot.rows.length} stock and ${cryptoSnapshot.rows.length} crypto snapshot rows`);
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("Slim harvester failed:", err);
-  process.exit(1);
+  await finish(1, false, `harvest failed: ${err instanceof Error ? err.message : String(err)}`);
 });
