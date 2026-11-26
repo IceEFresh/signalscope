@@ -38,15 +38,14 @@ import { volumeSpikes, watchMember, watchVolumeLines } from "@/lib/eval/watch-ba
 import { groupMetrics } from "@/lib/eval/stp-sim";
 import { extrasFor } from "@/lib/eval/funnel-sim";
 import { eventBeforeIndices } from "@/lib/harvester/macro-calendar";
-import { calendarInsideUturn, P3K3_CAL_RUN, gateCountsByVariant, gateTable, p3k3ExperimentRow, P3K3_COMPARISONS, P3K3_GATE_STEPS, P3K3_RUNS, P3K_GATE_STEPS, p3k3Candidates, p3k3Lines, p3k3Member, p3k3SimOptions } from "@/lib/eval/aligned-v2-sim";
+import { calendarInsideUturn, p3k3Trigger, P3K3_CAL_RUN, gateCountsByVariant, gateTable, p3k3ExperimentRow, P3K3_COMPARISONS, P3K3_GATE_STEPS, P3K3_RUNS, P3K_GATE_STEPS, p3k3Candidates, p3k3Lines, p3k3Member, p3k3SimOptions } from "@/lib/eval/aligned-v2-sim";
 import { FUDGE_VARIANTS, heldOutFrom, sweepRow, sweepSymbol, sweepTable, type SweepOutcome } from "@/lib/eval/fudge-sweep";
 
 const P3K_POPS = new Set(["p3k", "p3k_all", "p3k_noopt", "p3k_opens", "p3k_mas"]);
 type GateRows = ReturnType<typeof gateCountsByVariant>;
 const addGates = (acc: GateRows | null, g: GateRows): GateRows => (acc ? acc.map((r, k) => ({ ...r, calendar: r.calendar + g[k].calendar, rolling: r.rolling + g[k].rolling })) : g);
 
-/** P3-0l: the watch backfill takes any STP type (EGOP included), calendar or rolling. */
-const ALL_STP_TYPES = new Set(["inside", "butn", "brutn", "mech1", "mech2", "egop"]);
+
 
 const BARS_DIR = "scripts/output/backfill-bars";
 const ETF_DIR = "scripts/output/backfill-etf-bars";
@@ -128,7 +127,8 @@ async function main() {
     const spikes = volumeSpikes(bars).filter((s) => sessions.has(barDateOf(bars[s.i]) ?? ""));
     spikeCount += spikes.length;
     if (spikes.length) {
-      const wc = p3kCandidates(input, layers, ctx, ALL_STP_TYPES);
+      // Same entry triggers as live watch_entry_ready: rolling inside / U-turn, calendar mech1 / mech2
+      const wc = p3kCandidates(input, layers, ctx, undefined, p3k3Trigger);
       for (const p of ["watch_volume", "watch_volume_any"] as const) {
         const base = p3kSimOptions("p3k");
         const r = simulateFunnelSymbol(input, wc, p, "stop", ctx, { ...base, member: watchMember(p, spikes) });

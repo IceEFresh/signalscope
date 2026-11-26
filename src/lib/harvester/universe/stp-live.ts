@@ -205,6 +205,10 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
     const cal = trig && trig.triggerType && P3K_TYPES.has(trig.triggerType) ? { d: trig.trigger as 1 | -1, entry: trig.entry!, stop: trig.stop! } : null;
     const rol = r && (r.trigger === 1 || r.trigger === -1) && r.entry != null && r.stop != null ? { d: r.trigger as 1 | -1, entry: r.entry, stop: r.stop } : null;
     const p = cal ?? rol;
+    // P3-0k3 and the watchlist (Chris): entry triggers are rolling inside, rolling U-turn, mech1 and mech2
+    // only. Calendar inside / U-turn and EGOP never count. computeStpRolling only yields inside / butn / brutn.
+    const calMech = trig && (trig.triggerType === "mech1" || trig.triggerType === "mech2") ? { d: trig.trigger as 1 | -1, entry: trig.entry!, stop: trig.stop! } : null;
+    const entryTrig = calMech ?? rol;
     if (p && sb.length) {
       const sbAtr = atrOf(sb);
       const piv = zigzag(sb, LEVEL_SWING_K);
@@ -232,9 +236,7 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
       const mS = sb.length ? maOrderAt(sbCloses, st, -1) : { pass: false, order: null };
       out.p3k3_ma_order = mL.pass ? mL.order : mS.pass ? mS.order : null;
       out.p3k3_candidate = null;
-      // P3-0k3 (#88): calendar mech1 / mech2, else the rolling inside / U-turn; calendar inside / U-turn don't count
-      const calMech = trig && (trig.triggerType === "mech1" || trig.triggerType === "mech2") ? { d: trig.trigger as 1 | -1, entry: trig.entry!, stop: trig.stop! } : null;
-      const p3 = calMech ?? rol;
+      const p3 = entryTrig;
       if (p3 && sb.length) {
         const p = p3;
         const sbAtr = atrOf(sb);
@@ -249,7 +251,7 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
       }
     }
 
-    // P3-0l watchlist: entry readiness needs only an STP trigger (any calendar type, or rolling) in
+    // P3-0l watchlist: entry readiness needs only an entry trigger (rolling inside / U-turn, mech1, mech2) in
     // the watch direction with R/R ≥ 3; no Finviz, alignment or opens gate. Size: the P3-0k layer
     // rule for that direction (the align_* keys above log the layer states).
     const w = ctx.watch;
@@ -262,9 +264,7 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
     if (w?.watch_sources && !w.directional) {
       // P3-0l2 (Chris): only directionless sources (social, Polymarket) → any STP trigger with R/R ≥ 3
       // counts, and its direction becomes the watch direction (flagged watch_direction_source = trigger)
-      const cal = trig ? { d: trig.trigger as 1 | -1, entry: trig.entry!, stop: trig.stop! } : null;
-      const rol = r && (r.trigger === 1 || r.trigger === -1) && r.entry != null && r.stop != null ? { d: r.trigger as 1 | -1, entry: r.entry, stop: r.stop } : null;
-      const t = cal ?? rol;
+      const t = entryTrig;
       out.watch_entry_ready = false;
       if (t && sb.length) {
         const rr = riskReward(sb, sbCloses, st, t.d, t.entry, t.stop, atrOf(sb)[st], zigzag(sb, LEVEL_SWING_K));
@@ -278,8 +278,8 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
     } else if (w?.watch_sources && w.watch_direction) {
       const wd: 1 | -1 = w.watch_direction === "bullish" ? 1 : -1;
       out.watch_size = sizeFor(wd);
-      const calW = trig && trig.trigger === wd ? { entry: trig.entry!, stop: trig.stop! } : null;
-      const rolW = r && r.trigger === wd && r.entry != null && r.stop != null ? { entry: r.entry, stop: r.stop } : null;
+      const calW = calMech && calMech.d === wd ? calMech : null;
+      const rolW = rol && rol.d === wd ? rol : null;
       const t = calW ?? rolW;
       out.watch_entry_ready = false;
       if (t && sb.length) {
