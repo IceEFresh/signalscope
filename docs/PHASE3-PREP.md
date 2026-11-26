@@ -937,7 +937,7 @@ The P3-0l congress hit uses these. Capitol Trades stays as a fallback, with a he
 - amount-range midpoints.
 
 **As built (P3-0p PR):**
-- **PDF text:** `unpdf` 2.1.0 (pdf.js, pure JS), approved by Chris on 2026-11-26.
+- **PDF text:** `unpdf` 1.9.1 (pdf.js, pure JS), approved by Chris on 2026-11-26: the newest release whose engines allow Node 22 (2.x needs Node ≥ 24; CI and the images run 22).
 - **Paper filings:** scanned paper PTRs (DocIDs not starting with 2; 66 of 515 PTRs in 2025) have no text layer. They're counted and never OCR'd.
 - **Unparsed rows:** a row split by a page break (its "(TICKER) [ST]" lands after the repeated table header) is counted as unparsed. In a 55-filing sample from 2025–26 this was 7 of 676 transaction lines (1%).
 - **Signal session:** the first session strictly after the filing date. The index has no filing time.
