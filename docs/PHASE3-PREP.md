@@ -748,6 +748,28 @@ Same KEEP rule.
 
 **Tests:** each start type (incl. range > 3 ATR rejected, no F25/F22 rejected); a start during an active move ignored; each end type; brutn at or below average volume doesn't end; mX/pmX arm → break ends, arm → new high disarms; failed start < 1 ATR excluded from profile; a move ending after D excluded from D's profile; < 3 moves → no candidate; `pauses_so_far` 0/1/2/3 edges; `move_used` 0.5 edge; short mirror; no look-ahead (shift future bars, profile unchanged).
 
+**As built (P3-0k4 PR):** readings where the spec left a choice. None of them moves a gate cutoff.
+- **Same-bar ties:**
+  - starts are checked in the listed order (swing low, U-turn, breakout);
+  - ends are checked in the listed order (U-turn on volume, mX/pmX break, structure, failed breakout);
+  - a move's end rules apply from the bar after its start is known;
+  - a new move can start from the bar after an end.
+- **U-turn triggers** (start and end) come from STP on every bar of the history, not only the scanned backfill window, so the 750-session profile isn't missing them. STP only runs on bars with the U-turn candle shape. A U-turn counts even when STP's single reported trigger on that bar is another type (`firedRules`).
+- **Move low:** with no confirmed swing high before the start, the move low falls back to the lowest low of the 20 sessions up to the start bar.
+- **Breakout:** the 20-session range is checked against ATR14 on the breakout bar. Shorts use F08/F13, the mirrors of F25/F22.
+- **mX/pmX:** mX is close × sma20 or sma10 × sma20; pmX is trend[t−1] ≥ 1 and close × sma10, both against the move. The armed level is low − fudge of the bar that fired, and it applies from the next bar. The exit-B "extended" bar-stop rule isn't part of it.
+- **Structure:** the first swing high confirmed inside the move is compared with the last confirmed swing high before the move.
+- **Legs and pauses:**
+  - legs = confirmed pauses + 1;
+  - a pause is a confirmed swing high followed by the next confirmed swing low, both inside the move and confirmed by its end;
+  - pause depth is in ATR14 at the start.
+- **`pauses_so_far`:** "below the move high" applies to every pause trigger (inside, mech1, mech2, and the U-turn in the trade direction, so brutn for shorts). It compares the trigger bar's high with the move's high before that bar.
+- **Verdicts:** the held-out cut is computed over the P3-0k3 runs plus p3k4, the same basis as P3-0k3. The benchmark is `p3k3_all`.
+- **Live keys:**
+  - the move is the one in the entry trigger's direction, or with no trigger, the active one (long first);
+  - `move_pauses`, `move_used` and `p3k4_candidate` need an entry trigger and are null without one;
+  - the keys are computed from the bar store history (at least 60 bars).
+
 ## P3-0k5: 5-year backfill window (Chris, 2026-11-26)
 
 **Why:** P3-0k3 without the room gate gives 149 trades in 2 years, about 45 held out against the 100 KEEP needs. 5 years gives roughly 375 / 110 at the same rate, and enough completed moves per stock for the P3-0k4 profile.

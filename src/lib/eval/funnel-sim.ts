@@ -64,7 +64,7 @@ import {
 
 /** P3-0j3: top5_noair is the descriptive ranking with open_air candidates left out. P3-0k populations start with "p3k". */
 export type Population = "all" | "funnel" | "top5" | "top3" | "top5_noair" | "p3k" | "p3k_all" | "p3k_noopt" | "p3k_opens" | "p3k_mas" | "watch_volume" | "watch_volume_any"
-  | "p3k3" | "p3k3_all" | "p3k3_base" | "p3k3_slope" | "p3k3_noroom" | "p3k3_room75" | "p3k3_build" | "p3k3_cal_iu";
+  | "p3k3" | "p3k3_all" | "p3k3_base" | "p3k3_slope" | "p3k3_noroom" | "p3k3_room75" | "p3k3_build" | "p3k3_cal_iu" | "p3k4";
 
 export interface SymbolInput {
   symbol: string;
@@ -179,6 +179,12 @@ export interface FunnelTrade extends Trade {
   rallyUsedV2?: number | null;
   p3k3LayerSize?: number;
   industryV2?: string | null;
+  /** P3-0k4 descriptive tags: the move active at D and the entry's position in it. */
+  moveActive?: boolean;
+  moveStart?: string | null;
+  movePauses?: number | null;
+  moveUsed?: number | null;
+  moveProfile?: boolean;
 }
 
 function entryFor(arm: EntryArm, bars: readonly DailyBar[], i: number, dir: Dir, entry: number, stop: number, fudge: number): EntryOutcome {

@@ -38,6 +38,9 @@ import { volumeSpikes, watchMember, watchVolumeLines } from "@/lib/eval/watch-ba
 import { groupMetrics } from "@/lib/eval/stp-sim";
 import { extrasFor } from "@/lib/eval/funnel-sim";
 import { eventBeforeIndices } from "@/lib/harvester/macro-calendar";
+import { MOVE_VARIANTS } from "@/lib/eval/moves";
+import { moveInputs, newMoveStatsTable, P3K4_COMPARISONS, P3K4_GATE_STEPS, p3k3SimOptionsWithMoves, p3k4ExperimentRow, p3k4Lines, p3k4SimOptions, symbolMoves, withMoves } from "@/lib/eval/moves-sim";
+import { atrSeries } from "@/lib/eval/stp-sim";
 import { calendarInsideUturn, p3k3Trigger, P3K3_CAL_RUN, gateCountsByVariant, gateTable, p3k3ExperimentRow, P3K3_COMPARISONS, P3K3_GATE_STEPS, P3K3_RUNS, P3K_GATE_STEPS, p3k3Candidates, p3k3Lines, p3k3Member, p3k3SimOptions } from "@/lib/eval/aligned-v2-sim";
 import { FUDGE_VARIANTS, heldOutFrom, sweepRow, sweepSymbol, sweepTable, type SweepOutcome } from "@/lib/eval/fudge-sweep";
 
@@ -98,6 +101,9 @@ async function main() {
   // P3-0k3 accumulators (per symbol, so no candidate keeps its bars alive)
   const g3: { long: GateRows | null; short: GateRows | null } = { long: null, short: null };
   let roomNoProfile = 0;
+  // P3-0k4 accumulators
+  const g4: { long: GateRows | null; short: GateRows | null } = { long: null, short: null };
+  const moveStats = newMoveStatsTable();
   const fudge23: Record<string, SweepOutcome[]> = { "both 11%": [], "both 23%": [] };
   for (const [n, symbol] of symbols.entries()) {
     let bars: DailyBar[];
@@ -140,7 +146,16 @@ async function main() {
     all.push(...cands);
     // P3-0k3: aligned trend v2 on the same triggers
     // P3-0k3's own trigger set: rolling inside / U-turn, calendar mech1 / mech2
-    const c3 = p3k3Candidates(input, layers, ctx);
+    const c3base = p3k3Candidates(input, layers, ctx);
+    // P3-0k4: moves over the whole history (primary rules) and each descriptive variant
+    const inp4 = moveInputs(bars, input.pivots, atrSeries(bars));
+    const det = symbolMoves(inp4);
+    for (const [name, opts] of Object.entries(MOVE_VARIANTS)) {
+      const dv = name === "primary" ? det : symbolMoves(inp4, opts);
+      moveStats[name].long.add(dv[1].moves);
+      moveStats[name].short.add(dv[-1].moves);
+    }
+    const c3 = withMoves(c3base, inp4, det);
     // descriptive comparison: the dropped calendar inside / U-turn triggers under the same gates
     const cIU = p3k3Candidates(input, layers, ctx, undefined, calendarInsideUturn);
     {
@@ -151,8 +166,15 @@ async function main() {
     }
     for (const [d, k] of [[1, "long"], [-1, "short"]] as const) g3[k] = addGates(g3[k], gateCountsByVariant(c3.filter((c) => c.dir === d), P3K3_GATE_STEPS));
     roomNoProfile += c3.filter((c) => c.v2.ma && c.v2.opens && c.v2.screens && c.v2.earnings && c.v2.rr && c.v2.optimal && !c.room.hasProfile).length;
+    for (const [d, k] of [[1, "long"], [-1, "short"]] as const) g4[k] = addGates(g4[k], gateCountsByVariant(c3.filter((c) => c.dir === d), P3K4_GATE_STEPS));
+    {
+      const r = simulateFunnelSymbol(input, c3, "p3k4", "stop", ctx, p3k4SimOptions());
+      trades.push(...r.trades);
+      const c = (counts["p3k4 / stop"] ??= { candidates: 0, filled: 0, notFilled: 0, skippedOverlap: 0, sizeSkip: 0, noControl: 0 });
+      for (const k of Object.keys(c) as (keyof FunnelCounts)[]) c[k] += r.counts[k];
+    }
     for (const p of P3K3_RUNS) {
-      const r = simulateFunnelSymbol(input, c3, p, "stop", ctx, p3k3SimOptions(p));
+      const r = simulateFunnelSymbol(input, c3, p, "stop", ctx, p3k3SimOptionsWithMoves(p));
       trades.push(...r.trades);
       const c = (counts[`${p} / stop`] ??= { candidates: 0, filled: 0, notFilled: 0, skippedOverlap: 0, sizeSkip: 0, noControl: 0 });
       for (const k of Object.keys(c) as (keyof FunnelCounts)[]) c[k] += r.counts[k];
@@ -176,6 +198,9 @@ async function main() {
   // Verdicts on the P3-0k3 runs only (the calendar inside / U-turn comparison can't move the cut)
   const P3K3_POPS = new Set<string>(P3K3_RUNS);
   const results3 = evaluateFunnel(trades.filter((t) => P3K3_POPS.has(t.population)), P3K3_COMPARISONS);
+  // P3-0k4 verdicts on the P3-0k3 runs plus p3k4 (the same held-out cut basis as P3-0k3)
+  const P3K4_POPS = new Set<string>([...P3K3_RUNS, "p3k4"]);
+  const results4 = evaluateFunnel(trades.filter((t) => P3K4_POPS.has(t.population)), P3K4_COMPARISONS);
   const g0 = { long: gateCountsByVariant(all.filter((c) => c.dir === 1), P3K_GATE_STEPS), short: gateCountsByVariant(all.filter((c) => c.dir === -1), P3K_GATE_STEPS) };
   const held23 = heldOutFrom(fudge23["both 11%"].map((o) => o.scanId));
   const fudgeLines = sweepTable("P3-0k3 fudge (descriptive): 11% vs 23% on entry and stop", (["both 11%", "both 23%"] as const).map((id) => sweepRow(id, fudge23[id], held23)), held23);
@@ -185,6 +210,7 @@ async function main() {
       results.map((r) => `${r.id} ${r.verdict}`).join(", "),
   );
   console.log(`P3-0k3 aligned v2 (provisional): ${results3.map((r) => `${r.id} ${r.verdict}`).join(", ")}`);
+  console.log(`P3-0k4 moves (provisional): ${results4.map((r) => `${r.id} ${r.verdict}`).join(", ")}`);
   if (dryRun) return;
 
   const date = now.toISOString().slice(0, 10);
@@ -199,6 +225,7 @@ async function main() {
     }) +
       "\n\n" + [...gateTable("P3-0k long (rolling-trigger check)", g0.long), ...gateTable("P3-0k short (rolling-trigger check)", g0.short)].join("\n") +
       "\n\n" + p3k3Lines(results3, trades, { long: g3.long ?? [], short: g3.short ?? [] }, { fudge23: fudgeLines, roomNoProfile }).join("\n") +
+      "\n\n" + p3k4Lines(results4, trades, { long: g4.long ?? [], short: g4.short ?? [] }, moveStats).join("\n") +
       "\n\n" + watchVolumeLines(trades, spikeCount, groupMetrics).join("\n"),
   );
   writeFileSync(`scripts/output/aligned-backfill-${date}-trades.csv`, alignedTradesCsv(trades));
@@ -208,7 +235,8 @@ async function main() {
     LOG_PATH,
     (md.endsWith("\n") ? "" : "\n") +
       alignedExperimentRow(results, { number: n0, date, commit, reportPath, trades: trades.length }) + "\n" +
-      p3k3ExperimentRow(results3, { number: n0 + 1, date, commit, reportPath, trades: trades.length }) + "\n",
+      p3k3ExperimentRow(results3, { number: n0 + 1, date, commit, reportPath, trades: trades.length }) + "\n" +
+      p3k4ExperimentRow(results4, { number: n0 + 2, date, commit, reportPath, trades: trades.length }) + "\n",
   );
   console.log(`Report: ${reportPath}\nAppended experiment row to ${LOG_PATH}`);
 }

@@ -36,6 +36,8 @@ import { alignmentAt, marketAlignment, optimalEntry, p3kSize, type Alignment } f
 import { layerStates, P3K_TYPES, type LayerSeries } from "@/lib/eval/aligned-sim";
 import type { WatchKeys } from "../watchlist";
 import { maOrderAt, monthlyAndRolling20Green, opensV2, p3k3Size, passingNamedScreens, roomEarly } from "@/lib/eval/aligned-v2";
+import { moveProfile, movePosition } from "@/lib/eval/moves";
+import { moveInputs, symbolMoves } from "@/lib/eval/moves-sim";
 
 export type LiveValue = number | string | boolean | null;
 
@@ -65,6 +67,8 @@ export const LIVE_STP_KEY_PREFIXES = ["stp_htf_opens_rolling", "stp_trigger_roll
 /** P3-0k aligned-trend keys (stock rows; log only). */
 /** P3-0k3 aligned trend v2 keys (stock rows; log only). */
 export const LIVE_P3K3_KEYS = ["p3k3_candidate", "p3k3_size_long", "p3k3_size_short", "p3k3_ma_order"] as const;
+/** P3-0k4 move keys (stock rows; log only, provisional). */
+export const LIVE_P3K4_KEYS = ["move_active", "move_start_type", "move_pauses", "move_used", "move_profile_median_atr", "p3k4_candidate"] as const;
 /** P3-0l watchlist keys (stock rows; log only). */
 export const LIVE_WATCH_KEYS = ["watch_sources", "watch_first_seen", "watch_direction", "watch_direction_source", "watch_entry_ready", "watch_size", "watch_only"] as const;
 export const LIVE_P3K_KEYS = ["align_stock", "align_industry", "align_sector", "align_market", "optimal_entry", "p3k_candidate", "p3k_size_long", "p3k_size_short"] as const;
@@ -237,6 +241,26 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
       out.p3k3_ma_order = mL.pass ? mL.order : mS.pass ? mS.order : null;
       out.p3k3_candidate = null;
       const p3 = entryTrig;
+      // P3-0k4 (provisional): the move active at D (the trigger's direction, else long then short)
+      for (const k of LIVE_P3K4_KEYS) out[k] = null;
+      let moveGate: boolean | null = null;
+      if (sb.length >= 60) {
+        const inp4 = moveInputs(sb, zigzag(sb, LEVEL_SWING_K), atrOf(sb));
+        const det = symbolMoves(inp4);
+        const dirs: Array<1 | -1> = p3 ? [p3.d] : [1, -1];
+        const d = dirs.find((x) => det[x].activeAt[st] != null) ?? dirs[0];
+        const m = det[d].activeAt[st];
+        const prof = moveProfile(det[d].moves, st);
+        out.move_active = m != null;
+        out.move_start_type = m?.startType ?? null;
+        out.move_profile_median_atr = prof?.medianSize ?? null;
+        if (p3) {
+          const pos = movePosition(inp4, det[p3.d], st, p3.d, p3.entry, calMech ? (trig!.triggerType as string) : r?.triggerType ?? "");
+          out.move_pauses = pos.pausesSoFar;
+          out.move_used = pos.moveUsed;
+          moveGate = pos.pass;
+        }
+      }
       if (p3 && sb.length) {
         const p = p3;
         const sbAtr = atrOf(sb);
@@ -246,8 +270,9 @@ export function liveStpKeys(bars: readonly DailyBar[], stp: StpResult | undefine
         const rr = riskReward(sb, sbCloses, st, p.d, p.entry, p.stop, sbAtr[st], piv);
         const opt = optimalEntry(sb, sbCloses, st, p.d, p.entry, p.stop, sbAtr[st], piv);
         const room = roomEarly(sb, st, p.d, p.entry, p.stop, sbAtr[st], piv, (x) => swingProfile(sb, x, LEVEL_SWING_K, piv));
-        out.p3k3_candidate =
-          ma.pass && opensV2(sb, st, p.d) && screens.length > 0 && ctx.earnings5 !== true && rr.rr != null && rr.rr >= RR_MIN && opt.optimal && room.pass;
+        const base3 = ma.pass && opensV2(sb, st, p.d) && screens.length > 0 && ctx.earnings5 !== true && rr.rr != null && rr.rr >= RR_MIN && opt.optimal;
+        out.p3k3_candidate = base3 && room.pass;
+        out.p3k4_candidate = moveGate == null ? null : base3 && moveGate;
       }
     }
 
