@@ -833,6 +833,42 @@ The P3-0k KEEP rule applies, and any KEEP is marked provisional (defined after a
 - room left at the 3R edge (just under vs at), no profile means no candidate, and the short mirror;
 - build to layer size: an add that reaches the day's layer size, the cap at full, and the breakeven after the add.
 
+## P3-0m: wider Yahoo options-flow coverage, log-only (Chris, 2026-11-25)
+**Why:** the Yahoo options-flow source scans a fixed list of 89 large caps (`SCAN_SYMBOLS`). The universe, the P3-0k3 candidates and the watchlist's off-universe names (often small caps, where insiders show up) never get scanned, so options hits rarely line up with our candidates.
+
+**Coverage, per harvest, with a priority order and a cap of 300 symbols:**
+1. names on the P3-0l watchlist (universe and `watch_only`);
+2. today's `p3k3_candidate` stocks and any named Finviz screen hits (§P3-0k3);
+3. universe members ranked by 20-session average **dollar** volume;
+4. the existing 89 `SCAN_SYMBOLS`, always included and outside the cap.
+
+The same chain fetch, thresholds and batching as `options-flow.ts`: vol/OI ≥ 3, volume ≥ 1,000, OI ≥ 100, OTM ≥ 10%, sweep ≥ 3 strikes, batches of 5 with a 2 s delay. About 300 extra requests and 2–3 minutes. A failed ticker never stops the harvest.
+
+**Log-only, no scoring change:**
+- The expanded symbols **don't create `OPTIONS_FLOW` Signal rows**. Those feed SignalScope's scores, and the 89-symbol behaviour stays exactly as it is.
+- Results are written as features on the stock's row, either the snapshot row or the `watch_only` row:
+  - `opt_scanned` (true);
+  - `opt_unusual_n` (contracts meeting the thresholds);
+  - `opt_sweep` (bool);
+  - `opt_net_premium` (calls − puts, $);
+  - `opt_call_premium_ratio`;
+  - `opt_top_type` (Call or Put by premium).
+- Null means not scanned or failed, never 0.
+- **P3-0l watchlist:** an options hit now also comes from these features (`opt_unusual_n ≥ 1`), with direction from the net premium's sign, as today. Still flagged as unreliable: the side (bought or sold) is unknown.
+
+**Health:** `[options-ext] scanned n/m, unusual hits h, failed f, 429s r`. Warn when more than 20% fail.
+
+**Tests:**
+- the priority order and the cap;
+- the 89 stay in and outside the cap;
+- no Signal rows for expanded symbols;
+- feature keys on the right row;
+- null on failure;
+- the watchlist reads `opt_unusual_n`;
+- a 429 is retried with the existing backoff.
+
+No migration, no dependency.
+
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
 
