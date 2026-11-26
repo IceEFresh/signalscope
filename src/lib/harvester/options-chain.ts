@@ -96,6 +96,11 @@ export function fetchOptionsRaw(symbol: string, expiry?: number): Promise<unknow
   return p;
 }
 
+/** This run's cached nearest-expiry request for `symbol`, without fetching (P3-0m); undefined if none. */
+export function peekOptionsRaw(symbol: string): Promise<unknown> | undefined {
+  return rawCache.get(`${symbol}|near`);
+}
+
 export function clearOptionsCache(): void {
   rawCache.clear();
 }

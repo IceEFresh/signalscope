@@ -1,7 +1,9 @@
 import "dotenv/config";
 import { fetchSignals } from "../src/lib/harvester/index.js";
 import type { HarvestIngestPayload } from "../src/lib/harvester/types.js";
-import { yahooHealthSummary } from "../src/lib/yahoo-retry.js";
+import { yahoo429s, yahooHealthSummary } from "../src/lib/yahoo-retry.js";
+import { fetchOptionsRaw, peekOptionsRaw } from "../src/lib/harvester/options-chain.js";
+import { optionsExtLine, scanOptionsExt, withOptFeatures, type OptFeatures } from "../src/lib/harvester/options-ext.js";
 import { computeAlpacaOptionsExtras } from "../src/lib/harvester/alpaca-options.js";
 import { chunk, computeSnapshotRows, type SnapshotRow } from "../src/lib/harvester/universe/snapshot.js";
 import { computeCryptoSnapshotRows } from "../src/lib/harvester/crypto/universe.js";
@@ -12,7 +14,7 @@ import { calendarExpiry, macroCalendar } from "../src/lib/harvester/macro-calend
 import { barStoreLine, swingHistory, updateBarStore } from "../src/lib/harvester/universe/bar-store.js";
 import { barDateOf } from "../src/lib/harvester/universe/backfill.js";
 import { etParts } from "../src/lib/harvester/universe/bar-metrics.js";
-import { parseWatchStore, updateWatchStore, watchHits, watchKeys, watchOnlySymbols, watchRunLine, WATCH_ONLY_CAP, type WatchStore } from "../src/lib/harvester/watchlist.js";
+import { optionsFeatureHits, parseWatchStore, updateWatchStore, watchHits, watchKeys, watchOnlySymbols, watchRunLine, WATCH_ONLY_CAP, type WatchStore } from "../src/lib/harvester/watchlist.js";
 import { BENCHMARK_SYMBOL } from "../src/lib/harvester/universe/snapshot.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { alignmentSeries, type Alignment } from "../src/lib/eval/aligned.js";
@@ -169,6 +171,9 @@ async function main() {
   const today = etParts(new Date()).date;
   const WATCH_FILE = process.env.WATCHLIST_FILE || "data/watchlist/watchlist.json";
   let watch: WatchStore = parseWatchStore(null);
+  let hits: ReturnType<typeof watchHits> = [];
+  let prevWatch: WatchStore | null = null;
+  let watchOk = true;
   try {
     const moves = new Map<string, number | null>();
     for (const sym of new Set(signals.filter((x) => x.source === "VOLUME_SPIKE").map((x) => x.symbol))) {
@@ -177,14 +182,37 @@ async function main() {
       const b = res?.ok ? parseChartBars(res.json) : [];
       moves.set(sym, b.length >= 2 ? b[b.length - 1].close - b[b.length - 2].close : null);
     }
-    const hits = watchHits(signals, (sym) => moves.get(sym) ?? null);
-    const prev = existsSync(WATCH_FILE) ? parseWatchStore(JSON.parse(readFileSync(WATCH_FILE, "utf8"))) : null;
-    watch = updateWatchStore(prev, hits, today);
-    mkdirSync(WATCH_FILE.replace(/\/[^/]+$/, ""), { recursive: true });
-    writeFileSync(WATCH_FILE, JSON.stringify(watch));
-    console.log(watchRunLine(hits, watch));
+    hits = watchHits(signals, (sym) => moves.get(sym) ?? null);
+    prevWatch = existsSync(WATCH_FILE) ? parseWatchStore(JSON.parse(readFileSync(WATCH_FILE, "utf8"))) : null;
   } catch (err) {
+    watchOk = false;
     console.warn(`[watch] watchlist update failed, watch keys are null this run: ${err instanceof Error ? err.message : err}`);
+  }
+  // P3-0m: options-flow results as log-only opt_* keys on the snapshot rows. Universe members read
+  // this run's cached chains (no requests); watched names outside the universe are fetched (capped).
+  // No OPTIONS_FLOW signals from these. Never stops the harvest.
+  let optExt: Record<string, OptFeatures> = {};
+  try {
+    const watchOnly = watchOk ? watchOnlySymbols(updateWatchStore(prevWatch, hits, today), prep.scanSymbols).symbols : [];
+    const r0 = yahoo429s("options");
+    const ext = await scanOptionsExt(prep.scanSymbols, watchOnly, { peek: peekOptionsRaw, fetch: (s) => fetchOptionsRaw(s) });
+    optExt = ext.features;
+    const { line, warn } = optionsExtLine(ext.stats, yahoo429s("options") - r0);
+    (warn ? console.warn : console.log)(line);
+  } catch (err) {
+    console.warn(`[options-ext] failed, opt_* keys are null this run: ${err instanceof Error ? err.message : err}`);
+  }
+  if (watchOk) {
+    try {
+      hits.push(...optionsFeatureHits(optExt));
+      watch = updateWatchStore(prevWatch, hits, today);
+      mkdirSync(WATCH_FILE.replace(/\/[^/]+$/, ""), { recursive: true });
+      writeFileSync(WATCH_FILE, JSON.stringify(watch));
+      console.log(watchRunLine(hits, watch));
+    } catch (err) {
+      watch = parseWatchStore(null);
+      console.warn(`[watch] watchlist update failed, watch keys are null this run: ${err instanceof Error ? err.message : err}`);
+    }
   }
   const liveKeys = (s: string, bars: Parameters<typeof liveStpKeys>[0], r: Parameters<typeof liveStpKeys>[1]) =>
     liveStpKeys(bars, r, {
@@ -194,6 +222,7 @@ async function main() {
       watch: watchKeys(watch.entries[s.toUpperCase()], today),
     });
   const snapshot = await computeSnapshotRows(prep.scanSymbols, stp, undefined, { profiles: prep.profiles, rotation: sectorRotation }, liveKeys);
+  snapshot.rows = withOptFeatures(snapshot.rows, optExt);
   // The same keys on the signal tickers' features (no new requests: their charts are cached)
   let liveTickers = 0;
   for (const sym of Object.keys(extras.barFeatures)) {
@@ -236,7 +265,7 @@ async function main() {
     if (wo.symbols.length) {
       const stpW = await computeStpExtras(wo.symbols);
       const built = await computeSnapshotRows(wo.symbols, stpW, undefined, { profiles: prep.profiles, rotation: sectorRotation }, liveKeys);
-      const rows = built.rows.filter((r) => r.symbol !== BENCHMARK_SYMBOL).map((r) => ({ ...r, features: { ...r.features, watch_only: true } }));
+      const rows = withOptFeatures(built.rows.filter((r) => r.symbol !== BENCHMARK_SYMBOL), optExt).map((r) => ({ ...r, features: { ...r.features, watch_only: true } }));
       snapshot.rows.push(...rows);
       console.log(`[watch] ${rows.length}/${wo.symbols.length} watched names outside the universe logged as watch_only rows${wo.skipped ? `; ${wo.skipped} over the cap of ${WATCH_ONLY_CAP} skipped` : ""}`);
     }

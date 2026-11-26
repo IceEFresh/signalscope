@@ -44,7 +44,9 @@ export function isLiveStpKey(key: string): boolean {
     // P3-0l watchlist keys (log only)
     /^watch_(sources|first_seen|direction|direction_source|entry_ready|size|only)$/.test(key) ||
     // P3-0k3 aligned trend v2 keys (log only)
-    /^p3k3_(candidate|size_long|size_short|ma_order)$/.test(key)
+    /^p3k3_(candidate|size_long|size_short|ma_order)$/.test(key) ||
+    // P3-0m options-ext keys on snapshot rows (log only; not the 1h opt family)
+    /^opt_(scanned|unusual_n|sweep|net_premium|call_premium_ratio|top_type)$/.test(key)
   );
 }
 

@@ -4,7 +4,7 @@ import type { AggregatedSymbol, IngestBarMetrics, IngestStp, NoveltyContext, Pnd
 import { fetchRedditSignals } from "./sources/reddit";
 import { fetchStockTwitsSignals } from "./sources/stocktwits";
 import { fetchSecInsiderSignals } from "./sources/sec-insider";
-import { fetchOptionsFlowSignals } from "./sources/options-flow";
+import { fetchOptionsFlowSignals, optionsFlowSymbols } from "./sources/options-flow";
 import { fetchVolumeSpikeSignals } from "./sources/volume-spike";
 import { fetchTwitterSignals } from "./sources/twitter";
 import { fetchCongressSignals } from "./sources/congress";
@@ -408,7 +408,7 @@ export async function fetchSignals(
     fetchRedditSignals(),
     fetchStockTwitsSignals(),
     fetchSecInsiderSignals(),
-    fetchOptionsFlowSignals(scanSymbols),
+    fetchOptionsFlowSignals(optionsFlowSymbols(scanSymbols)),
     fetchVolumeSpikeSignals(scanSymbols),
     fetchTwitterSignals(),
     fetchCongressSignals(),

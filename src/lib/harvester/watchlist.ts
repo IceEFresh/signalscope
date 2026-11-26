@@ -9,7 +9,9 @@
  * Direction per source, as each source reports it:
  * - insider (SEC Form 4) and congress: the sources collect purchases only → bullish; a sale
  *   would never be a buy signal (null);
- * - options: net premium > 0 bullish, < 0 bearish; zero or unknown isn't a hit;
+ * - options: net premium > 0 bullish, < 0 bearish; zero or unknown isn't a hit. P3-0m: also a
+ *   hit when the row's opt_unusual_n ≥ 1 (options-ext features), same direction rule. Unreliable:
+ *   the side (bought or sold) is unknown;
  * - volume: the spike day's close vs the prior close;
  * - reddit, stocktwits, x: the harvester sees posts before any sentiment scoring → null;
  * - polymarket: no direction → null.
@@ -60,6 +62,16 @@ export function watchHits(signals: readonly RawSignal[], dayMove: DayMove = () =
       direction = m == null || m === 0 ? null : m > 0 ? "bullish" : "bearish";
     }
     out.push({ symbol: s.symbol.toUpperCase(), source, direction });
+  }
+  return out;
+}
+
+/** P3-0m: options hits from the options-ext features (opt_unusual_n ≥ 1, direction from the net premium's sign). */
+export function optionsFeatureHits(features: Readonly<Record<string, { opt_unusual_n: number; opt_net_premium: number | null }>>): WatchHit[] {
+  const out: WatchHit[] = [];
+  for (const [symbol, f] of Object.entries(features)) {
+    if (!(f.opt_unusual_n >= 1) || f.opt_net_premium == null || f.opt_net_premium === 0) continue;
+    out.push({ symbol: symbol.toUpperCase(), source: "options", direction: f.opt_net_premium > 0 ? "bullish" : "bearish" });
   }
   return out;
 }
