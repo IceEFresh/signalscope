@@ -782,6 +782,7 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
 
 **Size:** start at 1.0 and halve for each of these, with a floor of 0.25:
 1. the stock's **monthly** open or **rolling 20-session** open isn't green in the trade direction (one halving if either fails);
+   - **Rolling triggers (Chris chose B, 2026-11-25):** rolling inside days and U-turns already require the close beyond both the rolling 5 and rolling 20 opens to fire, so for them this input reduces to the monthly open. Mechanicals don't use the opens to trigger, so for them both the monthly and the rolling 20 count. No separate code path is needed; add a test that a rolling inside trade's size depends only on the monthly open.
 2. the **sector** layer isn't aligned (the P3-0k definition, unchanged);
 3. the **market** layer isn't aligned (P3-0k, 2-of-3 vote of SPY, QQQ and DIA, unchanged);
 4. the **industry** layer isn't aligned (the P3-0k layer definition, used for sizing only). **No industry ETF, or no data, is neutral and doesn't halve.** In P3-0k, 429 of the 1,229 candidates (35%) had no industry data. Reviewer's default; Chris didn't object.
