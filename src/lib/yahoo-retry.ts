@@ -87,8 +87,22 @@ function bump(label: string, key: keyof Health): void {
   health.set(label, h);
 }
 
+/** P3-0m: HTTP 429 responses per label (each attempt counts), for the [options-ext] line. */
+const rateLimited = new Map<string, number>();
+
+export function isRateLimited(err: unknown): boolean {
+  const status = statusOf(err);
+  if (status != null) return status === 429;
+  return /too many requests/i.test(err instanceof Error ? err.message : String(err));
+}
+
+export function yahoo429s(label: string): number {
+  return rateLimited.get(label) ?? 0;
+}
+
 export function resetYahooHealth(): void {
   health.clear();
+  rateLimited.clear();
 }
 
 export function yahooHealth(): Record<string, Health> {
@@ -122,6 +136,7 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
     try {
       return await fn();
     } catch (err) {
+      if (isRateLimited(err)) rateLimited.set(label, (rateLimited.get(label) ?? 0) + 1);
       if (attempt >= retries || !isRetryableError(err)) {
         bump(label, "failed");
         throw err;

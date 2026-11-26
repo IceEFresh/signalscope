@@ -17,7 +17,7 @@ interface OptionsContract {
   [key: string]: unknown;
 }
 
-interface OptionsChainResult {
+export interface OptionsChainResult {
   quote: { regularMarketPrice?: number; [key: string]: unknown };
   options: { calls: OptionsContract[]; puts: OptionsContract[] }[];
   [key: string]: unknown;
@@ -32,7 +32,7 @@ const SWEEP_MIN_STRIKES = 3;
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 2_000;
 
-interface UnusualContract {
+export interface UnusualContract {
   strike: number;
   expiry: string;
   type: "Call" | "Put";
@@ -58,7 +58,7 @@ async function fetchOptionsChain(symbol: string): Promise<OptionsChainResult | n
   }
 }
 
-function analyzeChain(
+export function analyzeChain(
   symbol: string,
   result: OptionsChainResult,
 ): UnusualContract[] {
@@ -140,6 +140,27 @@ export function computeNetPremium(
   };
 }
 
+/** The first expiry with unusual calls on 3+ strikes (a sweep), or null. */
+export function callSweep(contracts: readonly UnusualContract[]): [string, UnusualContract[]] | null {
+  const expiryGroups = new Map<string, UnusualContract[]>();
+  for (const c of contracts) {
+    if (c.type !== "Call") continue;
+    const group = expiryGroups.get(c.expiry) ?? [];
+    group.push(c);
+    expiryGroups.set(c.expiry, group);
+  }
+  for (const entry of expiryGroups) if (entry[1].length >= SWEEP_MIN_STRIKES) return entry;
+  return null;
+}
+
+/**
+ * Symbols the options-flow source scans: the universe plus the static SCAN_SYMBOLS outside it
+ * (P3-0m, Chris 2026-11-26: the 89 create OPTIONS_FLOW signals again, as before PR 1-0).
+ */
+export function optionsFlowSymbols(scanSymbols: readonly string[]): string[] {
+  return [...new Set([...scanSymbols, ...SCAN_SYMBOLS])];
+}
+
 function generateSignals(
   symbol: string,
   contracts: UnusualContract[],
@@ -184,30 +205,23 @@ function generateSignals(
   }
 
   // Pattern 3: Call Sweep (3+ distinct strikes on the same expiry)
-  const expiryGroups = new Map<string, UnusualContract[]>();
-  for (const c of calls) {
-    const group = expiryGroups.get(c.expiry) ?? [];
-    group.push(c);
-    expiryGroups.set(c.expiry, group);
-  }
-  for (const [expiry, group] of expiryGroups) {
-    if (group.length >= SWEEP_MIN_STRIKES) {
-      const totalVol = group.reduce((sum, c) => sum + c.volume, 0);
-      const strikes = group.map((c) => `$${c.strike}`).sort((a, b) => parseFloat(a.slice(1)) - parseFloat(b.slice(1))).join(", ");
-      signals.push({
-        symbol,
-        source: "OPTIONS_FLOW",
-        title: `Call sweep detected: ${symbol} ${expiry} (${group.length} strikes)`,
-        body: `Systematic call buying across strikes ${strikes}. Total volume: ${totalVol.toLocaleString()} contracts.`,
-        optionType: "Call",
-        optionVolume: totalVol,
-        openInterest: group.reduce((sum, c) => sum + c.openInterest, 0),
-        volOiRatio: Math.round(
-          (group.reduce((sum, c) => sum + c.volOiRatio, 0) / group.length) * 100
-        ) / 100,
-      });
-      break; // one sweep signal per symbol
-    }
+  const sweep = callSweep(calls);
+  if (sweep) {
+    const [expiry, group] = sweep;
+    const totalVol = group.reduce((sum, c) => sum + c.volume, 0);
+    const strikes = group.map((c) => `$${c.strike}`).sort((a, b) => parseFloat(a.slice(1)) - parseFloat(b.slice(1))).join(", ");
+    signals.push({
+      symbol,
+      source: "OPTIONS_FLOW",
+      title: `Call sweep detected: ${symbol} ${expiry} (${group.length} strikes)`,
+      body: `Systematic call buying across strikes ${strikes}. Total volume: ${totalVol.toLocaleString()} contracts.`,
+      optionType: "Call",
+      optionVolume: totalVol,
+      openInterest: group.reduce((sum, c) => sum + c.openInterest, 0),
+      volOiRatio: Math.round(
+        (group.reduce((sum, c) => sum + c.volOiRatio, 0) / group.length) * 100
+      ) / 100,
+    });
   }
 
   return signals;
@@ -217,7 +231,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Scans `symbols` (the generated universe when available, else the static SCAN_SYMBOLS list). */
+/** Scans `symbols` (the universe plus the static SCAN_SYMBOLS, see optionsFlowSymbols). */
 export async function fetchOptionsFlowSignals(symbols: readonly string[] = SCAN_SYMBOLS): Promise<RawSignal[]> {
   console.log("Options Flow: scanning", symbols.length, "symbols...");
   const signals: RawSignal[] = [];

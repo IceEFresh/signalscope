@@ -22,7 +22,8 @@ vi.mock("@/lib/harvester/sources/stocktwits", () => ({
 vi.mock("@/lib/harvester/sources/sec-insider", () => ({
   fetchSecInsiderSignals: (...args: unknown[]) => mockFetchSecInsider(...args),
 }));
-vi.mock("@/lib/harvester/sources/options-flow", () => ({
+vi.mock("@/lib/harvester/sources/options-flow", async (orig) => ({
+  optionsFlowSymbols: (await orig<typeof import("@/lib/harvester/sources/options-flow")>()).optionsFlowSymbols,
   fetchOptionsFlowSignals: (...args: unknown[]) => mockFetchOptionsFlow(...args),
 }));
 vi.mock("@/lib/harvester/sources/volume-spike", () => ({
@@ -159,5 +160,16 @@ describe("fetchSignals", () => {
 
     const signals = await fetchSignals();
     expect(signals).toEqual([]);
+  });
+
+  it("P3-0m: options flow scans the universe plus the SCAN_SYMBOLS outside it; volume spike the universe only", async () => {
+    for (const m of [mockFetchReddit, mockFetchStockTwits, mockFetchSecInsider, mockFetchOptionsFlow, mockFetchVolumeSpike, mockFetchTwitter, mockFetchCongress, mockFetchPolymarket]) m.mockResolvedValue([]);
+    const { SCAN_SYMBOLS } = await import("@/lib/harvester/sources/ticker-utils");
+    await fetchSignals({ scanSymbols: ["ZZZA", SCAN_SYMBOLS[0]] });
+    const opt = mockFetchOptionsFlow.mock.calls.at(-1)![0] as string[];
+    expect(opt[0]).toBe("ZZZA");
+    expect(new Set(opt)).toEqual(new Set(["ZZZA", ...SCAN_SYMBOLS]));
+    expect(opt).toHaveLength(SCAN_SYMBOLS.length + 1); // no duplicates
+    expect(mockFetchVolumeSpike.mock.calls.at(-1)![0]).toEqual(["ZZZA", SCAN_SYMBOLS[0]]);
   });
 });
