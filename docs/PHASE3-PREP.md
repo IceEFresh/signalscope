@@ -741,6 +741,8 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
 - the zero-hit health warning.
 
 ## P3-0k3: aligned trend v2, with looser stock criteria and more sizing inputs (Chris, 2026-11-25)
+
+**Entry triggers (Chris, 2026-11-25): "We just want inside day, U-turn and both mechanicals for entries."** That means rolling inside, rolling U-turn (butn/brutn), mech1 and mech2. EGOP and every other trigger type are excluded from P3-0k3, **and from live P3-0l `watch_entry_ready`.** That key currently takes any calendar trigger, EGOP included, and needs the same four-trigger set. Test: an EGOP-only or calendar-only inside trigger never sets `p3k3_candidate` or `watch_entry_ready`.
 **Set after the first P3-0k run** (2026-11-26 12:xx UTC, INSUFFICIENT, aligned long −0.62R held out). Chris defined it from the criteria alone, before seeing that report's gate or size breakdowns. It's a new hypothesis, so a backfill KEEP is **provisional** until it's confirmed on live data. P3-0k stays as it was; this one runs beside it.
 
 **Stock candidate (gates), for a long; shorts mirrored:**
@@ -764,18 +766,32 @@ Each row logs `watch_sources` (the list), `watch_first_seen`, and `watch_directi
   F18 and F19 need short float, which has no history, so they're **live only**. On the backfill, the candidate set is the other 7 screens. The report shows trades and results per screen (descriptive).
 - Unchanged:
   - no earnings within 5 sessions;
-  - an STP trigger (calendar or rolling: inside, butn, brutn, mech1 or mech2);
+  - an STP trigger. **Calendar inside and U-turn triggers are dropped** (Chris, 2026-11-25, before any P3-0k3 run). Inside, butn and brutn use the **rolling** 5/20 version only. mech1 and mech2 take their trend from the MAs, not the opens, so they're unaffected and stay in.
   - R/R ≥ 3;
   - optimal entry, with the stop ≤ 0.5 ATR beyond the nearest support.
 - **The industry ETF is not part of alignment.**
 
+- **Room to 3R, early in the leg** (Chris, 2026-11-25, added before any P3-0k3 run): "We want to be sure we are near the optimal entry, i.e. early into a developing rally."
+  - Use the stock's §1f swing profile at k = 2: the last 250 sessions, ≥ 4 legs, confirmed pivots ≤ D only.
+  - **Leg so far** = |entry − the last confirmed swing low| ÷ ATR14(D) (swing high for shorts).
+  - **Room left** = median rally (ATR) − leg so far.
+  - **Gate:** room left ≥ 3 × (entry − stop) ÷ ATR14(D). The stock's typical move has to leave room for 3R from this entry.
+  - No swing profile (fewer than 4 legs) means no candidate, and it's counted.
+  - This gate sits alongside the R/R ≥ 3 resistance check; it doesn't replace it.
+  - Descriptive variants: the 75th-percentile rally in place of the median; without the room gate; results by `rally_used` (leg so far ÷ median rally) quintile.
+
 **Size:** start at 1.0 and halve for each of these, with a floor of 0.25:
 1. the stock's **monthly** open or **rolling 20-session** open isn't green in the trade direction (one halving if either fails);
+   - **Rolling triggers (Chris chose B, 2026-11-25):** rolling inside days and U-turns already require the close beyond both the rolling 5 and rolling 20 opens to fire, so for them this input reduces to the monthly open. Mechanicals don't use the opens to trigger, so for them both the monthly and the rolling 20 count. No separate code path is needed; add a test that a rolling inside trade's size depends only on the monthly open.
 2. the **sector** layer isn't aligned (the P3-0k definition, unchanged);
 3. the **market** layer isn't aligned (P3-0k, 2-of-3 vote of SPY, QQQ and DIA, unchanged);
 4. the **industry** layer isn't aligned (the P3-0k layer definition, used for sizing only). **No industry ETF, or no data, is neutral and doesn't halve.** In P3-0k, 429 of the 1,229 candidates (35%) had no industry data. Reviewer's default; Chris didn't object.
 
 Then × 0.5 for an out-of-hours event within 5 sessions, still floored at 0.25. Base risk is $200.
+
+**Building from ¼** (Chris: "I'm ok entering early at 1/4 size and building a position from there"):
+- **Primary (unchanged):** adds of 50% of the current shares at +2, +4 and +6 ATR (max 3), so a ¼ start grows to 0.84 of full at most.
+- **Descriptive variant, "build to layer size":** at each add level, recompute the size from that day's layers (monthly and rolling-20 opens, sector, market, industry). The add is the larger of 50% of the current shares and the shares needed to reach that size, never beyond full (1.0). The stop still moves to the size-weighted breakeven after each add. Report it next to the primary, along with the size reached at exit.
 
 **Management:** as P3-0k (exit B, adds every 2 × ATR, max 3, the event and earnings rules). Fudge stays at 11%, with a descriptive variant at 23% on entry and stop (see the P3-0k2 sweep).
 
@@ -795,7 +811,9 @@ The P3-0k KEEP rule applies, and any KEEP is marked provisional (defined after a
 - with the slope variant;
 - fudge 23%;
 - stopped within 3 sessions;
-- side by side with P3-0k.
+- side by side with P3-0k;
+- the room-left gate's count and "room gate fail" results;
+- "build to layer size" vs the primary adds.
 
 **Live keys (log-only):** `p3k3_candidate`, `p3k3_size_long`, `p3k3_size_short`, `p3k3_ma_order` (`20>50` / `50>20`).
 
@@ -811,7 +829,9 @@ The P3-0k KEEP rule applies, and any KEEP is marked provisional (defined after a
 - industry affects size, never the gate; no industry data doesn't halve;
 - the floor at 0.25 after 4 halvings and the event;
 - crypto 7;
-- look-ahead.
+- look-ahead;
+- room left at the 3R edge (just under vs at), no profile means no candidate, and the short mirror;
+- build to layer size: an add that reaches the day's layer size, the cap at full, and the breakeven after the add.
 
 ## P3-0i2b: persistent bar store for the live swing keys (Chris chose option D, 2026-11-25)
 The live swing profiles need 250 sessions, but the harvest chart has about 63. Keep a local daily-bar history on the NAS: seed it once from the backfill cache, then append each harvest's chart. That adds no requests in steady state.
